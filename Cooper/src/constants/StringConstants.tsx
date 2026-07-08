@@ -1,0 +1,1 @@
+export const API_URL = 'https://cooper-corp-prototype-pp93.vercel.app';

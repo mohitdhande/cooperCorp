@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "Cooper",
+    "slug": "Cooper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/app_icon.png",
+    "scheme": "cooper",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/app_icon.png"
+    },
+    "android": {
+      "package": "com.coopercorp.cooper",
+      "adaptiveIcon": {
+      "foregroundImage": "./assets/android_icon_foreground.png",
+        "backgroundImage": "./assets/android_icon_background.png",
+        "monochromeImage": "./assets/android_icon_monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+     [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash_logo.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#241D67",
+          "android": {
+            "image": "./assets/splash_logo.png",
+            "imageWidth": 160,
+            "backgroundColor": "#241D67"
+          },
+          "ios": {
+            "image": "./assets/cooper_logo.jpeg",
+            "backgroundColor": "#F5F7FA"
+          },
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to set a profile picture.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take a profile picture."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7c9cb567-327f-44d5-9183-03bf8d4ecd9f"
+      }
+    }
+  }
+}
