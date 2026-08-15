@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "Cooper",
+    "backgroundColor": "#11101C",
+    "slug": "Cooper",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/app_icon.png",
+    "scheme": "cooper",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/app_icon.png"
+    },
+    "android": {
+      "package": "com.coopercorp.cooper",
+      "softwareKeyboardLayoutMode": "pan",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android_icon_foreground.png",
+        "backgroundImage": "./assets/android_icon_background.png",
+        "monochromeImage": "./assets/android_icon_monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/Logo (1).png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#11101C",
+          "android": {
+            "image": "./assets/Logo (1).png",
+            "imageWidth": 160,
+            "backgroundColor": "#11101C"
+          },
+          "ios": {
+            "image": "./assets/cooper_logo.jpeg",
+            "backgroundColor": "#11101C"
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to set a profile picture.",
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take a profile picture."
+        }
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-video",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "072be070-a7fc-496e-ac24-a00532032b5a"
+      }
+    },
+    "owner": "mohit_14"
+  }
+}
