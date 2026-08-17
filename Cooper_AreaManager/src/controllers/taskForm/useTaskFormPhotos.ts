@@ -45,6 +45,15 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
   // each requesting only its own type; this works on iOS too.
   const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos', target: 'site' | 'runningHours') => {
     try {
+      // The options sheet Modal (fade-out) is still tearing down its own
+      // native window when the button's onPress fires — launching the
+      // camera activity while that's still in flight is what causes the
+      // black-screen flash some Android devices show before the camera
+      // actually appears. A short pause here lets the Modal's close
+      // animation finish first, same fix for both the permission prompt
+      // and the camera launch itself.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', `Camera access is required to ${mediaType === 'videos' ? 'record a video' : 'take a photo'}.`);
@@ -165,11 +174,6 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
     await captureFromCamera('images', 'runningHours');
   }, [captureFromCamera]);
 
-  const handleRecordRunningHoursVideo = useCallback(async () => {
-    setStep2PhotoOptionsVisible(false);
-    await captureFromCamera('videos', 'runningHours');
-  }, [captureFromCamera]);
-
   const handleChooseRunningHoursPhotos = useCallback(async () => {
     setStep2PhotoOptionsVisible(false);
     try {
@@ -179,8 +183,10 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
         return;
       }
 
+      // Images only — Step 2's running-hours upload never takes video or
+      // PDF, unlike Step 6's own site photos.
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
+        mediaTypes: ['images'],
         quality: 0.7,
         allowsMultipleSelection: true,
       });
@@ -188,9 +194,8 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
       if (!result.canceled) {
         const { valid, skippedMessage } = partitionValidPhotos(result.assets);
         valid.forEach((asset, index) => {
-          const isVideo = asset.type === 'video';
-          const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}_${index}.${isVideo ? 'mp4' : 'jpg'}`;
-          addPhoto({ id: `${Date.now()}_${index}`, uri: asset.uri, fileName, mediaType: isVideo ? 'video' : 'image' }, 'runningHours');
+          const fileName = asset.uri.split('/').pop() || `photo_${Date.now()}_${index}.jpg`;
+          addPhoto({ id: `${Date.now()}_${index}`, uri: asset.uri, fileName, mediaType: 'image' }, 'runningHours');
         });
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
       }
@@ -297,7 +302,6 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
     handleRemoveSitePhoto,
     handlePickPdf,
     handleTakeRunningHoursPhoto,
-    handleRecordRunningHoursVideo,
     handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto,
     handleSaveAllPhotos,

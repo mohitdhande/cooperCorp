@@ -1,11 +1,9 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text } from '@/_components/AppText';
-import { RefreshCw, Settings, Tag, Calendar } from 'lucide-react-native';
+import { Tag, Calendar } from 'lucide-react-native';
 import { getTaskPeople } from '../../utils/reportFormatters';
-import { UserAvatar } from './UserAvatar';
 import { AssetIdentityHeader } from './AssetIdentityHeader';
-import { SrNumberText } from './SrNumberText';
 
 type Props = {
   task: any;
@@ -45,17 +43,13 @@ const STATUS_INFO: Record<string, { label: string; bg: string; text: string }> =
 
 // Wraps AssetIdentityHeader (the SAME SR-ribbon + identity-pill + avatar
 // cluster used by TaskPreviewCard/Dashboard's SR Approvals card) instead of
-// re-implementing that markup a second time — this used to be a fully
-// separate, slightly-diverged copy (different pill colors, different
-// avatar size, no tap-to-reveal tooltip). Adds only what's genuinely new
-// here: the service-only category/status/date row underneath.
-//
-// Commissioning keeps its own separate layout below (inline "Comm" badge
-// next to the SR pill) — that badge is real information on this screen
-// specifically, since the Task Form's own header just says "TASK", not
-// "COMMISSIONING" the way the SR form's header says "SERVICE". Merging it
-// into AssetIdentityHeader too would mean adding type-badge support there,
-// which no other caller of that component needs.
+// re-implementing that markup a second time — both branches used to be
+// fully separate, slightly-diverged copies (different pill colors, smaller
+// avatars, no tap-to-reveal tooltip, no gensetModel-first bold line).
+// Service adds the category/status/date row underneath; Commissioning adds
+// just its own "Comm" type badge above — that badge is real information on
+// this screen specifically, since the Task Form's own header just says
+// "TASK", not "COMMISSIONING" the way the SR form's header says "SERVICE".
 export function TaskSummaryHeader({ task, gensetNumber, engineNumber }: Props) {
   if (!task) return null;
   const taskPeople = getTaskPeople(task);
@@ -106,43 +100,17 @@ export function TaskSummaryHeader({ task, gensetNumber, engineNumber }: Props) {
     );
   }
 
-  // Commissioning — unchanged from before. Always the short "Comm" label
-  // (matching TaskPreviewCard's own pill), regardless of the task's actual
-  // PRE_COMMISSIONING/COMMISSIONING/REVALIDATION/RE_COMMISSIONING type.
+  // Commissioning — AssetIdentityHeader owns the SR ribbon + identity pill +
+  // avatar cluster here too (same as the Service branch above).
   return (
     <View style={styles.card}>
-      <View style={styles.topRow}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
-          <View style={styles.typePill}>
-            <RefreshCw size={16} color="#FFFFFF" />
-            <Text style={styles.typePillText}>Comm</Text>
-          </View>
-          {!!task.srNumber && (
-            <View style={styles.srNumberPill}>
-              <SrNumberText srNumber={task.srNumber} style={styles.srNumberPillText} numberOfLines={1} />
-            </View>
-          )}
-        </View>
-        {taskPeople.length > 0 && (
-          <View style={styles.avatarCluster}>
-            {taskPeople.map((person, idx) => (
-              <View key={person.userId || idx} style={idx > 0 && styles.clusterAvatarOverlap}>
-                <UserAvatar userId={person.userId} name={person.name} size={32} style={styles.clusterAvatarBorder} />
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-
-      <View style={styles.idPillRow}>
-        <View style={styles.idIconChip}>
-          <Settings size={16} color="#FFFFFF" />
-        </View>
-        <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 8 }}>
-          <Text style={styles.gensetNumber} numberOfLines={1}>{gensetNumber}</Text>
-          <Text style={styles.engineNumber} numberOfLines={1}>{engineNumber}</Text>
-        </View>
-      </View>
+      <AssetIdentityHeader
+        task={task}
+        isService={false}
+        taskPeople={taskPeople}
+        gensetNumberOverride={gensetNumber}
+        engineNumberOverride={engineNumber}
+      />
     </View>
   );
 }
@@ -155,39 +123,6 @@ const styles = StyleSheet.create({
     gap: 16,
     marginBottom: 16,
   },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  typePill: {
-    flexDirection: 'row', alignItems: 'center', gap: 9,
-    backgroundColor: '#454545',
-    borderRadius: 40,
-    paddingVertical: 8, paddingHorizontal: 14,
-  },
-  typePillText: { color: '#FFFFFF', fontSize: 15, fontWeight: '500' },
-  srNumberPill: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#1E1951',
-    borderRadius: 40,
-    paddingVertical: 8, paddingHorizontal: 14,
-  },
-  srNumberPillText: { color: '#FFFFFF', fontSize: 12, fontFamily: 'monospace', letterSpacing: 0.5 },
-  avatarCluster: { flexDirection: 'row' },
-  clusterAvatarOverlap: { marginLeft: -10 },
-  clusterAvatarBorder: { borderWidth: 2, borderColor: '#FFFFFF' },
-
-  idPillRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#F3F1FD',
-    borderRadius: 24,
-    paddingVertical: 6, paddingHorizontal: 8,
-  },
-  idIconChip: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#1E1951',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  gensetNumber: { fontSize: 17, fontWeight: '600', color: '#000000' },
-  engineNumber: { fontSize: 17, fontWeight: '500', color: '#686868' },
-
   taskTitleText: { fontSize: 16, fontWeight: '700', color: '#000000' },
 
   // Service-only meta row — sub-category caption, then category tag +

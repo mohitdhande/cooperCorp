@@ -76,7 +76,7 @@ export default function CommissioningTasksScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: 130 }}
       >
         <View style={[styles.header, { paddingHorizontal: headerPad }]}>
           <TouchableOpacity style={styles.headerButton} onPress={() => router.replace('/screens/dashboard' as any)}>
@@ -211,13 +211,22 @@ export default function CommissioningTasksScreen() {
         onConfirm={handleAssignTask}
       />
 
-      <BottomNavBar active="commissioning" />
+      {/* Floats over the ScrollView (instead of sitting below it as a
+          normal flex sibling) so cards keep visibly scrolling behind this
+          bar rather than the scroll area stopping flush above it — same
+          pattern as the Dashboard's own bottom nav. */}
+      <View style={styles.floatingFooter} pointerEvents="box-none">
+        <BottomNavBar active="commissioning" />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6F6F6' },
+  // Pinned over the ScrollView, not a normal flex sibling below it — see
+  // the comment at its call site for why.
+  floatingFooter: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   header: {
     flexDirection: 'row',

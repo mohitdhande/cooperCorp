@@ -371,6 +371,15 @@ export function useSrTaskForm() {
   // each requesting only its own type; this works on iOS too.
   const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos') => {
     try {
+      // The options sheet Modal (fade-out) is still tearing down its own
+      // native window when the button's onPress fires — launching the
+      // camera activity while that's still in flight is what causes a
+      // black-screen flash on some Android devices before the camera
+      // actually appears. A short pause here lets the Modal's close
+      // animation finish first, same fix as taskForm.tsx's own
+      // captureFromCamera (useTaskFormPhotos.ts).
+      await new Promise((resolve) => setTimeout(resolve, 350));
+
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', `Camera access is required to ${mediaType === 'videos' ? 'record a video' : 'take a photo'}.`);

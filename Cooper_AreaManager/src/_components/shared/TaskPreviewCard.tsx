@@ -73,10 +73,15 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
   const isDone = isService
     ? (status === 'CLIENT_APPROVED' || status === 'CLOSED')
     : (status === 'COMPLETED' || status === 'CLOSED');
-  // Service's own OTP-pending state — still active, but needs a call-out
-  // since there's a real outstanding action (collect the customer's OTP)
-  // rather than just "in progress" like the other active statuses.
-  const isOtpPending = isService && status === 'COMPLETED';
+  // OTP-pending state — status is COMPLETED but the customer's OTP hasn't
+  // been verified yet, so there's still a real outstanding action (collect
+  // the customer's sign-off). Service's COMPLETED always means this (its
+  // completeness gate is CLIENT_APPROVED, a level above COMPLETED); for
+  // commissioning, COMPLETED can genuinely already have a verified OTP, so
+  // it checks completionOtp.verified directly instead of assuming pending.
+  const isOtpPending = isService
+    ? status === 'COMPLETED'
+    : status === 'COMPLETED' && !task.completionOtp?.verified;
   const isAssigned = status === 'ASSIGNED';
   // Accept only ever makes sense while a task is still literally ASSIGNED
   // (you can't "accept" something already in progress or done), so that
@@ -125,7 +130,9 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
       {isOtpPending && (
         <View style={styles.otpPendingBanner}>
           <Clock size={18} color="#E76124" />
-          <Text style={styles.otpPendingBannerText}>OTP verification pending — collect customer sign-off</Text>
+          <Text style={styles.otpPendingBannerText}>
+            {isService ? 'OTP verification pending — collect customer sign-off' : 'OTP Pending — awaiting customer verification'}
+          </Text>
         </View>
       )}
 

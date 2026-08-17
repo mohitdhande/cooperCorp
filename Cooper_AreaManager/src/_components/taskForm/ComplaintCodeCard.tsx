@@ -61,7 +61,7 @@ export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChang
       {isEditing ? (
         <>
           <View>
-            <Text style={styles.fieldLabel}>OBSERVATION</Text>
+            <Text style={styles.fieldLabel}>Observation</Text>
             <TextInput
               style={styles.textArea}
               placeholder="Describe the observation..."
@@ -73,7 +73,7 @@ export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChang
           </View>
 
           <View>
-            <Text style={styles.fieldLabel}>ROOT CAUSE</Text>
+            <Text style={styles.fieldLabel}>Root Cause</Text>
             <TextInput
               style={styles.textArea}
               placeholder="Describe the root cause..."
@@ -86,7 +86,7 @@ export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChang
 
           {onChangeCorrectiveAction && (
             <View>
-              <Text style={styles.fieldLabel}>CORRECTIVE ACTION TAKEN</Text>
+              <Text style={styles.fieldLabel}>Corrective Action Taken</Text>
               <TextInput
                 style={styles.textArea}
                 placeholder="Describe the corrective action taken..."

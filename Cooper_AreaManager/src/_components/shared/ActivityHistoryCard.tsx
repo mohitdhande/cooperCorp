@@ -72,7 +72,9 @@ const styles = StyleSheet.create({
   },
   headerPill: {
     alignSelf: 'stretch',
-    backgroundColor: '#F3F1FD',
+    // Same light blue as taskForm.tsx's own Step 1 GroupHeader pill /
+    // ReportSectionCard's header, not the previous lavender.
+    backgroundColor: '#DBEAFE',
     borderRadius: 16,
     paddingVertical: 12,
     paddingHorizontal: 16,

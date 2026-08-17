@@ -4,7 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../../utils/tokenStore';
 import {
-  getAssetById, getCommissioningProgress, getCommissioningTaskDetail,
+  getAssetById, getCommissioningProgress, getCommissioningTaskDetail, getCommissioningPrefillChecks,
 } from '../../viewModel/commisionAPi';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart } from '../../models/taskForm.types';
 import {
@@ -111,6 +111,11 @@ export function useTaskForm() {
   const photos = useTaskFormPhotos({ taskId, showToast });
   const otp = useTaskFormOtp({ taskId, showToast, isEngineer });
 
+  // Step 6's own optional freetext field, sent as suggestionComment in the
+  // Complete Task call below — not part of any of the other step-save
+  // endpoints, only ever submitted once, at completion.
+  const [suggestionComment, setSuggestionComment] = useState('');
+
   // Full task detail (asset genset/engine numbers, assignment chain) for the
   // task-summary header — the route params only carry a few flat fields
   // (taskId/assetId/taskType/assignedToName/assignedToRole), not the asset
@@ -150,6 +155,7 @@ export function useTaskForm() {
   const isRevalidation = normalizedTaskType === 'revalidation';
   const isPreCommissioning = normalizedTaskType === 'precommissioning';
   const isCommissioning = normalizedTaskType === 'commissioning';
+  const isReCommissioning = normalizedTaskType === 'recommissioning';
 
   // Pre-Commissioning now goes through the exact same 6-step sequence as
   // Commissioning (Asset Info -> Checks -> Complaint Codes -> Parts ->
@@ -195,11 +201,6 @@ export function useTaskForm() {
   const [sectionSaving, setSectionSaving] = useState<Record<string, boolean>>({});
   const [sectionError, setSectionError] = useState<Record<string, string>>({});
   const [sectionSuccess, setSectionSuccess] = useState<Record<string, boolean>>({});
-
-  // Asset's own activity history — only kept around to find a completed
-  // Pre-Commissioning entry for this same asset, so a fresh Commissioning
-  // task's step 2 checks can inherit its answers (see loadCommissioningChecks).
-  const [assetHistory, setAssetHistory] = useState<any[]>([]);
 
   // Shared by both the live fetch below and its offline cache fallback —
   // same field population either way.
@@ -261,7 +262,6 @@ export function useTaskForm() {
       const data = await getAssetById(token, assetId);
       await cacheData(`asset_${assetId}`, data);
       applyAssetData(await withPendingAssetEdits(data));
-      if (Array.isArray(data.history)) setAssetHistory(data.history);
     } catch (error: any) {
       // No signal at the site — fall back to whatever this device last
       // loaded for this asset, so the engineer can keep filling the form
@@ -335,6 +335,18 @@ export function useTaskForm() {
     setCommissioningChecks(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  // Fallback for a Commissioning/Re-Commissioning task that reached Step 2
+  // with no checks of its own and wasn't pre-filled at creation (an older
+  // task from before that existed, or the write-after-create step failed) —
+  // fetched silently so the "load as starting point" card only shows once
+  // there's real data behind it, applied on demand via handleLoadPrefillChecks
+  // rather than overwriting the form automatically.
+  const [prefillChecks, setPrefillChecks] = useState<Record<string, string> | null>(null);
+  const handleLoadPrefillChecks = useCallback(() => {
+    setCommissioningChecks(prev => ({ ...prefillChecks, ...prev }));
+    setPrefillChecks(null);
+  }, [prefillChecks]);
+
   // ── Step 2 — validation checks (Revalidation task type only) ──
   const [validationChecks, setValidationChecks] = useState<Record<string, string>>({});
   const updateValidationCheck = useCallback((key: string, value: string) => {
@@ -354,24 +366,12 @@ export function useTaskForm() {
     try {
       const token = await getToken();
       if (!token) return;
+      // New Job's own create flow already writes a completed
+      // Pre-Commissioning entry's checks onto a fresh Commissioning task at
+      // creation time (see newJobController.ts's handleCreateJob) — no
+      // client-side lookup/merge needed here just to display them.
       const data = await getCommissioningProgress(token, taskId);
       let checks = data.commissioningChecks || {};
-
-      // Inherit a completed Pre-Commissioning entry's own step-2 checks onto
-      // a fresh Commissioning task for the same asset — only when this task
-      // has no saved progress of its own yet, so it never overwrites real
-      // work already done on this task.
-      if (isCommissioning && Object.keys(checks).length === 0) {
-        const priorTaskId = assetHistory.find(h => h.type === 'PRE_COMMISSIONING' && h.status === 'COMPLETED')?._id;
-        if (priorTaskId) {
-          try {
-            const priorData = await getCommissioningProgress(token, priorTaskId);
-            if (priorData.commissioningChecks) checks = priorData.commissioningChecks;
-          } catch (priorError) {
-            console.log('Failed to load prior Pre-Commissioning checks:', priorError);
-          }
-        }
-      }
 
       const pendingGroups = await Promise.all(
         CHECK_GROUP_KEYS.map(group => getPendingBody(`checks_${group}_${taskId}`))
@@ -380,12 +380,30 @@ export function useTaskForm() {
         if (pending?.commissioningChecks) checks = { ...checks, ...pending.commissioningChecks };
       });
       setCommissioningChecks(checks);
+
+      // Always check (silently) whether the source entry has checks worth
+      // offering as a "load as starting point" card — shown regardless of
+      // whether this task already has its own checks, so it also works as
+      // a reset-to-source option, not just a one-time-empty fallback. Only
+      // relevant for Commissioning (source: Pre-Commissioning) and
+      // Re-Commissioning (source: Commissioning); every other type has no
+      // earlier stage to pull from.
+      if ((isCommissioning || isReCommissioning) && assetId) {
+        const srcType = isCommissioning ? 'PRE_COMMISSIONING' : 'COMMISSIONING';
+        try {
+          const prefillData = await getCommissioningPrefillChecks(token, assetId, srcType);
+          const fetched = prefillData?.commissioningChecks;
+          if (fetched && Object.values(fetched).some((v) => !!v)) setPrefillChecks(fetched);
+        } catch (prefillError) {
+          console.log('Failed to check for prefill checks:', prefillError);
+        }
+      }
     } catch (error) {
       console.log('Failed to load commissioning checks:', error);
     } finally {
       setChecksLoading(false);
     }
-  }, [taskId, isCommissioning, assetHistory]);
+  }, [taskId, isCommissioning, isReCommissioning, assetId]);
 
   const loadValidationChecks = useCallback(async () => {
     if (!taskId) return;
@@ -710,29 +728,11 @@ export function useTaskForm() {
     }
   }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer]);
 
-  // ── Completion summary (shown on step 6 itself once "Complete" succeeds,
-  // not a separate step) ──
-  // Fault-code/parts counts aren't a ready-made field from the API —
-  // they're the length of the arrays the task detail endpoint returns.
-  // completedAt is captured client-side (the moment this actually
-  // resolves) since the API doesn't return a distinct completion
-  // timestamp separate from the task's own scheduled date.
-  type CompletionSummary = {
-    date: string; faultCodesCount: number; partsUsedCount: number;
-    assignedAt: string; completedAt: string;
-  };
-  const [completionSummary, setCompletionSummary] = useState<CompletionSummary | null>(null);
-  const [completionSummaryLoading, setCompletionSummaryLoading] = useState(false);
-
   // Step 6's "Complete" action: saves any unsaved photos, marks the task
-  // complete (same status change the old flow only made after OTP
-  // verification — now made here so the task shows as Completed in the
-  // list right away), then loads the just-completed record for the
-  // success summary shown in place of the photo-upload UI — currentStep
-  // deliberately stays 6 (the stepper keeps that circle highlighted)
-  // rather than advancing, per the Figma. OTP verification (step 8) still
-  // happens afterward, independently, triggered by the summary's own
-  // "OTP Verify" button.
+  // complete, then navigates straight to the View Report screen for this
+  // task — that screen now owns the OTP verification step (its own
+  // "Verify Client OTP" footer), so this form has nothing left to do once
+  // Complete succeeds.
   const handleCompletePhotosStep = useCallback(async () => {
     if (photos.sitePhotos.length > 0 && !photos.photosUploadSuccess) {
       const photosOk = await photos.handleSaveAllPhotos();
@@ -748,37 +748,14 @@ export function useTaskForm() {
       if (!videosOk) return;
     }
 
-    const completeOk = await otp.handleMarkComplete();
+    const completeOk = await otp.handleMarkComplete(suggestionComment);
     if (!completeOk) return;
 
-    setCompletionSummaryLoading(true);
-    const now = new Date().toISOString();
-    try {
-      const token = await getToken();
-      if (token && taskId) {
-        const detail = await getCommissioningTaskDetail(token, taskId);
-        setCompletionSummary({
-          date: detail.date || detail.commissioningDate || now,
-          faultCodesCount: (detail.faultCodes || []).length,
-          partsUsedCount: (detail.partsUsed || []).length,
-          assignedAt: detail.assignedAt || detail.date || now,
-          completedAt: now,
-        });
-      }
-    } catch (error) {
-      // The task itself is already marked complete on the backend at this
-      // point (handleMarkComplete succeeded above, and it can't be called a
-      // second time — the backend rejects re-completing an already-completed
-      // entry) — this fetch only enriches the success screen's stats, so a
-      // failure here falls back to a same-instant summary instead of
-      // leaving the screen stuck with nothing to show for a task that did
-      // complete.
-      console.log('Failed to load completion summary:', error);
-      setCompletionSummary({ date: now, faultCodesCount: 0, partsUsedCount: 0, assignedAt: now, completedAt: now });
-    } finally {
-      setCompletionSummaryLoading(false);
-    }
-  }, [photos, otp, taskId]);
+    router.replace({
+      pathname: '/screens/taskReport',
+      params: { task: JSON.stringify({ _id: taskId, assetId }) },
+    } as any);
+  }, [photos, otp, taskId, assetId, router, suggestionComment]);
 
   // ── Profile (for the shared AppBar) ──
   const [userName, setUserName] = useState('');
@@ -818,6 +795,11 @@ export function useTaskForm() {
   return {
     router, params, TOTAL_STEPS, stepSequence,
     isRevalidation, isPreCommissioning,
+    // Already display-ready (formatTaskType at the call site turns the
+    // backend's PRE_COMMISSIONING/COMMISSIONING/RE_COMMISSIONING/
+    // REVALIDATION into "Pre-Commissioning" etc.) — used for the header
+    // title instead of a hardcoded "Commissioning".
+    taskTypeLabel: taskTypeRaw,
     userName, currentStep, setCurrentStep,
     task, taskLoading,
 
@@ -842,6 +824,7 @@ export function useTaskForm() {
     // Step 2
     checksLoading,
     commissioningChecks, updateCommissioningCheck,
+    prefillChecks, handleLoadPrefillChecks,
     validationChecks, updateValidationCheck,
     handleSaveGroupA, handleSaveGroupB, handleSaveGroupC, handleSaveGroupD, handleSaveGroupE,
     handleSaveValidationChecks,
@@ -879,23 +862,13 @@ export function useTaskForm() {
     step2PhotoOptionsVisible: photos.step2PhotoOptionsVisible,
     setStep2PhotoOptionsVisible: photos.setStep2PhotoOptionsVisible,
     handleTakeRunningHoursPhoto: photos.handleTakeRunningHoursPhoto,
-    handleRecordRunningHoursVideo: photos.handleRecordRunningHoursVideo,
     handleChooseRunningHoursPhotos: photos.handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto: photos.handleRemoveRunningHoursPhoto,
     photosUploading: photos.photosUploading, photosUploadProgress: photos.photosUploadProgress, photosUploadError: photos.photosUploadError,
     photosUploadSuccess: photos.photosUploadSuccess, handleSaveAllPhotos: photos.handleSaveAllPhotos,
     markCompleteLoading: otp.markCompleteLoading, markCompleteError: otp.markCompleteError,
+    suggestionComment, setSuggestionComment,
     handleCompletePhotosStep,
-
-    // Step 7
-    completionSummary, completionSummaryLoading,
-
-    // Step 8
-    otpGenerated: otp.otpGenerated, generatedOtp: otp.generatedOtp, customerOtp: otp.customerOtp,
-    otpInputRefs: otp.otpInputRefs, otpLoading: otp.otpLoading, otpError: otp.otpError,
-    taskCompleted: otp.taskCompleted,
-    handleGenerateOtp: otp.handleGenerateOtp, handleRegenerateOtp: otp.handleRegenerateOtp,
-    handleChangeCustomerOtpDigit: otp.handleChangeCustomerOtpDigit, handleVerifyAndComplete: otp.handleVerifyAndComplete,
 
     // Navigation
     goToCommissioningList, handleNext, handleBack,

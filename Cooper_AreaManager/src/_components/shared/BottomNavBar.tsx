@@ -50,20 +50,20 @@ export function BottomNavBar({ active }: Props) {
   return (
     <View style={[styles.wrapper, { paddingBottom: Math.max(insets.bottom, 12), paddingHorizontal: bottomBarPad }]}>
       <View style={styles.bar}>
-        <TouchableOpacity style={styles.navIcon} onPress={() => router.replace('/screens/dashboard' as any)}>
+        <TouchableOpacity style={[styles.navIcon, active === 'home' && styles.navIconActive]} onPress={() => router.replace('/screens/dashboard' as any)}>
           <LayoutGrid size={20} color={active === 'home' ? '#E76124' : '#9CA3AF'} />
         </TouchableOpacity>
-          <TouchableOpacity style={styles.navIcon} onPress={() => router.replace('/screens/serviceTasks' as any)}>
+          <TouchableOpacity style={[styles.navIcon, active === 'services' && styles.navIconActive]} onPress={() => router.replace('/screens/serviceTasks' as any)}>
           <Wrench size={20} color={active === 'services' ? '#E76124' : '#9CA3AF'} />
         </TouchableOpacity>
         <View style={styles.navCenterButton}>
           <Image source={require('@/assets/logo_circular.png')} style={styles.navCenterLogo} />
         </View>
 
-        <TouchableOpacity style={styles.navIcon} onPress={() => router.replace('/screens/commissioningTasks' as any)}>
+        <TouchableOpacity style={[styles.navIcon, active === 'commissioning' && styles.navIconActive]} onPress={() => router.replace('/screens/commissioningTasks' as any)}>
           <GensetIcon size={20} color={active === 'commissioning' ? '#E76124' : '#9CA3AF'} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navIcon} onPress={() => router.replace('/screens/profile' as any)}>
+        <TouchableOpacity style={[styles.navIcon, active === 'profile' && styles.navIconActive]} onPress={() => router.replace('/screens/profile' as any)}>
           <User size={20} color={active === 'profile' ? '#E76124' : '#9CA3AF'} />
         </TouchableOpacity>
       </View>
@@ -87,6 +87,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#43404E',
     justifyContent: 'center', alignItems: 'center',
   },
+  // Same orange as the active icon's own tint — the selected tab's circle
+  // border matches instead of blending into the others' neutral gray.
+  navIconActive: { borderColor: '#E76124' },
   navCenterButton: {
     width: 60, height: 60, borderRadius: 30,
     backgroundColor: '#E76124',

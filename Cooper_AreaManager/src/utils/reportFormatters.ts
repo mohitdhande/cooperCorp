@@ -90,7 +90,7 @@ export const formatTaskType = (type: string) => {
     RE_COMMISSIONING: 'Re-Commissioning',
     REVALIDATION: 'Revalidation',
     COMMISSIONING: 'Commissioning',
-    PRE_COMM: 'Pre-Comm',
+    PRE_COMMISSIONING: 'Pre-Commissioning',
   };
   return map[type] || type.replace(/_/g, ' ');
 };

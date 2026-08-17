@@ -280,6 +280,25 @@ export const getCommissioningAvailableActions = async (token: string, assetId: s
   }
 };
 
+// Unscoped by design (per the backend team's own dev guide) — returns only
+// check data (no PII), so it's readable regardless of who the source entry
+// is assigned to. Used right when the user picks COMMISSIONING (source
+// PRE_COMMISSIONING) or RE_COMMISSIONING (source COMMISSIONING) on New Job,
+// to preview/carry over the most recent completed entry's own checks.
+export const getCommissioningPrefillChecks = async (token: string, assetId: string, sourceType: string) => {
+  try {
+    const response = await axiosClient.get(
+      `/api/commissioning/prefill-checks?assetId=${assetId}&type=${sourceType}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    console.log('[Prefill Checks] Response:', JSON.stringify(response.data, null, 2));
+    return response.data;
+  } catch (error: any) {
+    console.log('Get Prefill Checks Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
 export const getDealers = async (token: string) => {
   try {
     const response = await axiosClient.get('/api/users?roles=dealer', {
@@ -653,6 +672,28 @@ export const verifyCommissioningOtp = async (token: string, taskId: string, code
     return response.data; // { verified: true }
   } catch (error: any) {
     console.log('Verify OTP Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// No status restriction — works on CLOSED entries too (unlike save-progress,
+// which only accepts ASSIGNED/ACCEPTED/IN_PROGRESS). Called from the OTP
+// sheet's own optional step 3, after the customer's OTP has already been
+// verified.
+export const saveCommissioningFeedback = async (
+  token: string,
+  taskId: string,
+  data: { comment?: string; customerName?: string; rating?: number }
+) => {
+  try {
+    const response = await axiosClient.put(
+      `/api/commissioning/${taskId}/feedback`,
+      data,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  } catch (error: any) {
+    console.log('Save Commissioning Feedback Error:', error.response?.data || error.message);
     throw error;
   }
 };

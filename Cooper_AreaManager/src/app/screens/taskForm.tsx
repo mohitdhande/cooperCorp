@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, Image, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
 import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,34 +14,13 @@ import { ComplaintCodeCard } from '../../_components/taskForm/ComplaintCodeCard'
 import { CheckToggleRow, TwoOptionToggleRow, MultiOptionToggleRow } from '../../_components/taskForm/FormToggleRows';
 import { useTaskForm } from '../../controllers/taskForm/useTaskForm';
 import { TaskSummaryHeader } from '../../_components/shared/TaskSummaryHeader';
-import { SplashVideoCircle } from '../../_components/shared/SplashVideoCircle';
-import { VideoThumbnail } from '../../_components/shared/VideoThumbnail';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
 import { useFieldFocusChain } from '../../utils/useFieldFocusChain';
 import { StepperRow } from '../../_components/shared/StepperRow';
-import { CheckCheck, ChevronLeft, ChevronRight, Phone, Plus } from 'lucide-react-native';
+import { CheckCheck, ChevronLeft, ChevronRight, Plus, Info } from 'lucide-react-native';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
-
-// "15 JUL" — short uppercase date, no year (the completion summary's date
-// pills only ever compare same-day/recent tasks, so a year would be noise).
-function formatShortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase();
-}
-
-// "04:00 PM"
-function formatShortTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-}
-
-// "2 hr 20 min" — the real elapsed time between assignment and completion.
-function formatDuration(startIso: string, endIso: string): string {
-  const totalMinutes = Math.max(0, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
-  const hrs = Math.floor(totalMinutes / 60);
-  const mins = totalMinutes % 60;
-  return hrs > 0 ? `${hrs} hr ${mins} min` : `${mins} min`;
-}
 
 // Same peach->light radial gradient backdrop as the Dashboard/Commissioning
 // screens (duplicated, not extracted — a small, screen-specific visual).
@@ -87,17 +66,17 @@ export default function TaskFormScreen() {
   const { register, focusNext } = useFieldFocusChain();
 
   // Every real API call this screen can trigger — every section save,
-  // every step's save, photo upload, OTP generate/verify, mark-complete —
-  // fades the whole screen with the loading video rather than just the
-  // one button's own small spinner. Complaint codes (step3Saving) and
-  // parts (step4Saving) are the deliberate exception: each card already
-  // has its own save button with its own spinner (isSaving), so saving one
-  // card shouldn't lock the whole screen and make it look like every code/
-  // part is being saved together.
+  // every step's save, photo upload, mark-complete — fades the whole
+  // screen with the loading video rather than just the one button's own
+  // small spinner. Complaint codes (step3Saving) and parts (step4Saving)
+  // are the deliberate exception: each card already has its own save
+  // button with its own spinner (isSaving), so saving one card shouldn't
+  // lock the whole screen and make it look like every code/part is being
+  // saved together.
   const isBusy = (
-    vm.assetLoading || vm.checksLoading || vm.completionSummaryLoading ||
+    vm.assetLoading || vm.checksLoading ||
     vm.readingsSaving || vm.photosUploading ||
-    vm.otpLoading || vm.markCompleteLoading ||
+    vm.markCompleteLoading ||
     vm.faultCodesLoading || vm.partsLoading ||
     Object.values(vm.sectionSaving).some(Boolean)
   );
@@ -117,6 +96,7 @@ export default function TaskFormScreen() {
   // so a section isn't permanently locked away after saving.
   const [sectionReopened, setSectionReopened] = useState<Record<string, boolean>>({});
   const isSectionExpanded = (key: string) => !vm.sectionSuccess[key] || !!sectionReopened[key];
+  const [suggestionFocused, setSuggestionFocused] = useState(false);
   const toggleSectionReopen = (key: string) => setSectionReopened((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // Electrical Readings + Engine Parameters (step 5) share one combined
@@ -126,17 +106,6 @@ export default function TaskFormScreen() {
   const readingsExpanded = !vm.readingsSuccess || !!sectionReopened['readings'];
   const toggleReadingsReopen = () => toggleSectionReopen('readings');
 
-  // Step 6's OTP entry view (tapped into from the success screen's "OTP
-  // Verify" button) — stays on step 6 rather than advancing, same as the
-  // success screen itself. Auto-generates the OTP the moment this view
-  // opens, since the new design has no separate "Generate OTP" button step.
-  const [showOtpEntry, setShowOtpEntry] = useState(false);
-  React.useEffect(() => {
-    if (showOtpEntry && !vm.otpGenerated && !vm.otpLoading) {
-      vm.handleGenerateOtp();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOtpEntry]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -152,7 +121,7 @@ export default function TaskFormScreen() {
         <TouchableOpacity style={styles.headerButton} onPress={vm.goToCommissioningList}>
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>TASK</Text>
+        <Text style={styles.headerTitle}>{vm.taskTypeLabel}</Text>
         <View style={styles.headerButton}>
           <Bell size={22} color="#979797" />
         </View>
@@ -160,16 +129,17 @@ export default function TaskFormScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        // Android's own softwareKeyboardLayoutMode is "pan" (app.json) —
-        // the OS already shifts the whole screen up to keep the focused
-        // input visible on its own. Pairing that with behavior="height"
-        // here made RN ALSO shrink this container by the keyboard's
-        // height on top of the OS's own pan, double-compensating and
-        // leaving a large empty gap between the content and the keyboard.
-        // undefined on Android leaves the OS's native pan as the only
-        // mechanism at work; iOS has no such OS-level behavior, so it
-        // still needs RN's own "padding" here.
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // Android's own native "pan" mode (app.json's softwareKeyboardLayoutMode)
+        // is the default across most of this app's simpler screens, but on a
+        // form this long (6 steps, dozens of fields) it doesn't reliably
+        // scroll a field near the bottom of a step into view above the
+        // keyboard — same reachability problem createAssetCommission.tsx
+        // hit, fixed there the same way: behavior="height" actively shrinks
+        // this container so the ScrollView (and its own focus-scroll
+        // behavior) has real room to work with, accepting the risk of a
+        // double-compensation gap in exchange for fields actually being
+        // reachable.
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }} keyboardShouldPersistTaps="handled">
@@ -183,11 +153,7 @@ export default function TaskFormScreen() {
           onSelectStep={vm.setCurrentStep}
         />
 
-        {/* Once the task is fully completed (OTP verified), every step's
-            fields become read-only — the stepper above stays interactive
-            so the user can still page back through and review what was
-            submitted, they just can't change anything. */}
-        <View pointerEvents={vm.taskCompleted ? 'none' : 'auto'} style={vm.taskCompleted ? styles.readOnlyDim : undefined}>
+        <View>
 
         {/* Shown on every step now, not just step 1 — gives constant
             context (task type, assignees, genset/engine ID) while paging
@@ -440,6 +406,18 @@ export default function TaskFormScreen() {
               </View>
             )}
 
+            {!!vm.prefillChecks && (
+              <View style={styles.prefillCard}>
+                <Info size={18} color="#B45309" />
+                <Text style={styles.prefillCardText}>
+                  Pre-Commissioning checks available — load as starting point.
+                </Text>
+                <TouchableOpacity style={styles.prefillLoadButton} onPress={vm.handleLoadPrefillChecks}>
+                  <Text style={styles.prefillLoadButtonText}>Load</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* GROUP A */}
             <View style={styles.sectionCard}>
               <GroupHeader
@@ -459,15 +437,21 @@ export default function TaskFormScreen() {
                   <CheckToggleRow index={9} question="230V supply for battery charger (if external charger fitted)" value={vm.commissioningChecks.A9 || ''} comment={vm.commissioningChecks.A9_comment || ''} hasNA onSetValue={(v) => vm.updateCommissioningCheck('A9', v)} onSetComment={(v) => vm.updateCommissioningCheck('A9_comment', v)} />
                   <CheckToggleRow index={10} question="Visually check all connectors and actuators on engine" value={vm.commissioningChecks.A10 || ''} comment={vm.commissioningChecks.A10_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A10', v)} onSetComment={(v) => vm.updateCommissioningCheck('A10_comment', v)} />
 
-                  <CheckToggleRow index={11} question="Electricity Board (Mains) — Voltage (V) Phase to Phase — R-Y Phase" value={vm.commissioningChecks.A14 || ''} comment={vm.commissioningChecks.A14_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A14', v)} onSetComment={(v) => vm.updateCommissioningCheck('A14_comment', v)} />
-                  <CheckToggleRow index={12} question="Electricity Board (Mains) — Voltage (V) Phase to Phase — Y-B Phase" value={vm.commissioningChecks.A15 || ''} comment={vm.commissioningChecks.A15_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A15', v)} onSetComment={(v) => vm.updateCommissioningCheck('A15_comment', v)} />
-                  <CheckToggleRow index={13} question="Electricity Board (Mains) — Voltage (V) Phase to Phase — B-R Phase" value={vm.commissioningChecks.A16 || ''} comment={vm.commissioningChecks.A16_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A16', v)} onSetComment={(v) => vm.updateCommissioningCheck('A16_comment', v)} />
-                  <CheckToggleRow index={14} question="Electricity Board (Mains) — Voltage (V) Phase to Neutral — R-N Phase" value={vm.commissioningChecks.A17 || ''} comment={vm.commissioningChecks.A17_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A17', v)} onSetComment={(v) => vm.updateCommissioningCheck('A17_comment', v)} />
-                  <CheckToggleRow index={15} question="Electricity Board (Mains) — Voltage (V) Phase to Neutral — Y-N Phase" value={vm.commissioningChecks.A18 || ''} comment={vm.commissioningChecks.A18_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A18', v)} onSetComment={(v) => vm.updateCommissioningCheck('A18_comment', v)} />
-                  <CheckToggleRow index={16} question="Electricity Board (Mains) — Voltage (V) Phase to Neutral — B-N Phase" value={vm.commissioningChecks.A19 || ''} comment={vm.commissioningChecks.A19_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A19', v)} onSetComment={(v) => vm.updateCommissioningCheck('A19_comment', v)} />
-                  <CheckToggleRow index={17} question="Electricity Board (Mains) — Load (A) — R Phase" value={vm.commissioningChecks.A11 || ''} comment={vm.commissioningChecks.A11_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A11', v)} onSetComment={(v) => vm.updateCommissioningCheck('A11_comment', v)} />
-                  <CheckToggleRow index={18} question="Electricity Board (Mains) — Load (A) — Y Phase" value={vm.commissioningChecks.A12 || ''} comment={vm.commissioningChecks.A12_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A12', v)} onSetComment={(v) => vm.updateCommissioningCheck('A12_comment', v)} />
-                  <CheckToggleRow index={19} question="Electricity Board (Mains) — Load (A) — B Phase" value={vm.commissioningChecks.A13 || ''} comment={vm.commissioningChecks.A13_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A13', v)} onSetComment={(v) => vm.updateCommissioningCheck('A13_comment', v)} />
+                  <Text style={styles.checkGroupHeading}>11. Electricity Board (Mains)</Text>
+                  <Text style={styles.checkSubGroupHeading}>Voltage (V) — Phase to Phase</Text>
+                  <CheckToggleRow index={null} question="R-Y Phase" value={vm.commissioningChecks.A14 || ''} comment={vm.commissioningChecks.A14_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A14', v)} onSetComment={(v) => vm.updateCommissioningCheck('A14_comment', v)} />
+                  <CheckToggleRow index={null} question="Y-B Phase" value={vm.commissioningChecks.A15 || ''} comment={vm.commissioningChecks.A15_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A15', v)} onSetComment={(v) => vm.updateCommissioningCheck('A15_comment', v)} />
+                  <CheckToggleRow index={null} question="B-R Phase" value={vm.commissioningChecks.A16 || ''} comment={vm.commissioningChecks.A16_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A16', v)} onSetComment={(v) => vm.updateCommissioningCheck('A16_comment', v)} />
+
+                  <Text style={[styles.checkSubGroupHeading, { marginTop: 14 }]}>Voltage (V) — Phase to Neutral</Text>
+                  <CheckToggleRow index={null} question="R-N Phase" value={vm.commissioningChecks.A17 || ''} comment={vm.commissioningChecks.A17_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A17', v)} onSetComment={(v) => vm.updateCommissioningCheck('A17_comment', v)} />
+                  <CheckToggleRow index={null} question="Y-N Phase" value={vm.commissioningChecks.A18 || ''} comment={vm.commissioningChecks.A18_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A18', v)} onSetComment={(v) => vm.updateCommissioningCheck('A18_comment', v)} />
+                  <CheckToggleRow index={null} question="B-N Phase" value={vm.commissioningChecks.A19 || ''} comment={vm.commissioningChecks.A19_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A19', v)} onSetComment={(v) => vm.updateCommissioningCheck('A19_comment', v)} />
+
+                  <Text style={[styles.checkSubGroupHeading, { marginTop: 14 }]}>Load (A)</Text>
+                  <CheckToggleRow index={null} question="R Phase" value={vm.commissioningChecks.A11 || ''} comment={vm.commissioningChecks.A11_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A11', v)} onSetComment={(v) => vm.updateCommissioningCheck('A11_comment', v)} />
+                  <CheckToggleRow index={null} question="Y Phase" value={vm.commissioningChecks.A12 || ''} comment={vm.commissioningChecks.A12_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A12', v)} onSetComment={(v) => vm.updateCommissioningCheck('A12_comment', v)} />
+                  <CheckToggleRow index={null} question="B Phase" value={vm.commissioningChecks.A13 || ''} comment={vm.commissioningChecks.A13_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A13', v)} onSetComment={(v) => vm.updateCommissioningCheck('A13_comment', v)} />
 
                   {vm.sectionError['groupA'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['groupA']}</Text> : null}
                   <TouchableOpacity
@@ -596,7 +580,7 @@ export default function TaskFormScreen() {
                     <View style={styles.durationPill}><Text style={styles.durationPillText}>{stage.duration}</Text></View>
                   </View>
 
-                  <Text style={styles.numericSubLabel}>LOAD (AMPS)</Text>
+                  <Text style={styles.numericSubLabel}>Load (AMPS)</Text>
                   <View style={styles.numericFieldRow}>
                     {(['LR', 'LY', 'LB'] as const).map((suffix, i) => (
                       <View key={suffix} style={styles.numericFieldThird}>
@@ -606,7 +590,7 @@ export default function TaskFormScreen() {
                     ))}
                   </View>
 
-                  <Text style={[styles.numericSubLabel, { marginTop: 14 }]}>VOLTAGE (VOLTS)</Text>
+                  <Text style={[styles.numericSubLabel, { marginTop: 14 }]}>Voltage (VOLTS)</Text>
                   <View style={styles.numericFieldRow}>
                     {(['VR', 'VY', 'VB'] as const).map((suffix, i) => (
                       <View key={suffix} style={styles.numericFieldThird}>
@@ -672,31 +656,27 @@ export default function TaskFormScreen() {
 
               <View style={[styles.groupDivider, { marginVertical: 12 }]} />
 
-              {/* Running-hours photo upload (uploads together with Step 6's site photos) */}
-              <Text style={styles.bigFormTitle}>Upload Photo</Text>
-              {vm.runningHoursPhotos.length > 0 && (
-                <View style={styles.photoGrid}>
-                  {vm.runningHoursPhotos.map((photo) => (
-                    <View key={photo.id} style={styles.photoThumbWrapper}>
-                      {photo.mediaType === 'video' ? (
-                        <VideoThumbnail uri={photo.uri} style={styles.photoThumb} />
-                      ) : (
-                        <Image source={{ uri: photo.uri }} style={styles.photoThumb} />
-                      )}
-                      <TouchableOpacity style={styles.photoRemoveBadge} onPress={() => vm.handleRemoveRunningHoursPhoto(photo.id)}>
-                        <Text style={styles.photoRemoveBadgeText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-              <TouchableOpacity style={styles.addPhotoBox} onPress={() => vm.setStep2PhotoOptionsVisible(true)}>
-                <View style={styles.addPhotoIconCircle}><Text style={styles.addPhotoIcon}>📤</Text></View>
-                <Text style={styles.addPhotoTitle}>Tap to upload photos</Text>
-              </TouchableOpacity>
-              {vm.runningHoursPhotos.length > 0 && (
-                <Text style={styles.photoCountText}>{vm.runningHoursPhotos.length} photo{vm.runningHoursPhotos.length > 1 ? 's' : ''} selected</Text>
-              )}
+              {/* Running-hours photo upload — same PhotosVideoCard Step 6
+                  uses, since this uploads together with Step 6's site
+                  photos through that exact same handleSaveAllPhotos call
+                  (see useTaskFormPhotos.ts) rather than its own separate
+                  upload. imagesOnly since this step never takes video or
+                  PDF (the step2 picker below only offers Take Photo/Choose
+                  from Gallery, both images-only) — video-status props stay
+                  inert (false/0) to match. */}
+              <PhotosVideoCard
+                sitePhotos={vm.runningHoursPhotos}
+                onRemove={vm.handleRemoveRunningHoursPhoto}
+                onAddPress={() => vm.setStep2PhotoOptionsVisible(true)}
+                photosUploading={vm.photosUploading}
+                photosUploadProgress={vm.photosUploadProgress}
+                photosUploadSuccess={vm.photosUploadSuccess}
+                photosUploadError={vm.photosUploadError}
+                imagesOnly
+                videosUploading={false}
+                videosUploadProgress={0}
+                videosUploadSuccess={false}
+              />
               </>
               )}
             </View>
@@ -800,7 +780,7 @@ export default function TaskFormScreen() {
             {vm.step3Error ? <Text style={styles.sectionErrorText}>{vm.step3Error}</Text> : null}
 
             {/* Below the added-codes list now, not above it. */}
-            <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openComplaintPicker} disabled={vm.taskCompleted}>
+            <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openComplaintPicker}>
               <Plus size={18} color="#0F0F0F" />
               <Text style={styles.addCodeButtonText}>ADD CODE</Text>
             </TouchableOpacity>
@@ -832,7 +812,7 @@ export default function TaskFormScreen() {
             {vm.step4Error ? <Text style={styles.sectionErrorText}>{vm.step4Error}</Text> : null}
 
             {/* Below the added-parts list now, not above it. */}
-            <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openPartPicker} disabled={vm.taskCompleted}>
+            <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openPartPicker}>
               <Plus size={18} color="#0F0F0F" />
               <Text style={styles.addCodeButtonText}>ADD PARTS</Text>
             </TouchableOpacity>
@@ -864,7 +844,7 @@ export default function TaskFormScreen() {
                   {([
                     ['AC VOLT R-Y (V)', 'acVoltageRY'], ['AC VOLT Y-B (V)', 'acVoltageYB'], ['AC VOLT B-R (V)', 'acVoltageBR'],
                     ['AC AMP R (A)', 'acAmpR'], ['AC AMP Y (A)', 'acAmpY'], ['AC AMP B (A)', 'acAmpB'],
-                    ['LOAD KW R', 'loadKwR'], ['LOAD KW Y', 'loadKwY'], ['LOAD KW B', 'loadKwB'],
+                    ['Load KW R', 'loadKwR'], ['Load KW Y', 'loadKwY'], ['Load KW B', 'loadKwB'],
                   ] as const).reduce((rows: (readonly [string, string])[][], field, i) => {
                     if (i % 3 === 0) rows.push([]);
                     rows[rows.length - 1].push(field);
@@ -881,11 +861,11 @@ export default function TaskFormScreen() {
                   ))}
 
                   <View style={styles.fieldFull}>
-                    <Text style={styles.fieldLabelStatic}>TOTAL KW</Text>
+                    <Text style={styles.fieldLabelStatic}>Total KW</Text>
                     <TextInput style={styles.fieldInput} value={vm.readings.totalKwLoad || ''} onChangeText={(v) => vm.updateReading('totalKwLoad', v)} keyboardType="numeric" />
                   </View>
                   <View style={styles.fieldFull}>
-                    <Text style={styles.fieldLabelStatic}>LOAD % (%)</Text>
+                    <Text style={styles.fieldLabelStatic}>Load (%)</Text>
                     <TextInput style={styles.fieldInput} value={vm.readings.loadPercentage || ''} onChangeText={(v) => vm.updateReading('loadPercentage', v)} keyboardType="numeric" />
                   </View>
                 </>
@@ -903,8 +883,8 @@ export default function TaskFormScreen() {
               {readingsExpanded && (
                 <>
                   {([
-                    ['RPM', 'rpm'], ['FREQUENCY (HZ)', 'frequency'], ['DC VOLTAGE (V)', 'dcVoltage'],
-                    ['OIL PRESSURE', 'oilPressure'], ['COOLANT TEMP (°C)', 'coolantTemperature'], ['DEF LEVEL (%)', 'defLevelPercentage'],
+                    ['RPM', 'rpm'], ['Frequency (HZ)', 'frequency'], ['DC Voltage (V)', 'dcVoltage'],
+                    ['Oil Pressure', 'oilPressure'], ['Coolant Temp (°C)', 'coolantTemperature'], ['DEF Level (%)', 'defLevelPercentage'],
                   ] as const).reduce((rows: (readonly [string, string])[][], field, i) => {
                     if (i % 3 === 0) rows.push([]);
                     rows[rows.length - 1].push(field);
@@ -920,7 +900,7 @@ export default function TaskFormScreen() {
                     </View>
                   ))}
 
-                  {([['OIL LEVEL', 'oilLevel', 'oilLevelComment'], ['COOLANT LEVEL', 'coolantLevel', 'coolantLevelComment']] as const).map(([label, key, commentKey], i) => (
+                  {([['Oil Level', 'oilLevel', 'oilLevelComment'], ['Coolant Level', 'coolantLevel', 'coolantLevelComment']] as const).map(([label, key, commentKey], i) => (
                     <View key={key} style={i === 0 ? { marginTop: 8 } : { marginTop: 16 }}>
                       <Text style={styles.fieldLabelStatic}>{label}</Text>
                       <View style={styles.okNotOkRow}>
@@ -968,105 +948,10 @@ export default function TaskFormScreen() {
         )}
 
         {/* ══════════════ STEP 6 — PHOTOS ══════════════ */}
-        {/* vm.taskCompleted (fully verified) is deliberately excluded here
-            and handled just after this read-only wrapper closes below —
-            its own "DONE" button needs to stay tappable, which it
-            couldn't if it were rendered inside the pointerEvents-none
-            block. */}
-        {vm.currentStep === 6 && !vm.taskCompleted && (vm.completionSummaryLoading ? (
-          <View style={styles.successCard}>
-            <ActivityIndicator size="large" color="#4AC686" />
-          </View>
-        ) : vm.completionSummary && showOtpEntry ? (
-          <>
-            {!!vm.customerContactNumber && (
-              <View style={styles.otpSentToCard}>
-                <Phone size={18} color="#2563EB" />
-                <View>
-                  <Text style={styles.otpSentToLabel}>OTP SENT TO</Text>
-                  <Text style={styles.otpSentToNumber}>{vm.customerContactNumber}</Text>
-                </View>
-              </View>
-            )}
-
-            <View style={[styles.otpInlineCard, { marginTop: 16 }]}>
-              <Text style={styles.otpInlineStepLabel}>STEP 1 — GENERATE OTP</Text>
-              <Text style={styles.otpInlineHint}>Share this code with the customer</Text>
-              <View style={[styles.otpBoxRowV2, { justifyContent: 'center', marginTop: 12 }]}>
-                {(vm.otpGenerated ? vm.generatedOtp : ['', '', '', '']).map((digit, index) => (
-                  <View key={index} style={styles.otpBoxV2Generated}>
-                    <Text style={styles.otpBoxV2GeneratedText}>{digit}</Text>
-                  </View>
-                ))}
-              </View>
-              <TouchableOpacity style={{ alignSelf: 'center', marginTop: 12 }} onPress={vm.handleRegenerateOtp} disabled={vm.otpLoading}>
-                <Text style={styles.otpResendLink}>Regenerate</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={[styles.otpInlineCard, { marginTop: 16 }]}>
-              <Text style={styles.otpInlineStepLabel}>STEP 2 — CUSTOMER ENTERS OTP</Text>
-              <View style={[styles.otpBoxRowV2, { justifyContent: 'center', marginTop: 4 }]}>
-                {vm.customerOtp.map((digit, index) => (
-                  <TextInput
-                    key={index}
-                    ref={(ref) => { vm.otpInputRefs.current[index] = ref; }}
-                    style={styles.otpBoxV2}
-                    value={digit}
-                    onChangeText={(text) => vm.handleChangeCustomerOtpDigit(index, text)}
-                    keyboardType="numeric"
-                    maxLength={1}
-                    textAlign="center"
-                    editable={vm.otpGenerated}
-                  />
-                ))}
-              </View>
-
-              {vm.otpError ? <Text style={styles.sectionErrorText}>{vm.otpError}</Text> : null}
-
-              <TouchableOpacity
-                style={[
-                  styles.otpVerifyButtonV2,
-                  (vm.customerOtp.join('').length < 4 || vm.otpLoading) && styles.buttonDisabled,
-                ]}
-                onPress={vm.handleVerifyAndComplete}
-                disabled={vm.customerOtp.join('').length < 4 || vm.otpLoading}
-              >
-                {vm.otpLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpInlineButtonText}>Verify & Complete</Text>}
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity style={styles.backToTasksButton} onPress={vm.goToCommissioningList}>
-              <Text style={styles.backToTasksButtonText}>Back to Tasks</Text>
-            </TouchableOpacity>
-          </>
-        ) : vm.completionSummary ? (
-          <View style={styles.successCard}>
-            <SplashVideoCircle size={164} />
-            <Text style={styles.successTitle}>Successfully</Text>
-            <Text style={styles.successSubtitle}>You have successfully completed the task</Text>
-
-            <View style={styles.successPillRow}>
-              <View style={styles.successDatePill}>
-                <Text style={styles.successDatePillDate}>{formatShortDate(vm.completionSummary.assignedAt)}</Text>
-                <Text style={styles.successDatePillTime}>{formatShortTime(vm.completionSummary.assignedAt)}</Text>
-              </View>
-              <View style={styles.successDurationPill}>
-                <Text style={styles.successDurationText}>
-                  {formatDuration(vm.completionSummary.assignedAt, vm.completionSummary.completedAt)}
-                </Text>
-              </View>
-              <View style={styles.successDatePill}>
-                <Text style={styles.successDatePillDate}>{formatShortDate(vm.completionSummary.completedAt)}</Text>
-                <Text style={styles.successDatePillTime}>{formatShortTime(vm.completionSummary.completedAt)}</Text>
-              </View>
-            </View>
-
-            <TouchableOpacity style={styles.otpVerifyButtonV2} onPress={() => setShowOtpEntry(true)}>
-              <Text style={styles.otpVerifyButtonV2Text}>OTP VERIFY</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
+        {/* Complete navigates straight to View Report once it succeeds
+            (see handleCompletePhotosStep) — this step never stays around
+            long enough to need its own completed/OTP view anymore. */}
+        {vm.currentStep === 6 && (
           <>
             {/* Photos & Video card — shared with the Service form (same
                 grid + video-list + upload behavior), not a duplicated copy
@@ -1098,24 +983,29 @@ export default function TaskFormScreen() {
                 onRemove={vm.handleRemoveSitePhoto}
               />
             </View>
+
+            {/* Optional freetext, submitted once as suggestionComment in the
+                Complete Task call — not a per-step save like the sections
+                above. */}
+            <View style={styles.suggestionCard}>
+              <Text style={styles.suggestionCardTitle}>SUGGESTION COMMENT</Text>
+              <TextInput
+                style={[styles.suggestionInput, suggestionFocused && styles.suggestionInputFocused]}
+                placeholder="Enter suggestion comments (one per line)..."
+                placeholderTextColor="#9CA3AF"
+                value={vm.suggestionComment}
+                onChangeText={vm.setSuggestionComment}
+                onFocus={() => setSuggestionFocused(true)}
+                onBlur={() => setSuggestionFocused(false)}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+            </View>
           </>
-        ))}
+        )}
 
         </View>
-
-        {/* Task fully verified — the one piece of step 6 that stays
-            interactive even though everything else above is now
-            read-only, since its DONE button needs to work. */}
-        {vm.currentStep === 6 && vm.taskCompleted && (
-          <View style={styles.successCard}>
-            <SplashVideoCircle size={164} />
-            <Text style={styles.successTitle}>Successfully</Text>
-            <Text style={styles.successSubtitle}>Verified the task completion.</Text>
-            <TouchableOpacity style={styles.otpVerifyButtonV2} onPress={vm.goToCommissioningList}>
-              <Text style={styles.otpVerifyButtonV2Text}>DONE</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
         {/* Camera / Gallery picker — Step 6 site photos. Photo and video
             capture are separate rows (Android's camera intent can't mix
@@ -1123,7 +1013,7 @@ export default function TaskFormScreen() {
             useTaskFormPhotos.ts). Videos are preview-only for now (no
             backend endpoint to save them yet) — they're excluded from the
             actual upload in handleSaveAllPhotos. */}
-        <Modal visible={vm.photoOptionsVisible} transparent animationType="fade" onRequestClose={() => vm.setPhotoOptionsVisible(false)}>
+        <Modal visible={vm.photoOptionsVisible} transparent animationType="none" onRequestClose={() => vm.setPhotoOptionsVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => vm.setPhotoOptionsVisible(false)}>
             <View style={[styles.optionsSheet, { paddingBottom: sheetPaddingBottom }]}>
               <Text style={styles.optionsTitle}>Add Photo or Video</Text>
@@ -1138,15 +1028,13 @@ export default function TaskFormScreen() {
           </Pressable>
         </Modal>
 
-        {/* Camera / Gallery picker — Step 2 running-hours photos (same
-            split-capture / preview-only video note as above). */}
-        <Modal visible={vm.step2PhotoOptionsVisible} transparent animationType="fade" onRequestClose={() => vm.setStep2PhotoOptionsVisible(false)}>
+        {/* Camera / Gallery picker — Step 2 running-hours photos. Images
+            only, unlike Step 6's site photos (no video, no PDF). */}
+        <Modal visible={vm.step2PhotoOptionsVisible} transparent animationType="none" onRequestClose={() => vm.setStep2PhotoOptionsVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => vm.setStep2PhotoOptionsVisible(false)}>
             <View style={[styles.optionsSheet, { paddingBottom: sheetPaddingBottom }]}>
-              <Text style={styles.optionsTitle}>Add Photo or Video</Text>
+              <Text style={styles.optionsTitle}>Add Photo</Text>
               <TouchableOpacity style={styles.optionRow} onPress={vm.handleTakeRunningHoursPhoto}><Text style={styles.optionText}>📷  Take Photo</Text></TouchableOpacity>
-              <View style={styles.optionDivider} />
-              <TouchableOpacity style={styles.optionRow} onPress={vm.handleRecordRunningHoursVideo}><Text style={styles.optionText}>🎥  Record Video</Text></TouchableOpacity>
               <View style={styles.optionDivider} />
               <TouchableOpacity style={styles.optionRow} onPress={vm.handleChooseRunningHoursPhotos}><Text style={styles.optionText}>🖼️  Choose from Gallery</Text></TouchableOpacity>
               <View style={styles.optionDivider} />
@@ -1157,37 +1045,35 @@ export default function TaskFormScreen() {
 
         {/* Labeled Back/Next bar, alongside the stepper row's flanking
             arrows above — same handlers either way, just a second, more
-            discoverable way to move between steps. Hidden entirely once
-            step 6's completionSummary is set (task done, nothing left to
-            navigate). Scrolls away with the rest of the content instead of
-            staying pinned at the screen's bottom edge. */}
-        {!(vm.currentStep === 6 && !!vm.completionSummary) && (
-          <View style={styles.fixedBottomActions}>
-            <TouchableOpacity
-              style={[styles.backButton, vm.stepSequence.indexOf(vm.currentStep) === 0 && styles.buttonDisabled]}
-              onPress={vm.handleBack}
-              disabled={vm.stepSequence.indexOf(vm.currentStep) === 0}
-            >
-              <ChevronLeft size={24} color="#4B5563" />
-            </TouchableOpacity>
+            discoverable way to move between steps. In-flow at the bottom
+            of each step's own content (not fixed on screen) — it should
+            only come into view once you've actually scrolled down through
+            that step's fields, right after the last one. */}
+        <View style={styles.fixedBottomActions}>
+          <TouchableOpacity
+            style={[styles.backButton, vm.stepSequence.indexOf(vm.currentStep) === 0 && styles.buttonDisabled]}
+            onPress={vm.handleBack}
+            disabled={vm.stepSequence.indexOf(vm.currentStep) === 0}
+          >
+            <ChevronLeft size={24} color="#4B5563" />
+          </TouchableOpacity>
 
-            {vm.currentStep === 6 ? (
-              <TouchableOpacity
-                style={[styles.completeTaskButton, vm.markCompleteLoading && styles.buttonDisabled]}
-                onPress={vm.handleCompletePhotosStep}
-                disabled={vm.markCompleteLoading}
-              >
-                {vm.markCompleteLoading
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={styles.completeTaskButtonText}>COMPLETE THE TASK</Text>}
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.nextButton} onPress={vm.handleNext}>
-                <ChevronRight size={24} color="#FFFFFF" />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+          {vm.currentStep === 6 ? (
+            <TouchableOpacity
+              style={[styles.completeTaskButton, vm.markCompleteLoading && styles.buttonDisabled]}
+              onPress={vm.handleCompletePhotosStep}
+              disabled={vm.markCompleteLoading}
+            >
+              {vm.markCompleteLoading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={styles.completeTaskButtonText}> Complete The Task</Text>}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.nextButton} onPress={vm.handleNext}>
+              <ChevronRight size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
+        </View>
       </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -1196,7 +1082,6 @@ export default function TaskFormScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6F6F6' },
-  readOnlyDim: { opacity: 0.6 },
   scrollArea: { flex: 1, paddingHorizontal: 20 },
   buttonDisabled: { opacity: 0.6 },
 
@@ -1218,7 +1103,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 20, fontWeight: '400', color: '#000000', textTransform: 'uppercase' },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase'  },
 
   stepperRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
@@ -1249,7 +1134,36 @@ const styles = StyleSheet.create({
   loadingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
 
+  // Fallback "load as starting point" card for a Commissioning/
+  // Re-Commissioning task that reached Step 2 without pre-filled checks —
+  // same amber warning tone used elsewhere in the app for a heads-up that
+  // isn't an error.
+  prefillCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1, borderColor: '#FDE68A',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  prefillCardText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#B45309', lineHeight: 18 },
+  prefillLoadButton: {
+    borderWidth: 1.5, borderColor: '#F26722',
+    borderRadius: 100,
+    paddingHorizontal: 18, paddingVertical: 8,
+  },
+  prefillLoadButtonText: { fontSize: 13, fontWeight: '700', color: '#F26722' },
+
   sectionCard: { backgroundColor: '#fff', borderRadius: 32, paddingTop: 12, paddingBottom: 12, paddingLeft: 12, paddingRight: 12, marginBottom: 16 },
+
+  suggestionCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 16, marginTop: 16 },
+  suggestionCardTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', letterSpacing: 0.5, marginBottom: 12 },
+  suggestionInput: {
+    borderWidth: 1.5, borderColor: '#E5E7EB', borderRadius: 16,
+    paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 15, color: '#111827', minHeight: 90,
+  },
+  suggestionInputFocused: { borderColor: '#F26722' },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', letterSpacing: 0.5 },
 
@@ -1286,7 +1200,6 @@ const styles = StyleSheet.create({
   sectionErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500', marginTop: 10 },
 
   bigFormCard: { backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 16 },
-  bigFormTitle: { fontSize: 17, fontWeight: '700', color: '#1F2937' },
   groupDivider: { height: 1, backgroundColor: '#E5E7EB', marginVertical: 16 },
 
   checkItemBlock: {
@@ -1294,6 +1207,12 @@ const styles = StyleSheet.create({
   },
   checkItemQuestion: { fontSize: 14, color: '#374151', fontWeight: '600', marginBottom: 10 },
   numericSubLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', marginBottom: 8, letterSpacing: 0.3 },
+  // Sits above 11-19's flat CheckToggleRow list — same "group label between
+  // rows" role numericSubLabel plays for Group B/C's numeric fields, just
+  // horizontally aligned to the rows' own paddingHorizontal instead of
+  // living inside a padded checkItemBlock card.
+  checkGroupHeading: { fontSize: 16, fontWeight: '700', color: '#374151', paddingHorizontal: 12, marginTop: 4, marginBottom: 4 },
+  checkSubGroupHeading: { fontSize: 13, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.3, paddingHorizontal: 12, marginBottom: 4 },
   numericFieldRow: { flexDirection: 'row', justifyContent: 'space-between' },
   numericFieldThird: { width: '31%' },
   numericFieldLabel: { fontSize: 11, color: '#6B7280', fontWeight: '600', marginBottom: 6 },
@@ -1398,73 +1317,5 @@ const styles = StyleSheet.create({
     height: 56,
     justifyContent: 'center', alignItems: 'center',
   },
-  completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18, textTransform: 'uppercase' },
-
-  // Step 6's own completion-success screen (shown in place of the photo
-  // upload UI once vm.completionSummary is set — stays on step 6 rather
-  // than advancing, per the Figma).
-  successCard: { alignItems: 'center', paddingTop: 32, paddingBottom: 16, gap: 12 },
-  successTitle: { fontSize: 32, fontWeight: '600', color: '#4AC686', marginTop: 8 },
-  successSubtitle: { fontSize: 21, fontWeight: '400', color: '#000000', opacity: 0.4, textAlign: 'center', paddingHorizontal: 24 },
-  successPillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, width: '100%' },
-  successDatePill: {
-    width: 75, height: 56, borderRadius: 8,
-    backgroundColor: '#262626',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  successDatePillDate: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  successDatePillTime: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  successDurationPill: {
-    flex: 1, height: 56, borderRadius: 8,
-    backgroundColor: '#F6C8AF',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  successDurationText: { color: '#071F13', fontSize: 18, fontWeight: '600' },
-  otpVerifyButtonV2: {
-    width: '100%', height: 56, borderRadius: 24,
-    backgroundColor: '#4AC686',
-    justifyContent: 'center', alignItems: 'center',
-    marginTop: 24,
-  },
-  otpVerifyButtonV2Text: { color: '#FFFFFF', fontWeight: '600', fontSize: 18, textTransform: 'uppercase' },
-  otpInlineButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18 },
-
-  // "OTP SENT TO" card + the STEP 1/STEP 2 inline cards replacing the old
-  // centered SplashVideoCircle OTP view — same pattern srTaskForm.tsx's own
-  // Customer Sign-off card already uses for the SR flow.
-  otpSentToCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#DBEAFE',
-    borderRadius: 20,
-    padding: 16,
-  },
-  otpSentToLabel: { fontSize: 11, fontWeight: '700', color: '#2563EB', letterSpacing: 0.4 },
-  otpSentToNumber: { fontSize: 16, fontWeight: '700', color: '#1D4ED8', marginTop: 2 },
-  otpInlineCard: { backgroundColor: '#F3F4F6', borderRadius: 20, padding: 16 },
-  otpInlineStepLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.4 },
-  otpInlineHint: { fontSize: 13, color: '#6B7280', marginTop: 4 },
-  otpBoxV2Generated: {
-    width: 60, height: 60, borderRadius: 12,
-    borderWidth: 1.5, borderColor: '#E76124',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  otpBoxV2GeneratedText: { fontSize: 20, fontWeight: '700', color: '#000000' },
-  backToTasksButton: {
-    height: 56, borderRadius: 100,
-    borderWidth: 1.5, borderColor: '#D1D5DB',
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center', alignItems: 'center',
-    marginTop: 16,
-  },
-  backToTasksButtonText: { fontSize: 15, fontWeight: '700', color: '#4B5563' },
-
-  otpBoxRowV2: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  otpBoxV2: {
-    width: 60, height: 60, borderRadius: 12,
-    borderWidth: 1, borderColor: '#DBDBDB',
-    backgroundColor: '#F8F8F8',
-    fontSize: 20, fontWeight: '700', color: '#000000',
-  },
-  otpResendLink: { fontSize: 16, fontWeight: '400', color: '#E76124', marginTop: 4 },
+  completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18 },
 });

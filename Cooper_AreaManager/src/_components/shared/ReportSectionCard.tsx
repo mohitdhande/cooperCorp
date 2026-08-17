@@ -18,9 +18,10 @@ type Props = {
 };
 
 // Collapsible section shared by taskReport.tsx/srTaskReport.tsx — a light
-// purple pill header (matching ActivityHistoryCard's own header pill) inset
-// inside a white outer card, instead of the pill itself being a full-bleed
-// bar. Expanded content sits below the pill within that same white card.
+// blue pill header (matching taskForm.tsx's own Step 1 GroupHeader pill)
+// inset inside a white outer card, instead of the pill itself being a
+// full-bleed bar. Expanded content sits below the pill within that same
+// white card.
 export function ReportSectionCard({ title, expanded, onToggle, children, count, badge }: Props) {
   return (
     <View style={styles.wrapper}>
@@ -58,7 +59,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F3F1FD',
+    // Same light blue as taskForm.tsx's own Step 1 GroupHeader pill
+    // (Genset Identification etc.), not the previous lavender.
+    backgroundColor: '#DBEAFE',
     borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 14,

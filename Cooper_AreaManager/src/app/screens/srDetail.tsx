@@ -12,6 +12,7 @@ import {
 import { useSrDetailController } from '../../controllers/srDetailController';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
+import { NotesBulletList } from '../../_components/shared/NotesBulletList';
 import { InfoRow } from '../../_components/ReportRows';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
@@ -857,7 +858,7 @@ export default function SrDetailScreen() {
               {!notes ? (
                 <Text style={styles.emptyText}>No notes recorded.</Text>
               ) : (
-                <Text style={styles.notesText}>{notes}</Text>
+                <NotesBulletList notes={notes} />
               )}
             </ReportSectionCard>
           </>
@@ -990,7 +991,7 @@ export default function SrDetailScreen() {
                   <FileText size={16} color="#9CA3AF" />
                   <Text style={styles.plainSectionLabel}>NOTES</Text>
                 </View>
-                <Text style={styles.notesText}>{notes}</Text>
+                <NotesBulletList notes={notes} />
               </View>
             )}
           </>
@@ -1270,7 +1271,6 @@ const styles = StyleSheet.create({
   },
 
   emptyText: { color: '#9CA3AF', fontSize: 13, fontStyle: 'italic' },
-  notesText: { color: '#1F2937', fontSize: 14, lineHeight: 21 },
 
   complaintCard: {
     backgroundColor: '#FAFAFA',

@@ -98,21 +98,19 @@ export default function NewJobScreen() {
     jobDate,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,
-    notes, setNotes,
+    notes, setNotes, notesError, assigneeError,
+    preCommEntry,
     handleCreateJob, creating, createError,
   } = useNewJobController();
 
   const [clientInfoExpanded, setClientInfoExpanded] = useState(false);
 
   const history = asset?.history || [];
-  // asset.history isn't a reliable signal here — it can come back empty
-  // even right after a Pre-Commissioning entry was completed for this same
-  // asset. The Pre-Commissioning action itself going unavailable is: it's a
-  // one-time first step with no other prerequisite, so the only reason the
-  // backend would ever mark it unavailable is that it's already been done —
-  // the same signal that already greys out its own action card.
-  const preCommissioningAction = availableActions?.actions?.find((a) => a.action === 'PRE_COMMISSIONING');
-  const hasPreCommissioningData = !!preCommissioningAction && !preCommissioningAction.available;
+  // Tied to the real GET /api/commissioning/prefill-checks result
+  // (fetched in openAssignPicker as soon as Commissioning is tapped) rather
+  // than guessed from availableActions — this is the actual data that's
+  // about to get written onto the new entry, not an inference about it.
+  const hasPreCommissioningData = !!preCommEntry && Object.values(preCommEntry).some((v) => !!v);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -141,7 +139,7 @@ export default function NewJobScreen() {
           own "padding" here. */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {/* The search bar used to sit fixed above the ScrollView (a sibling,
@@ -155,7 +153,7 @@ export default function NewJobScreen() {
           style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 16, paddingBottom: 24, gap: 20 }}
+          contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 16, paddingBottom: 120, gap: 20 }}
         >
           <SearchBar
             value={searchText}
@@ -379,20 +377,24 @@ export default function NewJobScreen() {
                             )}
 
                             <View style={[styles.formField, { marginTop: 20 }]}>
-                              <Text style={styles.formLabel}>Assign To</Text>
-                              <TouchableOpacity style={styles.assignToField} onPress={openAssigneePicker}>
+                              <Text style={styles.formLabel}>Assign To <Text style={styles.requiredAsterisk}>*</Text></Text>
+                              <TouchableOpacity
+                                style={[styles.assignToField, !!assigneeError && styles.formInputError]}
+                                onPress={openAssigneePicker}
+                              >
                                 <UserRoundCog size={18} color="#9CA3AF" />
                                 <Text style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]} numberOfLines={1}>
                                   {selectedAssignee ? selectedAssignee.name : 'Select assignee...'}
                                 </Text>
                                 <ChevronRight size={18} color="#9CA3AF" />
                               </TouchableOpacity>
+                              {!!assigneeError && <Text style={styles.fieldErrorText}>{assigneeError}</Text>}
                             </View>
 
                             <View style={[styles.formField, { marginTop: 20 }]}>
-                              <Text style={styles.formLabel}>Notes (optional)</Text>
+                              <Text style={styles.formLabel}>Notes <Text style={styles.requiredAsterisk}>*</Text></Text>
                               <TextInput
-                                style={[styles.formInput, styles.formTextarea]}
+                                style={[styles.formInput, styles.formTextarea, !!notesError && styles.formInputError]}
                                 placeholder="Add notes..."
                                 placeholderTextColor="#9CA3AF"
                                 value={notes}
@@ -401,6 +403,7 @@ export default function NewJobScreen() {
                                 numberOfLines={4}
                                 textAlignVertical="top"
                               />
+                              {!!notesError && <Text style={styles.fieldErrorText}>{notesError}</Text>}
                             </View>
 
                             {!!createError && (
@@ -414,9 +417,9 @@ export default function NewJobScreen() {
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
-                                style={[styles.createButton, !selectedAssignee && styles.createButtonDisabled]}
+                                style={[styles.createButton, creating && styles.createButtonDisabled]}
                                 onPress={handleCreateJob}
-                                disabled={!selectedAssignee || creating}
+                                disabled={creating}
                               >
                                 {creating ? (
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -688,6 +691,9 @@ const styles = StyleSheet.create({
     fontSize: 15, color: '#1F2937',
   },
   formTextarea: { height: 100 },
+  formInputError: { borderColor: '#DC2626' },
+  fieldErrorText: { fontSize: 12, fontWeight: '600', color: '#DC2626', marginTop: 6 },
+  requiredAsterisk: { color: '#DC2626' },
 
   // Expands directly below the tapped action's own card.
   jobCardBox: {

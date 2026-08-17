@@ -91,6 +91,18 @@ export default function Index() {
   }, []);
 
   useEffect(() => {
+    // TeamContext's own refresh() fires the instant the root layout mounts,
+    // fully in parallel with this screen's 7s splash timer — if the cached
+    // session is stale, that fetch 401s, its refresh attempt fails, and
+    // axiosClient's interceptor redirects to /screens/login (with a
+    // sessionMessage param) well before checkLoginStatus below ever
+    // resolves. Without this guard, this effect would still land its own
+    // late, param-less navigation once the splash timer finally elapses —
+    // stomping the message the interceptor had already surfaced. cancelled
+    // is flipped in the cleanup, which fires as soon as that earlier
+    // redirect unmounts this screen.
+    let cancelled = false;
+
     const checkLoginStatus = async (): Promise<Destination> => {
       try {
         const token = await getToken();
@@ -111,6 +123,7 @@ export default function Index() {
 
     (async () => {
       const [next] = await Promise.all([checkLoginStatus(), delay(MIN_SPLASH_VIDEO_MS)]);
+      if (cancelled) return;
 
       if (next === '/screens/login') {
         setRevealLogin(true);
@@ -118,6 +131,8 @@ export default function Index() {
         router.replace(next);
       }
     })();
+
+    return () => { cancelled = true; };
   }, [router]);
 
   if (revealLogin) {

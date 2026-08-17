@@ -5,7 +5,11 @@ import { Text } from '@/_components/AppText';
 import { X, Check } from 'lucide-react-native';
 
 type CheckToggleRowProps = {
-  index: number;
+  // null hides the numeric prefix entirely — for rows nested under one
+  // already-numbered group heading (e.g. Electricity Board (Mains)'s own
+  // phase rows, all grouped under item 11) rather than each getting its
+  // own sequential number.
+  index: number | null;
   question: string;
   value: string;
   comment: string;
@@ -91,7 +95,7 @@ function ToggleRowCore({
             outside the card. */}
         <View style={styles.rowLabelGroup}>
           <Text style={styles.rowLabel}>
-            <Text style={styles.rowIndex}>{indexLabel} </Text>
+            {!!indexLabel && <Text style={styles.rowIndex}>{indexLabel} </Text>}
             {question}
           </Text>
           {subtext ? <Text style={styles.subtext}>{subtext}</Text> : null}
@@ -141,8 +145,8 @@ export const CheckToggleRow: React.FC<CheckToggleRowProps> = React.memo(({
   index, question, value, comment, hasNA = false, onSetValue, onSetComment,
 }) => (
   <ToggleRowCore
-    indexLabel={String(index).padStart(2, '0')}
-    alt={index % 2 === 0}
+    indexLabel={index === null ? '' : String(index).padStart(2, '0')}
+    alt={index !== null && index % 2 === 0}
     question={question}
     optionA="OK"
     optionB="Not OK"

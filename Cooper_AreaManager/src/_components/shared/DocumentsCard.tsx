@@ -4,6 +4,9 @@ import { Text } from '@/_components/AppText';
 import { FileText, Plus, Trash2 } from 'lucide-react-native';
 import { SitePhoto } from '../../models/taskForm.types';
 import { formatFileSize } from '../../utils/reportFormatters';
+import { MAX_PDF_SIZE_BYTES } from '../../utils/photoValidation';
+
+const MAX_PDF_MB = MAX_PDF_SIZE_BYTES / (1024 * 1024);
 
 type Props = {
   pdfs: SitePhoto[];
@@ -28,16 +31,19 @@ export function DocumentsCard({ pdfs, uploading, uploadProgress, uploadSuccess, 
 
   return (
     <View style={styles.card}>
-      <View style={styles.header}>
-        <View style={styles.iconChip}>
-          <FileText size={16} color="#E76124" />
-        </View>
-        <Text style={styles.title}>DOCUMENTS</Text>
-        {pdfs.length > 0 && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>{pdfs.length}</Text>
+      <View style={styles.headerBlock}>
+        <View style={styles.header}>
+          <View style={styles.iconChip}>
+            <FileText size={16} color="#E76124" />
           </View>
-        )}
+          <Text style={styles.title}>DOCUMENTS</Text>
+          {pdfs.length > 0 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countBadgeText}>{pdfs.length}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.subtitle}>PDF · {MAX_PDF_MB} MB max</Text>
       </View>
 
       {pdfs.length > 0 && (
@@ -79,7 +85,9 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 16,
   },
+  headerBlock: { gap: 4 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  subtitle: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
   iconChip: {
     width: 30, height: 30, borderRadius: 8,
     backgroundColor: '#FCEEDD',

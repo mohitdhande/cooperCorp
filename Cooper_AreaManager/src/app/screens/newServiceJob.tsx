@@ -16,7 +16,6 @@ import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModa
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { AssetLocationContact } from '../../_components/shared/AssetLocationContact';
-import { AssetHistorySection } from '../../_components/shared/AssetHistorySection';
 import { AnchoredPanel, Anchor } from '../../_components/shared/AnchoredPanel';
 import { FreeServiceItem, ServiceCategory } from '../../controllers/newServiceJobController';
 
@@ -276,16 +275,6 @@ export default function NewServiceJobScreen() {
       <ScreenBackground />
       {(isSearching || assetLoading || creating) && <LoadingOverlay />}
 
-      <View style={[styles.header, { paddingHorizontal: headerPad }]}>
-        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-          <ChevronLeft size={22} color="#979797" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>NEW SERVICE JOB</Text>
-        <View style={styles.headerButton}>
-          <Bell size={22} color="#979797" />
-        </View>
-      </View>
-
       {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
           OS already shifts the whole screen up for the focused input;
           pairing that with behavior="height" double-compensated and left
@@ -297,16 +286,31 @@ export default function NewServiceJobScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-      {/* Search bar moved inside the ScrollView's own children (was a fixed
-          sibling above it) — same fix as newJob.tsx, so it scrolls away
-          with the rest of the screen under the fixed app bar instead of
-          staying pinned and clipping whatever card ends up underneath it. */}
+      {/* App bar is now the ScrollView's own first child (was a fixed
+          sibling above it) — the whole screen, header included, scrolls as
+          one unit instead of the bar staying pinned while only the content
+          below it moves. Same reasoning as the search bar's own move here
+          (newJob.tsx did the same for its search bar). */}
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 16, paddingBottom: 24, gap: 20 }}
         keyboardShouldPersistTaps="handled"
       >
+        {/* headerPad (30/420) is wider than the ScrollView's own hPad
+            (20/420) content padding — negative margin cancels that out so
+            this still sits at the original, wider header inset instead of
+            the narrower one every other card uses. */}
+        <View style={[styles.header, { marginHorizontal: -hPad, paddingHorizontal: headerPad }]}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <ChevronLeft size={22} color="#979797" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>NEW SERVICE JOB</Text>
+          <View style={styles.headerButton}>
+            <Bell size={22} color="#979797" />
+          </View>
+        </View>
+
         <SearchBar
           value={searchText}
           onChangeText={setSearchText}
@@ -395,14 +399,6 @@ export default function NewServiceJobScreen() {
               <View style={{ marginTop: 12 }}>
                 <AssetLocationContact asset={asset} hideContact />
               </View>
-            </View>
-
-            {/* Same collapsible History card as New Job (commissioning) —
-                asset.history off this same GET /assets/:id fetch mixes both
-                commissioning and service entries for this asset, so it
-                belongs here too, not just the commissioning flow. */}
-            <View style={{ marginTop: 16 }}>
-              <AssetHistorySection history={asset.history || []} />
             </View>
 
             <View style={styles.newSrFormCard}>

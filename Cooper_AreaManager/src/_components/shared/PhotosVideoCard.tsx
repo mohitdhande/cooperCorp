@@ -4,6 +4,9 @@ import { Text } from '@/_components/AppText';
 import { Camera, CheckCheck, Image as ImageIcon, Trash2, Video, X } from 'lucide-react-native';
 import { SitePhoto } from '../../models/taskForm.types';
 import { formatFileSize } from '../../utils/reportFormatters';
+import { MAX_PHOTO_SIZE_BYTES } from '../../utils/photoValidation';
+
+const MAX_PHOTO_MB = MAX_PHOTO_SIZE_BYTES / (1024 * 1024);
 
 type Props = {
   sitePhotos: SitePhoto[];
@@ -16,6 +19,10 @@ type Props = {
   videosUploading: boolean;
   videosUploadProgress: number;
   videosUploadSuccess: boolean;
+  // Step 2's running-hours upload only ever takes images (no video, no
+  // PDF) — flips the header/add-box copy to match instead of always
+  // claiming "& Video" for a caller that can never actually add one.
+  imagesOnly?: boolean;
 };
 
 // One combined "PHOTOS & VIDEO" card — shared by the Commissioning
@@ -30,6 +37,7 @@ export function PhotosVideoCard({
   sitePhotos, onRemove, onAddPress,
   photosUploading, photosUploadProgress, photosUploadSuccess, photosUploadError,
   videosUploading, videosUploadProgress, videosUploadSuccess,
+  imagesOnly = false,
 }: Props) {
   const photos = sitePhotos.filter((p) => p.mediaType !== 'video' && p.mediaType !== 'pdf');
   const videos = sitePhotos.filter((p) => p.mediaType === 'video');
@@ -37,11 +45,19 @@ export function PhotosVideoCard({
 
   return (
     <View style={styles.card}>
-      <View style={styles.header}>
-        <View style={styles.iconChip}>
-          <ImageIcon size={16} color="#E76124" />
+      <View style={styles.headerBlock}>
+        <View style={styles.header}>
+          <View style={styles.iconChip}>
+            <ImageIcon size={16} color="#E76124" />
+          </View>
+          <Text style={styles.title}>{imagesOnly ? 'PHOTOS' : 'PHOTOS & VIDEO'}</Text>
         </View>
-        <Text style={styles.title}>PHOTOS & VIDEO</Text>
+        {/* Real enforced limits (photoValidation.ts) — photos are capped,
+            videos deliberately aren't ("per explicit instruction not to
+            restrict video size at all"), so this never claims a video cap. */}
+        <Text style={styles.subtitle}>
+          Photo {MAX_PHOTO_MB} MB max{imagesOnly ? '' : ' · Video 100 mb max'}
+        </Text>
       </View>
 
       {photos.length > 0 && (
@@ -83,7 +99,9 @@ export function PhotosVideoCard({
         <View style={styles.addIconCircle}>
           <Camera size={22} color="#6B7280" />
         </View>
-        <Text style={styles.addTitle}>{sitePhotos.some((p) => p.mediaType !== 'pdf') ? 'Add More' : 'Add Photo or Video'}</Text>
+        <Text style={styles.addTitle}>
+          {sitePhotos.some((p) => p.mediaType !== 'pdf') ? 'Add More' : imagesOnly ? 'Add Photo' : 'Add Photo or Video'}
+        </Text>
         <Text style={styles.addSubtitle}>Tap to open camera or gallery</Text>
       </TouchableOpacity>
 
@@ -108,6 +126,7 @@ export function PhotosVideoCard({
 
 const styles = StyleSheet.create({
   card: { backgroundColor: '#FFFFFF', borderRadius: 32, padding: 16, gap: 16 },
+  headerBlock: { gap: 4 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   iconChip: {
     width: 30, height: 30, borderRadius: 8,
@@ -115,6 +134,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   title: { fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4 },
+  subtitle: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   thumbWrapper: { width: 150, height: 120, borderRadius: 16, overflow: 'hidden' },
   thumb: { width: '100%', height: '100%' },

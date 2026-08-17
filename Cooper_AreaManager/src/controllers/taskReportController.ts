@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Linking, TextInput } from 'react-native';
+import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { UserProfile } from '../models/Login';
-import { getCommissioningTaskDetail, getAssetById, getGcsSignedUrl, getGcsSignedUrls, closeCommissioningTask } from '../viewModel/commisionAPi';
+import {
+  getCommissioningTaskDetail, getAssetById, getGcsSignedUrl, getGcsSignedUrls, closeCommissioningTask,
+  generateCommissioningOtp, verifyCommissioningOtp, saveCommissioningFeedback,
+} from '../viewModel/commisionAPi';
 import { getRole, Role } from '../constants/permissions';
 import { parseApiError } from '../utils/apiError';
 import { splitMediaByExtension } from '../utils/reportFormatters';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
+import { API_URL } from '../constants/StringConstants';
 
 // Loads the full commissioning task detail + asset for the report screen.
 // `initialTask` is the summary object handed over via navigation params —
@@ -188,6 +193,197 @@ export function useTaskReportController(initialTask: any) {
     }
   }, []);
 
+  // The full "Installation & Commissioning Report" PDF — GET /:id/pdf
+  // streams the raw PDF bytes directly (confirmed: the response starts
+  // with "%PDF-1.3..."), not a JSON url wrapper, so this can't go through
+  // axiosClient (its default json/text parsing corrupts binary). Downloads
+  // straight to a local file via expo-file-system instead, which handles
+  // the raw bytes correctly, then hands that local file off to the OS.
+  // This is the PRIMARY route, not task.pdfUrl (the raw GCS link the task
+  // record also carries) — confirmed live that the GCS bucket rejects
+  // anonymous/unsigned reads of that link with AccessDenied, so it only
+  // works if our backend's service-account credentials fetch it, which is
+  // exactly what this endpoint does server-side. task.pdfUrl is kept only
+  // as a last-resort fallback in case this endpoint itself is unavailable.
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState('');
+
+  const handleDownloadReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    console.log('[PDF] Download requested for task', initialTask._id);
+    setDownloadingReport(true);
+    setDownloadReportError('');
+    try {
+      const token = await getToken();
+      if (!token) {
+        console.log('[PDF] No auth token available — aborting download');
+        return;
+      }
+      // idempotent: true — re-downloading the same task's report overwrites
+      // the previous local copy instead of throwing DestinationAlreadyExists.
+      const destination = new File(Paths.cache, `commissioning-report-${initialTask._id}.pdf`);
+      const sourceUrl = `${API_URL}/api/commissioning/${initialTask._id}/pdf`;
+      console.log('[PDF] Downloading from', sourceUrl, 'to', destination.uri);
+      try {
+        const file = await File.downloadFileAsync(
+          sourceUrl,
+          destination,
+          { headers: { Authorization: `Bearer ${token}` }, idempotent: true }
+        );
+        console.log('[PDF] Downloaded to local file:', file.uri);
+        await Linking.openURL(file.uri);
+        console.log('[PDF] Linking.openURL resolved for local file');
+      } catch (primaryError: any) {
+        console.log('[PDF] Backend download failed, falling back to task.pdfUrl:', primaryError?.response?.status || primaryError?.message || primaryError);
+        if (!task?.pdfUrl) throw primaryError;
+        console.log('[PDF] Using stored pdfUrl:', task.pdfUrl);
+        await Linking.openURL(task.pdfUrl);
+        console.log('[PDF] Linking.openURL resolved for pdfUrl');
+      }
+    } catch (error: any) {
+      console.log('[PDF] Download failed:', error?.response?.status || error?.message || error);
+      setDownloadReportError(parseApiError(error, 'Failed to download the report. Please try again.').message);
+    } finally {
+      setDownloadingReport(false);
+    }
+  }, [initialTask?._id, task?.pdfUrl]);
+
+  // Client OTP verification — moved here from the task form (taskForm.tsx
+  // used to handle this in-place on step 6; Complete now navigates
+  // straight to this screen instead, so the OTP step lives here). Shown
+  // whenever the task is COMPLETED but the customer's OTP isn't verified
+  // yet — same condition TaskPreviewCard's own "OTP Pending" banner uses.
+  const completionOtp = task?.completionOtp || null;
+  const isOtpPending = task?.status === 'COMPLETED' && !completionOtp?.verified;
+
+  // 3-step sheet: 1 Generate OTP -> 2 Customer Enters OTP -> 3 Customer
+  // Remark (optional feedback, saved via PUT /:id/feedback — no status
+  // restriction, so this still works once the entry is CLOSED).
+  const [otpSheetOpen, setOtpSheetOpen] = useState(false);
+  const [otpStep, setOtpStep] = useState<1 | 2 | 3>(1);
+  const [otpGenerated, setOtpGenerated] = useState(false);
+  const [generatedOtp, setGeneratedOtp] = useState<string[]>(['', '', '', '']);
+  const [customerOtp, setCustomerOtp] = useState<string[]>(['', '', '', '']);
+  const otpInputRefs = useRef<Array<TextInput | null>>([null, null, null, null]);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [remark, setRemark] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [remarkError, setRemarkError] = useState('');
+
+  // Fresh every time the sheet opens — no stale code/digits left over from
+  // a previous open-close cycle.
+  const openOtpSheet = useCallback(() => {
+    setOtpSheetOpen(true);
+    setOtpStep(1);
+    setOtpGenerated(false);
+    setGeneratedOtp(['', '', '', '']);
+    setCustomerOtp(['', '', '', '']);
+    setOtpError('');
+    setRemark('');
+    setRemarkError('');
+  }, []);
+
+  const closeOtpSheet = useCallback(() => setOtpSheetOpen(false), []);
+
+  const handleGenerateOtp = useCallback(async () => {
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+
+      const data = await generateCommissioningOtp(token, initialTask._id);
+      const digits = String(data.code).split('');
+      setGeneratedOtp(digits);
+      setCustomerOtp(['', '', '', '']);
+      setOtpGenerated(true);
+      setOtpStep(2);
+    } catch (error: any) {
+      setOtpError(parseApiError(error, 'Failed to generate OTP. Please try again.').message);
+    } finally {
+      setOtpLoading(false);
+    }
+  }, [initialTask?._id]);
+
+  const handleRegenerateOtp = useCallback(async () => {
+    setOtpGenerated(false);
+    setCustomerOtp(['', '', '', '']);
+    setGeneratedOtp(['', '', '', '']);
+    await handleGenerateOtp();
+  }, [handleGenerateOtp]);
+
+  const handleChangeCustomerOtpDigit = useCallback((index: number, value: string) => {
+    const digit = value.replace(/[^0-9]/g, '').slice(-1);
+    setCustomerOtp(prev => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    if (digit && index < 3) otpInputRefs.current[index + 1]?.focus();
+  }, []);
+
+  const handleVerifyOtp = useCallback(async () => {
+    const code = customerOtp.join('');
+    if (code.length < 4) return;
+
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+
+      const verifyData = await verifyCommissioningOtp(token, initialTask._id, code);
+      if (!verifyData.verified) {
+        setOtpError('Incorrect OTP. Please ask the customer to check the code.');
+        return;
+      }
+
+      // Moves to the optional remark step instead of closing the sheet —
+      // refetching now (rather than waiting for the sheet to close) so the
+      // footer/WORK COMPLETION section behind it are already correct by
+      // the time the user does close it.
+      setOtpStep(3);
+      await fetchDetail();
+    } catch (error: any) {
+      const { code: errorCode, message } = parseApiError(error, 'Verification failed. Please try again.');
+      if (errorCode === 'OTP_LOCKED') {
+        // Too many failed attempts — force the customer-facing OTP back to
+        // "not generated" so the only way forward is a fresh code.
+        setOtpGenerated(false);
+        setCustomerOtp(['', '', '', '']);
+        setGeneratedOtp(['', '', '', '']);
+        setOtpStep(1);
+      }
+      setOtpError(message);
+    } finally {
+      setOtpLoading(false);
+    }
+  }, [customerOtp, initialTask?._id, fetchDetail]);
+
+  // No separate close call here — the backend already moves the task
+  // straight to CLOSED as soon as the OTP is verified (confirmed: calling
+  // /close afterward gets rejected with CONFLICT, "Entry cannot be closed
+  // in its current state", since /close only accepts APPROVED tasks, same
+  // precondition handleCloseTicket below already checks). This just saves
+  // the optional feedback and refreshes so the already-CLOSED status shows.
+  const handleSaveRemark = useCallback(async () => {
+    setRemarkSaving(true);
+    setRemarkError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+      const trimmed = remark.trim();
+      if (trimmed) await saveCommissioningFeedback(token, initialTask._id, { comment: trimmed });
+      setOtpSheetOpen(false);
+      await fetchDetail();
+    } catch (error: any) {
+      setRemarkError(parseApiError(error, 'Failed to save. Please try again.').message);
+    } finally {
+      setRemarkSaving(false);
+    }
+  }, [remark, initialTask?._id, fetchDetail]);
+
   // Close (APPROVED → CLOSED) — the one lifecycle-ending action this report
   // screen exposes. Roles per the backend dev guide: admin|rsm|dealer|
   // area_manager (admin stands in for rsm). Refetches in place afterward,
@@ -218,6 +414,12 @@ export function useTaskReportController(initialTask: any) {
     photos, signedPhotoUrls, photosSigning,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
+    downloadingReport, downloadReportError, handleDownloadReport,
     canClose, closingTicket, closeTicketError, handleCloseTicket,
+    isOtpPending, completionOtp,
+    otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
+    otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
+    handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
+    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
   };
 }

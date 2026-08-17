@@ -1809,7 +1809,7 @@ export default function SrTaskFormScreen() {
               single gallery row handles both photos and videos
               (handleChoosePhotos accepts either media type in one picker
               launch), alongside the two camera actions. */}
-          <Modal visible={vm.photoOptionsVisible} transparent animationType="fade" onRequestClose={() => vm.setPhotoOptionsVisible(false)}>
+          <Modal visible={vm.photoOptionsVisible} transparent animationType="none" onRequestClose={() => vm.setPhotoOptionsVisible(false)}>
             <Pressable style={styles.modalOverlay} onPress={() => vm.setPhotoOptionsVisible(false)}>
               <View style={[styles.optionsSheet, { paddingBottom: sheetPaddingBottom }]}>
                 <Text style={styles.optionsTitle}>Add Photo or Video</Text>

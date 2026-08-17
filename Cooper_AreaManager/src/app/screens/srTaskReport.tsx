@@ -7,6 +7,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, Bell, CheckCheck, CheckCircle2, FileText, Play, Video as VideoIcon } from 'lucide-react-native';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
+import { NotesBulletList } from '../../_components/shared/NotesBulletList';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
@@ -489,7 +490,7 @@ export default function ServiceTaskReportScreen() {
           {!notes ? (
             <Text style={styles.emptyText}>No notes recorded.</Text>
           ) : (
-            <Text style={styles.notesText}>{notes}</Text>
+            <NotesBulletList notes={notes} />
           )}
         </ReportSectionCard>
 
@@ -733,7 +734,6 @@ const styles = StyleSheet.create({
   fieldValue: { fontSize: 14, fontWeight: '600', color: '#1F2937' },
 
   emptyText: { color: '#9CA3AF', fontSize: 13, fontStyle: 'italic' },
-  notesText: { color: '#1F2937', fontSize: 14, lineHeight: 21 },
 
   // ─── Approval Timeline ───
   timelineRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },

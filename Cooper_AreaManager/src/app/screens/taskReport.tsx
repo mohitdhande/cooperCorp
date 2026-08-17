@@ -1,20 +1,21 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable } from 'react-native';
 import { Text } from '@/_components/AppText';
+import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, Bell, CheckCheck, FileText, Play, Video as VideoIcon } from 'lucide-react-native';
+import { ChevronLeft, FileDown, CheckCheck, FileText, Play, Video as VideoIcon, X, Key, Check } from 'lucide-react-native';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
+import { NotesBulletList } from '../../_components/shared/NotesBulletList';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
-import { BottomNavBar } from '../../_components/shared/BottomNavBar';
+import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
-import { SrNumberText } from '../../_components/shared/SrNumberText';
 import { useTaskReportController } from '../../controllers/taskReportController';
 import {
-  val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName,
+  val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName, getTaskPeople,
 } from '../../utils/reportFormatters';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 
@@ -23,10 +24,10 @@ const REF_WIDTH = 420;
 const formatTaskType = (type: string) => {
   if (!type) return '';
   const map: Record<string, string> = {
-    RE_COMMISSIONING: 'ReC',
+    RE_COMMISSIONING: 'Re-Commissioning',
     REVALIDATION: 'Revalidation',
     COMMISSIONING: 'Commissioning',
-    PRE_COMM: 'Pre-Comm',
+    PRE_COMMISSIONING: 'Pre-Commissioning',
   };
   return map[type] || type.replace(/_/g, ' ');
 };
@@ -35,7 +36,7 @@ const formatTaskType = (type: string) => {
 // once done, orange for everything still moving.
 const STATUS_COLOR: Record<string, { bg: string; text: string }> = {
   COMPLETED: { bg: '#DCFCE7', text: '#15803D' },
-  CLOSED: { bg: '#DCFCE7', text: '#15803D' },
+  CLOSED: { bg: '#E5E7EB', text: '#4B5563' },
   IN_PROGRESS: { bg: '#FFE3D4', text: '#FB7C42' },
   ACCEPTED: { bg: '#FFE3D4', text: '#FB7C42' },
   ASSIGNED: { bg: '#FFE3D4', text: '#FB7C42' },
@@ -190,7 +191,13 @@ export default function TaskReportScreen() {
     photos, signedPhotoUrls, photosSigning,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
+    downloadingReport, downloadReportError, handleDownloadReport,
     canClose, closingTicket, closeTicketError, handleCloseTicket,
+    isOtpPending, completionOtp,
+    otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
+    otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
+    handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
+    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
   } = useTaskReportController(initialTask);
 
   const [gensetExpanded, setGensetExpanded] = useState(true);
@@ -203,7 +210,6 @@ export default function TaskReportScreen() {
   const [photosExpanded, setPhotosExpanded] = useState(false);
   const [videosExpanded, setVideosExpanded] = useState(false);
   const [documentsExpanded, setDocumentsExpanded] = useState(false);
-  const [notesExpanded, setNotesExpanded] = useState(false);
 
   const [lightboxVisible, setLightboxVisible] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -226,7 +232,10 @@ export default function TaskReportScreen() {
   const partsUsed = task.partsUsed || [];
   const gensetReadings = task.gensetReadings || null;
   const notes = task.notes || '';
-  const completionOtp = task.completionOtp || null;
+  // Saved via the OTP sheet's own optional Step 3 (PUT /:id/feedback) once
+  // the customer's OTP is verified — field name not yet confirmed against
+  // a real response, so this checks the likely shapes.
+  const feedbackComment = task.feedback?.comment || task.customerFeedback?.comment || task.remark || '';
 
   const typeBadge = TASK_TYPE_BADGE[task.type] || DEFAULT_TASK_TYPE_BADGE;
   const statusColor = STATUS_COLOR[task.status] || STATUS_COLOR.ASSIGNED;
@@ -240,25 +249,21 @@ export default function TaskReportScreen() {
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
-        <View style={styles.headerPillsRow}>
-          <View style={[styles.typeInitialPill, { backgroundColor: typeBadge.bg }]}>
-            <View style={[styles.typeInitialDot, { backgroundColor: statusColor.text }]} />
-            <Text style={[styles.typeInitialText, { color: typeBadge.text }]}>{typeLabel.charAt(0)}</Text>
-          </View>
-          <View style={[styles.statusPill, { backgroundColor: statusColor.bg }]}>
-            <Text style={[styles.statusPillText, { color: statusColor.text }]}>{val(task.status).charAt(0) + val(task.status).slice(1).toLowerCase()}</Text>
-          </View>
-          <Text style={styles.typeLabelText} numberOfLines={1}>{typeLabel}</Text>
-        </View>
-        <View style={styles.headerButton}>
-          <Bell size={20} color="#979797" />
-        </View>
+        <Text style={styles.headerTitle}>{typeLabel || 'Commissioning'}</Text>
+        <TouchableOpacity style={styles.headerDownloadButton} onPress={handleDownloadReport} disabled={downloadingReport}>
+          {downloadingReport ? <ActivityIndicator size="small" color="#FFFFFF" /> : <FileDown size={20} color="#FFFFFF" />}
+        </TouchableOpacity>
       </View>
+      {!!downloadReportError && (
+        <View style={[styles.detailErrorBanner, { marginHorizontal: hPad, marginBottom: 12 }]}>
+          <Text style={styles.detailErrorBannerText}>{downloadReportError}</Text>
+        </View>
+      )}
 
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: canClose ? 210 : 130 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: canClose || isOtpPending ? 130 : 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
       >
         {/* Surfaces a failed detail fetch instead of silently leaving the
@@ -269,19 +274,25 @@ export default function TaskReportScreen() {
           </View>
         )}
 
-        {!!task.srNumber && (
-          <View style={styles.srNumberPill}>
-            <SrNumberText srNumber={task.srNumber} style={styles.srNumberPillText} />
-          </View>
-        )}
-
-        <View style={styles.titleRow}>
-          <Text style={styles.gensetNumberTitle}>{val(a.gensetNumber)}</Text>
-          <View style={styles.warrantyBadge}>
-            <Text style={styles.warrantyBadgeText}>{a.warrantyStatus || 'No warranty info'}</Text>
+        <View style={styles.identityCard}>
+          <AssetIdentityHeader
+            task={task}
+            isService={false}
+            taskPeople={getTaskPeople(task)}
+            gensetNumberOverride={a.gensetNumber}
+            engineNumberOverride={a.engineNumber}
+          />
+          <View style={styles.identityPillRow}>
+            <View style={[styles.identityPill, { backgroundColor: typeBadge.bg }]}>
+              <Text style={[styles.identityPillText, { color: typeBadge.text }]}>{typeLabel}</Text>
+            </View>
+            <View style={[styles.identityPill, { backgroundColor: statusColor.bg }]}>
+              <Text style={[styles.identityPillText, { color: statusColor.text }]}>
+                {val(task.status).charAt(0) + val(task.status).slice(1).toLowerCase()}
+              </Text>
+            </View>
           </View>
         </View>
-        <Text style={styles.gensetModelSubtitle}>{val(a.engineNumber)}</Text>
 
         {isLoading && (
           <View style={styles.loadingRow}>
@@ -358,17 +369,6 @@ export default function TaskReportScreen() {
           <View style={styles.fieldFull}>
             <Text style={styles.fieldLabel}>ADDRESS</Text>
             <Text style={styles.fieldValue}>{formatAddress(a.address)}</Text>
-          </View>
-
-          <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>SERVICE TYPE</Text>
-              <Text style={styles.fieldValue}>{val(a.serviceType)}</Text>
-            </View>
-            <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>WARRANTY STATUS</Text>
-              <Text style={styles.fieldValue}>{val(a.warrantyStatus)}</Text>
-            </View>
           </View>
         </ReportSectionCard>
 
@@ -525,7 +525,11 @@ export default function TaskReportScreen() {
           </ReportSectionCard>
         )}
 
-        <ReportSectionCard title="Complaint Codes" expanded={complaintExpanded} onToggle={() => setComplaintExpanded(!complaintExpanded)}>
+        <ReportSectionCard
+          title={`Complaint Codes (${faultCodes.length})`}
+          expanded={complaintExpanded}
+          onToggle={() => setComplaintExpanded(!complaintExpanded)}
+        >
           {faultCodes.length === 0 ? (
             <Text style={styles.emptyText}>No complaint codes recorded.</Text>
           ) : (
@@ -533,26 +537,38 @@ export default function TaskReportScreen() {
               const codeInfo = fc.codeId || {};
               return (
                 <View key={fc._id || i} style={styles.complaintReportCard}>
-                  <View style={styles.complaintReportHeader}>
-                    <View style={styles.complaintCodeBadge}>
-                      <Text style={styles.complaintCodeText}>{val(codeInfo.code)}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.complaintReportTitle}>{val(codeInfo.description)}</Text>
-                      <Text style={styles.complaintReportSub}>
-                        {val(codeInfo.category)} {codeInfo.subCategory ? `› ${codeInfo.subCategory}` : ''}
+                  <View style={styles.complaintCodeBadge}>
+                    <Text style={styles.complaintCodeText}>{val(codeInfo.code)}</Text>
+                  </View>
+                  <Text style={styles.complaintReportTitle}>{val(codeInfo.description)}</Text>
+                  <Text style={styles.complaintReportSub}>
+                    {val(codeInfo.category)} {codeInfo.subCategory ? `› ${codeInfo.subCategory}` : ''}
+                  </Text>
+                  {!!codeInfo.priority && (
+                    <View style={[styles.priorityBadgeReport, { backgroundColor: getPriorityColor(codeInfo.priority).backgroundColor }]}>
+                      <Text style={[styles.priorityBadgeText, { color: getPriorityTextColor(codeInfo.priority) }]}>
+                        {codeInfo.priority}
                       </Text>
                     </View>
-                    {codeInfo.priority && (
-                      <View style={[styles.priorityBadgeReport, { backgroundColor: getPriorityColor(codeInfo.priority).backgroundColor }]}>
-                        <Text style={[styles.priorityBadgeText, { color: getPriorityTextColor(codeInfo.priority) }]}>
-                          {codeInfo.priority}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  {fc.observation && <InfoRow label="Observation" value={fc.observation} />}
-                  {fc.rootCause && <InfoRow label="Root Cause" value={fc.rootCause} />}
+                  )}
+                  {!!fc.observation && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#FFFAD9' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Observation</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.observation}</Text>
+                    </View>
+                  )}
+                  {!!fc.rootCause && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#FFD9D9' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Root Cause</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.rootCause}</Text>
+                    </View>
+                  )}
+                  {!!fc.correctiveAction && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#DBF9E2' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Corrective Action</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.correctiveAction}</Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -691,32 +707,68 @@ export default function TaskReportScreen() {
           )}
         </ReportSectionCard>
 
-        <ReportSectionCard title="Notes" expanded={notesExpanded} onToggle={() => setNotesExpanded(!notesExpanded)}>
+        {/* Notes, Suggestion Comment, OTP Pending, and Customer Remark all
+            share one plain card instead of separate collapsible/standalone
+            ones — whichever of the later three actually apply for this
+            task's current state render right below Notes, in that order. */}
+        <View style={styles.notesSuggestionCard}>
+          <Text style={styles.notesSuggestionLabel}>Notes</Text>
           {!notes ? (
             <Text style={styles.emptyText}>No notes recorded.</Text>
           ) : (
-            <Text style={styles.notesText}>{notes}</Text>
+            <NotesBulletList notes={notes} />
           )}
-        </ReportSectionCard>
+
+          {!!task.suggestionComment && (
+            <>
+              <Text style={[styles.notesSuggestionLabel, { marginTop: 20 }]}>Suggestion Comment</Text>
+              <NotesBulletList notes={task.suggestionComment} />
+            </>
+          )}
+
+          {/* Same isOtpPending condition the floating footer's button below
+              reacts to — states the fact inline, right in this card, instead
+              of as its own separate card; the button (which actually opens
+              the sheet) stays in the floating footer so it's always
+              reachable without scrolling. */}
+          {isOtpPending && (
+            <View style={[styles.otpPendingCard, { marginTop: 20 }]}>
+              <View style={styles.otpPendingCardIconCircle}>
+                <Text style={styles.otpPendingCardIconText}>!</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.otpPendingCardTitle}>OTP Pending</Text>
+                <Text style={styles.otpPendingCardSubtitle}>Client OTP not yet verified</Text>
+              </View>
+              <View style={styles.otpPendingCardPill}>
+                <Text style={styles.otpPendingCardPillText}>PENDING</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Saved via the OTP sheet's own Step 3, once the customer's OTP
+              is verified — the closed-task counterpart to the OTP Pending
+              box above (mutually exclusive: isOtpPending is false by the
+              time feedbackComment exists). */}
+          {!!feedbackComment && (
+            <>
+              <Text style={[styles.notesSuggestionLabel, { marginTop: 20 }]}>Customer Remark</Text>
+              <NotesBulletList notes={feedbackComment} />
+            </>
+          )}
+        </View>
 
         <View style={styles.footerCard}>
-          <View style={styles.footerRow}>
-            <View style={{ flexShrink: 0 }}>
-              <Text style={styles.footerLabel}>DATE</Text>
-              <Text style={styles.footerValue}>{formatDate(task.date)}</Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: 12, alignItems: 'flex-end' }}>
-              <Text style={styles.footerLabel}>CREATED BY</Text>
-              <Text style={styles.footerValue} numberOfLines={1}>{val(task.createdBy?.name)}</Text>
-              <Text style={styles.footerSubvalue} numberOfLines={1}>{val(task.createdBy?.dealerName)}</Text>
-            </View>
+          <View style={styles.footerStackRow}>
+            <Text style={styles.footerLabel}>CREATED BY</Text>
+            <Text style={styles.footerValue}>{val(task.createdBy?.name)}</Text>
+            <Text style={styles.footerSubvalue}>{formatDate(task.date)}</Text>
           </View>
-          <View style={styles.footerRow}>
-            <View>
-              <Text style={styles.footerLabel}>ASSIGNED TO</Text>
-              <Text style={styles.footerValue}>{val(task.assignedTo?.name)}</Text>
-              <Text style={styles.footerSubvalue}>{val(task.assignedTo?.dealerName)}</Text>
-            </View>
+
+          <View style={[styles.footerStackRow, { marginTop: 16 }]}>
+            <Text style={styles.footerLabel}>COMPLETED BY</Text>
+            <Text style={styles.footerValue}>{val(task.assignedTo?.name)}</Text>
+            <Text style={styles.footerSubvalue}>{formatDate(task.completedAt || completionOtp?.verifiedAt || task.updatedAt)}</Text>
           </View>
 
           <Text style={[styles.footerLabel, { marginTop: 16, marginBottom: 10 }]}>WORK COMPLETION</Text>
@@ -739,6 +791,7 @@ export default function TaskReportScreen() {
             </View>
           )}
         </View>
+
       </ScrollView>
 
       {/* Floats over the content instead of pushing the ScrollView up in
@@ -771,7 +824,17 @@ export default function TaskReportScreen() {
           </View>
         )}
 
-        <BottomNavBar active="commissioning" />
+        {/* COMPLETED but the customer's OTP isn't verified yet — same
+            condition TaskPreviewCard's own "OTP Pending" banner uses.
+            Mutually exclusive with canClose (COMPLETED vs APPROVED), so
+            never shows alongside it. */}
+        {isOtpPending && (
+          <View style={[styles.otpPendingBar, { marginHorizontal: hPad, marginBottom: 16, paddingHorizontal: hPad }]}>
+            <TouchableOpacity style={styles.otpPendingButton} onPress={openOtpSheet}>
+              <Text style={styles.otpPendingButtonText}>Verify Client OTP</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <PhotoLightboxModal
@@ -787,7 +850,176 @@ export default function TaskReportScreen() {
         error={videoError}
         onClose={closeVideoModal}
       />
+
+      {/* Client OTP bottom sheet — 3 steps: Generate OTP, Customer Enters
+          OTP, then an optional Customer Remark (saved via the no-status-
+          restriction feedback endpoint) before the sheet closes. */}
+      <Modal visible={otpSheetOpen} transparent animationType="slide" onRequestClose={otpStep === 3 ? () => {} : closeOtpSheet}>
+        {/* Dismissible by tap-outside/X/back on steps 1-2 only — once OTP is
+            verified (step 3), the task is already CLOSED server-side, and
+            the only way out is explicitly saving (or leaving blank) the
+            customer remark via Save & Close below. */}
+        <Pressable style={styles.otpModalOverlay} onPress={otpStep === 3 ? undefined : closeOtpSheet}>
+          <Pressable style={styles.otpSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.otpSheetHandle} />
+            <View style={styles.otpSheetHeaderRow}>
+              <View>
+                <Text style={styles.otpSheetTitle}>Client OTP Verification</Text>
+                {!!a?.primaryContactNumber && (
+                  <Text style={styles.otpSheetContactNumber}>{a.primaryContactNumber}</Text>
+                )}
+              </View>
+              {otpStep !== 3 && (
+                <TouchableOpacity style={styles.otpCloseButton} onPress={closeOtpSheet}>
+                  <X size={18} color="#6B7280" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <OtpStepper step={otpStep} />
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }}>
+              {otpStep === 1 && (
+                <View style={styles.otpStepCard}>
+                  <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
+                  <View style={styles.otpStepIntroRow}>
+                    <View style={styles.otpKeyIconCircle}>
+                      <Key size={18} color="#F26722" />
+                    </View>
+                    <Text style={styles.otpStepIntroText}>
+                      Generate a 4-digit OTP and share it with the customer to confirm work completion.
+                    </Text>
+                  </View>
+                  {!!otpError && <Text style={styles.otpErrorText}>{otpError}</Text>}
+                  <TouchableOpacity
+                    style={[styles.otpGenerateButton, otpLoading && styles.buttonDisabled]}
+                    onPress={handleGenerateOtp}
+                    disabled={otpLoading}
+                  >
+                    {otpLoading ? <ActivityIndicator color="#fff" size="small" /> : (
+                      <>
+                        <Key size={18} color="#FFFFFF" />
+                        <Text style={styles.otpGenerateButtonText}>Generate OTP</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {otpStep === 2 && (
+                <>
+                  <View style={styles.otpCodeCard}>
+                    <Text style={styles.otpCodeCardLabel}>SHARE THIS CODE WITH CUSTOMER</Text>
+                    <View style={[styles.otpBoxRow, { justifyContent: 'center', marginTop: 12 }]}>
+                      {generatedOtp.map((digit, index) => (
+                        <View key={index} style={styles.otpBoxGenerated}>
+                          <Text style={styles.otpBoxGeneratedText}>{digit}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <TouchableOpacity style={{ alignSelf: 'center', marginTop: 12 }} onPress={handleRegenerateOtp} disabled={otpLoading}>
+                      <Text style={styles.otpResendLink}>Regenerate</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={[styles.otpStepCard, { marginTop: 16 }]}>
+                    <Text style={styles.otpStepLabel}>STEP 2 — CUSTOMER ENTERS OTP</Text>
+                    <View style={[styles.otpBoxRow, { justifyContent: 'center', marginTop: 16 }]}>
+                      {customerOtp.map((digit, index) => (
+                        <TextInput
+                          key={index}
+                          ref={(ref) => { otpInputRefs.current[index] = ref; }}
+                          style={styles.otpBox}
+                          value={digit}
+                          onChangeText={(text) => handleChangeCustomerOtpDigit(index, text)}
+                          keyboardType="numeric"
+                          maxLength={1}
+                          textAlign="center"
+                        />
+                      ))}
+                    </View>
+
+                    {!!otpError && <Text style={styles.otpErrorText}>{otpError}</Text>}
+
+                    <TouchableOpacity
+                      style={[styles.otpVerifyButton, (customerOtp.join('').length < 4 || otpLoading) && styles.buttonDisabled]}
+                      onPress={handleVerifyOtp}
+                      disabled={customerOtp.join('').length < 4 || otpLoading}
+                    >
+                      {otpLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Verify OTP</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {otpStep === 3 && (
+                <>
+                  <View style={styles.otpVerifiedBox}>
+                    <View style={styles.otpVerifiedIconCircle}>
+                      <Check size={18} color="#16A34A" strokeWidth={3} />
+                    </View>
+                    <View>
+                      <Text style={styles.otpVerifiedTitle}>OTP Verified</Text>
+                      <Text style={styles.otpVerifiedSubtitle}>Customer confirmed work completion</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.otpStepCard, { marginTop: 16 }]}>
+                    <Text style={styles.otpStepLabel}>STEP 3 — CUSTOMER REMARK</Text>
+                    <TextInput
+                      style={[styles.otpRemarkInput, { marginTop: 14 }]}
+                      placeholder="Enter customer feedback or remarks (optional)..."
+                      placeholderTextColor="#9CA3AF"
+                      value={remark}
+                      onChangeText={setRemark}
+                      multiline
+                      numberOfLines={4}
+                    />
+                    {!!remarkError && <Text style={styles.otpErrorText}>{remarkError}</Text>}
+                    <TouchableOpacity
+                      style={[styles.otpVerifyButton, remarkSaving && styles.buttonDisabled]}
+                      onPress={handleSaveRemark}
+                      disabled={remarkSaving}
+                    >
+                      {remarkSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Save & Close</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
+  );
+}
+
+// 1-2-3 progress row atop the OTP sheet — a completed step shows a green
+// check, the active step is filled orange, everything after is a plain
+// grey outline. The connecting line between two steps is only green once
+// both its endpoints are done.
+function OtpStepper({ step }: { step: 1 | 2 | 3 }) {
+  const circle = (n: 1 | 2 | 3) => {
+    const done = step > n;
+    const active = step === n;
+    return (
+      <View style={[styles.stepCircle, done && styles.stepCircleDone, active && styles.stepCircleActive]}>
+        {done ? <Check size={14} color="#FFFFFF" strokeWidth={3} /> : (
+          <Text style={[styles.stepCircleText, active && styles.stepCircleTextActive]}>{n}</Text>
+        )}
+      </View>
+    );
+  };
+  const line = (afterStep: 1 | 2) => <View style={[styles.stepLine, step > afterStep && styles.stepLineDone]} />;
+
+  return (
+    <View style={styles.stepperRow}>
+      {circle(1)}
+      {line(1)}
+      {circle(2)}
+      {line(2)}
+      {circle(3)}
+    </View>
   );
 }
 
@@ -813,6 +1045,154 @@ const styles = StyleSheet.create({
   },
   closeServiceButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
   closeServiceErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 8 },
+  // Same shape as closeServiceButton, green instead of navy — a distinct
+  // review-step action rather than the lifecycle-ending Close.
+
+  // "Verify Client OTP" bar — a COMPLETED task with an unverified customer
+  // OTP. No BottomNavBar on this screen, so this sits directly on the
+  // bottom edge — rounded on all corners like a floating card, not just
+  // the top. The informational text moved into otpPendingCard (in the
+  // scroll content) — this bar is just the button now.
+  otpPendingBar: {
+    backgroundColor: '#11101C',
+    borderRadius: 28,
+    paddingTop: 16, paddingBottom: 20,
+  },
+  otpPendingButton: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10,
+    backgroundColor: '#F26722',
+    borderRadius: 100,
+    height: 56,
+  },
+  otpPendingButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+
+  // "OTP Pending" card — sits in the scroll content, states the fact;
+  // the actual "Verify Client OTP" button lives in the floating footer.
+  otpPendingCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FEF9E7',
+    borderWidth: 1, borderColor: '#FBE8A6',
+    borderRadius: 24,
+    padding: 16,
+    marginTop: 14,
+  },
+  otpPendingCardIconCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#F59E0B',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpPendingCardIconText: { color: '#FFFFFF', fontSize: 18, fontWeight: '900' },
+  otpPendingCardTitle: { fontSize: 15, fontWeight: '700', color: '#92400E' },
+  otpPendingCardSubtitle: { fontSize: 13, fontWeight: '500', color: '#B45309', marginTop: 2 },
+  otpPendingCardPill: {
+    backgroundColor: '#F59E0B',
+    borderRadius: 100,
+    paddingVertical: 6, paddingHorizontal: 14,
+  },
+  otpPendingCardPillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+
+  // Verify OTP bottom sheet — 3-step (Generate / Customer Enters OTP /
+  // Customer Remark), matching the reference "Client OTP Verification"
+  // sheet design.
+  otpModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  otpSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32, borderTopRightRadius: 32,
+    padding: 20, paddingBottom: 32,
+  },
+  otpSheetHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#E5E7EB',
+    alignSelf: 'center', marginBottom: 16,
+  },
+  otpSheetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  otpSheetTitle: { fontSize: 18, fontWeight: '700', color: '#1E1951' },
+  otpSheetContactNumber: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
+  otpCloseButton: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center', alignItems: 'center',
+  },
+
+  // 1-2-3 progress row.
+  stepperRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  stepCircle: {
+    width: 28, height: 28, borderRadius: 14,
+    borderWidth: 1.5, borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  stepCircleActive: { backgroundColor: '#F26722', borderColor: '#F26722' },
+  stepCircleDone: { backgroundColor: '#16A34A', borderColor: '#16A34A' },
+  stepCircleText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
+  stepCircleTextActive: { color: '#FFFFFF' },
+  stepLine: { flex: 1, height: 2, backgroundColor: '#E5E7EB' },
+  stepLineDone: { backgroundColor: '#16A34A' },
+
+  otpStepCard: { backgroundColor: '#F3F4F6', borderRadius: 20, padding: 16 },
+  otpStepLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.4 },
+  otpStepIntroRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
+  otpKeyIconCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#FDECE1',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpStepIntroText: { flex: 1, fontSize: 14, color: '#374151', lineHeight: 20 },
+  otpGenerateButton: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10,
+    width: '100%', height: 56, borderRadius: 100,
+    backgroundColor: '#F26722',
+    marginTop: 20,
+  },
+  otpGenerateButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+
+  otpCodeCard: { backgroundColor: '#1E1951', borderRadius: 20, padding: 16 },
+  otpCodeCardLabel: { fontSize: 11, fontWeight: '700', color: '#B8B3D9', letterSpacing: 0.4, textAlign: 'center' },
+  otpBoxRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  otpBoxGenerated: {
+    width: 60, height: 60, borderRadius: 12,
+    backgroundColor: '#332C6B',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpBoxGeneratedText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  otpBox: {
+    width: 60, height: 60, borderRadius: 12,
+    borderWidth: 1, borderColor: '#DBDBDB',
+    backgroundColor: '#F8F8F8',
+    fontSize: 20, fontWeight: '700', color: '#000000',
+  },
+  otpResendLink: { fontSize: 14, fontWeight: '600', color: '#F8BA3B', textAlign: 'center', textDecorationLine: 'underline' },
+  otpErrorText: { color: '#DC2626', fontSize: 13, fontWeight: '600', marginTop: 8 },
+  otpVerifyButton: {
+    width: '100%', height: 56, borderRadius: 100,
+    backgroundColor: '#4AC686',
+    justifyContent: 'center', alignItems: 'center',
+    marginTop: 16,
+  },
+  otpVerifyButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+
+  otpRemarkInput: {
+    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    padding: 12, fontSize: 14, color: '#1F2937',
+    minHeight: 100, textAlignVertical: 'top',
+  },
+
+  // Confirmation shown once the OTP is actually verified — step 3's own
+  // remark form comes right after it.
+  otpVerifiedBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 16,
+    padding: 14,
+  },
+  otpVerifiedIconCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#D1FAE5',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpVerifiedTitle: { fontSize: 15, fontWeight: '700', color: '#15803D' },
+  otpVerifiedSubtitle: { fontSize: 13, color: '#16A34A', marginTop: 1 },
 
   header: {
     flexDirection: 'row',
@@ -827,41 +1207,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerPillsRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  typeInitialPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderRadius: 100,
-    paddingHorizontal: 10, paddingVertical: 6,
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase'  },
+  headerDownloadButton: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#F26722',
+    justifyContent: 'center', alignItems: 'center',
   },
-  typeInitialDot: { width: 7, height: 7, borderRadius: 3.5 },
-  typeInitialText: { fontSize: 12, fontWeight: '700' },
-  statusPill: { borderRadius: 100, paddingHorizontal: 12, paddingVertical: 6 },
-  statusPillText: { fontSize: 13, fontWeight: '700' },
-  typeLabelText: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', flexShrink: 1 },
 
-  srNumberPill: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#1E1951',
-    borderRadius: 40,
-    paddingVertical: 8, paddingHorizontal: 14,
-    marginBottom: 12,
-  },
-  srNumberPillText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500', fontFamily: 'monospace', letterSpacing: 0.5 },
-
-  titleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  gensetNumberTitle: { fontSize: 22, fontWeight: '700', color: '#1F2937', flex: 1 },
-  warrantyBadge: {
+  // Identity card — AssetIdentityHeader (SR ribbon + genset/engine pill +
+  // avatars, same component TaskPreviewCard/the task form's own header
+  // use) plus this screen's own type/status pill row underneath.
+  identityCard: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
+    borderRadius: 32,
+    padding: 16,
+    gap: 16,
+    marginBottom: 16,
   },
-  warrantyBadgeText: { color: '#374151', fontSize: 12, fontWeight: '600' },
-  gensetModelSubtitle: { color: '#9CA3AF', fontSize: 14, marginTop: 2 },
+  identityPillRow: { flexDirection: 'row', gap: 8 },
+  identityPill: { borderRadius: 100, paddingHorizontal: 14, paddingVertical: 7 },
+  identityPillText: { fontSize: 13, fontWeight: '700' },
 
   loadingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
   loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
@@ -873,6 +1238,17 @@ const styles = StyleSheet.create({
   fieldValue: { fontSize: 14, fontWeight: '600', color: '#1F2937' },
 
   emptyText: { color: '#9CA3AF', fontSize: 13, fontStyle: 'italic' },
+
+  notesSuggestionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    padding: 20,
+    marginTop: 14,
+  },
+  notesSuggestionLabel: {
+    fontSize: 12, fontWeight: '700', color: '#9CA3AF',
+    letterSpacing: 0.6, marginBottom: 10,
+  },
 
   groupHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   groupLetterCircle: {
@@ -892,32 +1268,33 @@ const styles = StyleSheet.create({
   loadStageReportLabel: { fontWeight: '700', color: '#1F2937', marginBottom: 8 },
 
   complaintReportCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+  },
+  complaintCodeBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F7A057',
+    borderRadius: 100,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     marginBottom: 10,
   },
-  complaintReportHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 },
-  complaintCodeBadge: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginRight: 12,
-    minWidth: 60,
-    alignItems: 'center',
-  },
-  complaintCodeText: { fontSize: 12, fontWeight: '700', color: '#374151' },
-  complaintReportTitle: { fontWeight: '700', color: '#1F2937', marginBottom: 2 },
-  complaintReportSub: { fontSize: 12, color: '#9CA3AF', marginBottom: 8 },
+  complaintCodeText: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
+  complaintReportTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937', marginBottom: 2 },
+  complaintReportSub: { fontSize: 13, color: '#9CA3AF' },
   priorityBadgeReport: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 10,
-    marginBottom: 10,
+    marginTop: 10,
   },
   priorityBadgeText: { fontSize: 11, fontWeight: '700' },
+  complaintInfoBlock: { borderRadius: 12, padding: 12, marginTop: 12, gap: 4 },
+  complaintInfoBlockTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', textTransform: 'uppercase', letterSpacing: 0.3 },
+  complaintInfoBlockValue: { fontSize: 14, color: '#374151' },
 
   partReportCard: {
     backgroundColor: '#F9FAFB',
@@ -969,7 +1346,6 @@ const styles = StyleSheet.create({
   videoReportTapToPlay: { fontSize: 12, fontWeight: '600', color: '#4F46E5', marginTop: 2 },
 
   savedByText: { fontSize: 12, color: '#9CA3AF', marginTop: 4 },
-  notesText: { color: '#1F2937', fontSize: 14, lineHeight: 21 },
 
   footerCard: {
     backgroundColor: '#FFFFFF',
@@ -977,7 +1353,9 @@ const styles = StyleSheet.create({
     padding: 20,
     marginTop: 14,
   },
-  footerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  // Created By / Completed By — stacked vertically (label, name, date),
+  // one block below the other, instead of the old side-by-side row.
+  footerStackRow: { gap: 2 },
   footerLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', marginBottom: 4 },
   footerValue: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   footerSubvalue: { fontSize: 12, color: '#9CA3AF' },

@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { API_URL } from '../constants/StringConstants';
-import { getToken, getRefreshToken, saveTokens, clearTokens } from '../utils/tokenStore';
+import { getToken, getRefreshToken, saveTokens, saveToken, clearTokens } from '../utils/tokenStore';
 
 const axiosClient = axios.create({
   baseURL: API_URL,
@@ -31,12 +31,22 @@ axiosClient.interceptors.request.use(async (config) => {
 // Guards against multiple simultaneous redirects if several requests fail at once.
 let isRedirecting = false;
 
+// Also persisted (not just handed off as a route param) — if the session was
+// already cleared by the time the app is next opened (a cold reload after
+// the fact, not a live redirect the user was watching happen), there'd be no
+// navigation event to attach a param to. authController reads and consumes
+// this once on mount so a reload still explains why you're logged out.
+const SESSION_MESSAGE_KEY = 'sessionMessage';
+
 const redirectToLogin = async (sessionMessage?: string) => {
   if (isRedirecting) return;
   isRedirecting = true;
   // Tokens live in SecureStore, not AsyncStorage — clear() only wipes the
   // latter, so the credentials need their own explicit clear too.
   await Promise.all([AsyncStorage.clear(), clearTokens()]);
+  if (sessionMessage) {
+    await AsyncStorage.setItem(SESSION_MESSAGE_KEY, sessionMessage);
+  }
   router.replace(
     sessionMessage ? { pathname: '/screens/login', params: { sessionMessage } } : '/screens/login'
   );
@@ -94,7 +104,17 @@ axiosClient.interceptors.response.use(
         const refreshResponse = await axios.post(`${API_URL}/api/auth/refresh`, { refreshToken });
         const newToken = refreshResponse.data.token;
         const newRefreshToken = refreshResponse.data.refreshToken;
-        await saveTokens(newToken, newRefreshToken);
+        // The refresh endpoint only reissues the access token — the refresh
+        // token itself is long-lived and isn't rotated on every call (see
+        // tokenStore.ts). Only overwrite it if the backend actually sent a
+        // new one; otherwise saveTokens(newToken, undefined) would corrupt
+        // the still-valid stored refresh token, killing the session on the
+        // very next refresh attempt even though it hadn't really expired.
+        if (newRefreshToken) {
+          await saveTokens(newToken, newRefreshToken);
+        } else {
+          await saveToken(newToken);
+        }
 
         resolveQueue(null, newToken);
         originalRequest.headers = { ...originalRequest.headers, Authorization: `Bearer ${newToken}` };

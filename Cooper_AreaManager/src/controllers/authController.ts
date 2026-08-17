@@ -61,10 +61,28 @@ export function useLoginController() {
   }, [lockoutSecondsLeft > 0]);
 
   // Surfaces a forced-logout reason (session expired, account deactivated)
-  // handed off by axiosClient's interceptor via the redirect params.
+  // handed off by axiosClient's interceptor via the redirect params — covers
+  // the case where this screen is reached by the live redirect itself.
   useEffect(() => {
     if (params.sessionMessage) setLoginError(params.sessionMessage);
   }, [params.sessionMessage]);
+
+  // Covers the other case: the session was already cleared by an earlier
+  // failed request, and this screen is only reached later by a fresh cold
+  // launch (app/index.tsx's local-only check finds nothing and shows this
+  // screen directly, with no route param to carry a reason). The interceptor
+  // persists the same reason to AsyncStorage for exactly this case — read it
+  // once and remove it immediately so it doesn't resurface on a later,
+  // unrelated visit to this screen.
+  useEffect(() => {
+    (async () => {
+      const persisted = await AsyncStorage.getItem('sessionMessage');
+      if (persisted) {
+        AsyncStorage.removeItem('sessionMessage');
+        setLoginError(persisted);
+      }
+    })();
+  }, []);
 
   const handleLogin = useCallback(async () => {
     // Defense in depth — the button is already disabled for the whole

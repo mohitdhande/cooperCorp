@@ -4,7 +4,7 @@ import { getToken } from '../utils/tokenStore';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   searchAssets, getAssetById, getCommissioningAvailableActions, createCommissioningEntry,
-  searchGensetSapAssets, acceptCommissioningTask,
+  searchGensetSapAssets, acceptCommissioningTask, getCommissioningPrefillChecks, saveCommissioningProgress,
 } from '../viewModel/commisionAPi';
 import { AssetDetail, AvailableActionsResponse, GensetSapAsset } from '../models/commissioningRecords.types';
 import { TeamMember } from '../models/myTeam.types';
@@ -22,6 +22,15 @@ function formatTodayMMDDYYYY() {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${mm}/${dd}/${d.getFullYear()}`;
+}
+
+// COMMISSIONING inherits Pre-Commissioning's own checks; RE_COMMISSIONING
+// inherits the prior Commissioning's. Every other action type has no
+// earlier stage to carry forward from.
+function prefillSourceType(actionType: string): string | null {
+  if (actionType === 'COMMISSIONING') return 'PRE_COMMISSIONING';
+  if (actionType === 'RE_COMMISSIONING') return 'COMMISSIONING';
+  return null;
 }
 
 // Drives the "New Job" screen (reached from Commissioning's + icon, dealer/
@@ -101,8 +110,17 @@ export function useNewJobController() {
   // inline search+list, matching the reference design's compact form.
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [notes, setNotes] = useState('');
+  const [notesError, setNotesError] = useState('');
+  const [assigneeError, setAssigneeError] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+
+  // The source entry's own checks (Pre-Commissioning for a Commissioning
+  // action, Commissioning for a Re-Commissioning one) — fetched in the
+  // background as soon as the Create Job Card opens, then written onto the
+  // newly created entry in handleCreateJob. There's no backend auto-copy;
+  // the client is responsible for both the fetch and the write.
+  const [preCommEntry, setPreCommEntry] = useState<Record<string, string> | null>(null);
 
   // No dedicated "get task info by S/N" endpoint — searches the asset by
   // genset/engine S/N (same /api/assets/search the task-list screens use),
@@ -129,13 +147,16 @@ export function useNewJobController() {
       if (!token) return;
 
       const results = await searchAssets(token, query);
+      console.log('[New Job] Asset search results:', Array.isArray(results) ? results.map((r: any) => r._id) : results);
       if (Array.isArray(results) && results.length > 0) {
         const matchId = results[0]._id;
+        console.log('[New Job] Using matched asset id:', matchId, '(of', results.length, 'result(s))');
         setAssetLoading(true);
         const [detail, actions] = await Promise.all([
           getAssetById(token, matchId),
           getCommissioningAvailableActions(token, matchId),
         ]);
+        console.log('[New Job] Asset detail _id:', detail?._id, '| history length:', detail?.history?.length ?? 'undefined', '| history:', JSON.stringify(detail?.history));
         setAsset(detail);
         setAvailableActions(actions);
         return;
@@ -185,8 +206,27 @@ export function useNewJobController() {
     setSelectedAssignee(null);
     setAssigneePickerVisible(false);
     setNotes('');
+    setNotesError('');
+    setAssigneeError('');
     setCreateError('');
-  }, []);
+    setPreCommEntry(null);
+
+    // Background fetch, not awaited — a failure here just means no
+    // pre-fill; it never blocks the Create Job Card from opening.
+    const srcType = prefillSourceType(actionType);
+    if (srcType && asset) {
+      (async () => {
+        try {
+          const token = await getToken();
+          if (!token) return;
+          const result = await getCommissioningPrefillChecks(token, asset._id, srcType);
+          setPreCommEntry(result?.commissioningChecks || null);
+        } catch {
+          setPreCommEntry(null);
+        }
+      })();
+    }
+  }, [asset]);
 
   const handleCancelAssign = useCallback(() => {
     setAssignPickerActionType(null);
@@ -197,11 +237,32 @@ export function useNewJobController() {
 
   const handleSelectAssignee = useCallback((member: TeamMember) => {
     setSelectedAssignee(member);
+    setAssigneeError('');
     setAssigneePickerVisible(false);
   }, []);
 
   const handleCreateJob = useCallback(async () => {
-    if (!asset || !assignPickerActionType || !selectedAssignee) return;
+    if (!asset || !assignPickerActionType) return;
+
+    // Assign To and Notes are both required — matches the backend contract
+    // (it rejects an empty notes body; an assignee is obviously mandatory
+    // too), checked together so tapping Create with both empty shows both
+    // inline errors at once instead of stopping at the first one.
+    let hasError = false;
+    if (!selectedAssignee) {
+      setAssigneeError('Please select an assignee');
+      hasError = true;
+    } else {
+      setAssigneeError('');
+    }
+    if (!notes.trim()) {
+      setNotesError('Notes are required');
+      hasError = true;
+    } else {
+      setNotesError('');
+    }
+    if (hasError || !selectedAssignee) return;
+
     setCreating(true);
     setCreateError('');
     try {
@@ -212,8 +273,23 @@ export function useNewJobController() {
         type: assignPickerActionType,
         date: new Date().toISOString(),
         assignedToId: selectedAssignee._id,
-        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        notes: notes.trim(),
       });
+      const createdId = created?._id || created?.commissioning?._id || created?.data?._id;
+
+      // There's no backend auto-copy — the client fetched the source
+      // entry's checks when the Create Job Card opened (see
+      // openAssignPicker) and is responsible for writing them onto the
+      // newly created entry itself. Best-effort: the entry was already
+      // created successfully either way.
+      if (createdId && preCommEntry && Object.values(preCommEntry).some((v) => !!v)) {
+        try {
+          await saveCommissioningProgress(token, createdId, preCommEntry);
+        } catch (prefillError) {
+          console.log('[New Job] Failed to write pre-fill checks:', prefillError);
+        }
+      }
+
       // A dealer assigning this job to themselves has already implicitly
       // "accepted" it — there's no one else who'd do that step for them,
       // unlike a task handed to an engineer. Skips straight past ASSIGNED
@@ -222,14 +298,11 @@ export function useNewJobController() {
       // a failure here shouldn't block navigating away from a job that was
       // otherwise created successfully — it just leaves the task sitting at
       // ASSIGNED, no different from the pre-self-assign behavior.
-      if (isDealer && selectedAssignee._id === profile?.userId) {
-        const createdId = created?._id || created?.commissioning?._id || created?.data?._id;
-        if (createdId) {
-          try {
-            await acceptCommissioningTask(token, createdId);
-          } catch (acceptError) {
-            console.log('[New Job] Self-assign auto-accept failed:', acceptError);
-          }
+      if (isDealer && selectedAssignee._id === profile?.userId && createdId) {
+        try {
+          await acceptCommissioningTask(token, createdId);
+        } catch (acceptError) {
+          console.log('[New Job] Self-assign auto-accept failed:', acceptError);
         }
       }
       router.replace('/screens/commissioningTasks' as any);
@@ -239,7 +312,7 @@ export function useNewJobController() {
     } finally {
       setCreating(false);
     }
-  }, [asset, assignPickerActionType, selectedAssignee, notes, router, isDealer, profile]);
+  }, [asset, assignPickerActionType, selectedAssignee, notes, preCommEntry, router, isDealer, profile]);
 
   // An asset that's already been serviced shouldn't be commissioned again —
   // asset.history mixes commissioning-type entries (PRE_COMMISSIONING/
@@ -260,7 +333,8 @@ export function useNewJobController() {
     jobDate,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,
-    notes, setNotes,
+    notes, setNotes, notesError, assigneeError,
+    preCommEntry,
     handleCreateJob, creating, createError,
   };
 }
