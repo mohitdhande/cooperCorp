@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   getMyTasksByStatus, getMyTeamData, reassignCommissioningTask,
 } from '../viewModel/commisionAPi';
@@ -162,14 +162,22 @@ export function useCommissioningTasksController() {
     }
   }, [isAreaManager]);
 
-  useEffect(() => {
-    // Wait for the profile to load first — otherwise this would fire once
-    // against GET /me/tasks before we even know the caller is an area
-    // manager, then immediately again against GET /me/team once isAreaManager
-    // resolves, wasting a request.
-    if (!profile) return;
-    fetchPage(selectedTab, page);
-  }, [fetchPage, selectedTab, page, profile]);
+  // useFocusEffect (not a plain useEffect) — refires both on mount/tab/page
+  // change AND every time this screen regains focus, e.g. coming back from
+  // View Report after verifying a customer's OTP. Without this, the list
+  // only ever fetched once and kept showing a task under Completed even
+  // after its status had already moved to Closed server-side, since nothing
+  // told this screen to look again.
+  useFocusEffect(
+    useCallback(() => {
+      // Wait for the profile to load first — otherwise this would fire once
+      // against GET /me/tasks before we even know the caller is an area
+      // manager, then immediately again against GET /me/team once isAreaManager
+      // resolves, wasting a request.
+      if (!profile) return;
+      fetchPage(selectedTab, page);
+    }, [fetchPage, selectedTab, page, profile])
+  );
 
   useEffect(() => {
     AsyncStorage.getItem('userData')

@@ -1,26 +1,36 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable } from 'react-native';
 import { Text } from '@/_components/AppText';
+import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, Bell, CheckCheck, CheckCircle2, FileText, Play, Video as VideoIcon } from 'lucide-react-native';
+import { ChevronLeft, Bell, Check, CheckCheck, CheckCircle2, Clock, FileText, Play, Video as VideoIcon, X, Key, Star } from 'lucide-react-native';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
 import { NotesBulletList } from '../../_components/shared/NotesBulletList';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
-import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
 import { useSrTaskReportController } from '../../controllers/srTaskReportController';
 import {
-  val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, formatTimeAgoLabel, getTaskPeople, videoFileName,
+  val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, getTaskPeople, videoFileName,
 } from '../../utils/reportFormatters';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 
 const REF_WIDTH = 420;
+
+// Voice of Customer's 1-5 star rating, labeled the same way srTaskForm.tsx's
+// own (editable) star input does.
+const RATING_LABELS: Record<number, string> = {
+  1: 'Poor',
+  2: 'Fair',
+  3: 'Good',
+  4: 'Very Good',
+  5: 'Excellent',
+};
 
 const STATUS_COLOR: Record<string, { bg: string; text: string }> = {
   // COMPLETED (OTP still pending) reads as still-active/amber, not done —
@@ -61,6 +71,195 @@ function ScreenBackground() {
   );
 }
 
+// 1-2-3 progress row atop the OTP sheet — same visual language and same
+// 3-step shape as commissioning's own OtpStepper (taskReport.tsx).
+function OtpStepper({ step }: { step: 1 | 2 | 3 }) {
+  const circle = (n: 1 | 2 | 3) => {
+    const done = step > n;
+    const active = step === n;
+    return (
+      <View style={[styles.stepCircle, done && styles.stepCircleDone, active && styles.stepCircleActive]}>
+        {done ? <CheckCircle2 size={16} color="#FFFFFF" /> : <Text style={[styles.stepCircleText, active && styles.stepCircleTextActive]}>{n}</Text>}
+      </View>
+    );
+  };
+  return (
+    <View style={styles.stepperRow}>
+      {circle(1)}
+      <View style={[styles.stepLine, step > 1 && styles.stepLineDone]} />
+      {circle(2)}
+      <View style={[styles.stepLine, step > 2 && styles.stepLineDone]} />
+      {circle(3)}
+    </View>
+  );
+}
+
+// Client OTP verification sheet — moved here from srTaskForm.tsx's Step 5
+// Customer Sign-off card, same as commissioning's own OTP step living on
+// its report screen instead of the task form. Same 3-step shape as
+// commissioning: Generate OTP -> Customer Enters OTP -> Customer Remark.
+function VerifyOtpSheet({
+  visible, step, contactNumber, otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
+  remark, remarkSaving, remarkError,
+  onClose, onGenerate, onRegenerate, onChangeDigit, onVerify, onChangeRemark, onSaveRemark,
+}: {
+  visible: boolean;
+  step: 1 | 2 | 3;
+  contactNumber?: string;
+  otpGenerated: boolean;
+  generatedOtp: string[];
+  customerOtp: string[];
+  otpInputRefs: React.MutableRefObject<Array<any>>;
+  otpLoading: boolean;
+  otpError: string;
+  remark: string;
+  remarkSaving: boolean;
+  remarkError: string;
+  onClose: () => void;
+  onGenerate: () => void;
+  onRegenerate: () => void;
+  onChangeDigit: (index: number, value: string) => void;
+  onVerify: () => void;
+  onChangeRemark: (text: string) => void;
+  onSaveRemark: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={step === 3 ? () => {} : onClose}>
+      {/* Dismissible by tap-outside/X/back on steps 1-2 only — once OTP is
+          verified (step 3), the only way out is explicitly saving (or
+          leaving blank) the customer remark via Save & Close below. */}
+      <Pressable style={styles.otpModalOverlay} onPress={step === 3 ? undefined : onClose}>
+        <Pressable style={styles.otpSheet} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.otpSheetHandle} />
+          <View style={styles.otpSheetHeaderRow}>
+            <View>
+              <Text style={styles.otpSheetTitle}>Client OTP Verification</Text>
+              {!!contactNumber && <Text style={styles.otpSheetContactNumber}>{contactNumber}</Text>}
+            </View>
+            {step !== 3 && (
+              <TouchableOpacity style={styles.otpCloseButton} onPress={onClose}>
+                <X size={18} color="#6B7280" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <OtpStepper step={step} />
+
+          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+            {step === 1 && (
+              <View style={styles.otpStepCard}>
+                <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
+                <View style={styles.otpStepIntroRow}>
+                  <View style={styles.otpKeyIconCircle}>
+                    <Key size={18} color="#F26722" />
+                  </View>
+                  <Text style={styles.otpStepIntroText}>
+                    Generate a 4-digit OTP and share it with the customer to confirm work completion.
+                  </Text>
+                </View>
+                {!!otpError && <Text style={styles.otpErrorText}>{otpError}</Text>}
+                <TouchableOpacity
+                  style={[styles.otpGenerateButton, otpLoading && styles.buttonDisabled]}
+                  onPress={onGenerate}
+                  disabled={otpLoading}
+                >
+                  {otpLoading ? <ActivityIndicator color="#fff" size="small" /> : (
+                    <>
+                      <Key size={18} color="#FFFFFF" />
+                      <Text style={styles.otpGenerateButtonText}>Generate OTP</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {step === 2 && (
+              <>
+                <View style={styles.otpCodeCard}>
+                  <Text style={styles.otpCodeCardLabel}>SHARE THIS CODE WITH CUSTOMER</Text>
+                  <View style={[styles.otpBoxRow, { justifyContent: 'center', marginTop: 12 }]}>
+                    {generatedOtp.map((digit, index) => (
+                      <View key={index} style={styles.otpBoxGenerated}>
+                        <Text style={styles.otpBoxGeneratedText}>{digit}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <TouchableOpacity style={{ alignSelf: 'center', marginTop: 12 }} onPress={onRegenerate} disabled={otpLoading}>
+                    <Text style={styles.otpResendLink}>Regenerate</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={[styles.otpStepCard, { marginTop: 16 }]}>
+                  <Text style={styles.otpStepLabel}>STEP 2 — CUSTOMER ENTERS OTP</Text>
+                  <View style={[styles.otpBoxRow, { justifyContent: 'center', marginTop: 16 }]}>
+                    {customerOtp.map((digit, index) => (
+                      <TextInput
+                        key={index}
+                        ref={(ref) => { otpInputRefs.current[index] = ref; }}
+                        style={styles.otpBox}
+                        value={digit}
+                        onChangeText={(text) => onChangeDigit(index, text)}
+                        keyboardType="numeric"
+                        maxLength={1}
+                        textAlign="center"
+                      />
+                    ))}
+                  </View>
+
+                  {!!otpError && <Text style={styles.otpErrorText}>{otpError}</Text>}
+
+                  <TouchableOpacity
+                    style={[styles.otpVerifyButton, (customerOtp.join('').length < 4 || otpLoading) && styles.buttonDisabled]}
+                    onPress={onVerify}
+                    disabled={customerOtp.join('').length < 4 || otpLoading}
+                  >
+                    {otpLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Verify OTP</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {step === 3 && (
+              <>
+                <View style={styles.otpVerifiedBox}>
+                  <View style={styles.otpVerifiedIconCircle}>
+                    <Check size={18} color="#16A34A" strokeWidth={3} />
+                  </View>
+                  <View>
+                    <Text style={styles.otpVerifiedTitle}>OTP Verified</Text>
+                    <Text style={styles.otpVerifiedSubtitle}>Customer confirmed work completion</Text>
+                  </View>
+                </View>
+
+                <View style={[styles.otpStepCard, { marginTop: 16 }]}>
+                  <Text style={styles.otpStepLabel}>STEP 3 — CUSTOMER REMARK</Text>
+                  <TextInput
+                    style={[styles.otpRemarkInput, { marginTop: 14 }]}
+                    placeholder="Enter customer feedback or remarks (optional)..."
+                    placeholderTextColor="#9CA3AF"
+                    value={remark}
+                    onChangeText={onChangeRemark}
+                    multiline
+                    numberOfLines={4}
+                  />
+                  {!!remarkError && <Text style={styles.otpErrorText}>{remarkError}</Text>}
+                  <TouchableOpacity
+                    style={[styles.otpVerifyButton, remarkSaving && styles.buttonDisabled]}
+                    onPress={onSaveRemark}
+                    disabled={remarkSaving}
+                  >
+                    {remarkSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Save & Close</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // Full SR (service) task report — genset/engine/alternator identification,
 // electrical readings, complaint codes, parts, photos, notes, category &
 // approval trail, and work-completion status.
@@ -78,6 +277,11 @@ export default function ServiceTaskReportScreen() {
     documents, documentOpeningUrl, documentError, handleViewDocument,
     signedPhotoUrls, photosSigning,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    isOtpPending,
+    otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
+    otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
+    handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
+    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
   } = useSrTaskReportController(initialTask);
 
   const [gensetExpanded, setGensetExpanded] = useState(true);
@@ -90,8 +294,6 @@ export default function ServiceTaskReportScreen() {
   const [photosExpanded, setPhotosExpanded] = useState(false);
   const [videosExpanded, setVideosExpanded] = useState(false);
   const [documentsExpanded, setDocumentsExpanded] = useState(false);
-  const [notesExpanded, setNotesExpanded] = useState(false);
-  const [approvalExpanded, setApprovalExpanded] = useState(true);
 
   const [lightboxVisible, setLightboxVisible] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -111,7 +313,9 @@ export default function ServiceTaskReportScreen() {
   const category = task.category || '';
   const subCategory = task.subCategory || '';
   const workApproval = task.workApproval || null;
+  const partApproval = task.partApproval || null;
   const completionOtp = task.completionOtp || null;
+  const customerFeedback = task.customerFeedback || null;
 
   const categoryColor =
     SERVICE_CATEGORIES.find((c) => c.letter === category) ||
@@ -122,22 +326,30 @@ export default function ServiceTaskReportScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScreenBackground />
 
-      <View style={[styles.header, { paddingHorizontal: headerPad }]}>
-        <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
-          <ChevronLeft size={22} color="#979797" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Service Report</Text>
-        <View style={styles.headerButton}>
-          <Bell size={20} color="#979797" />
-        </View>
-      </View>
-
+      {/* App bar is the ScrollView's own first child (not a fixed sibling
+          above it) — the whole screen, header included, scrolls as one
+          unit, same fix already applied to newJob.tsx/newServiceJob.tsx/
+          srTaskForm.tsx. */}
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: canCloseTicket ? 210 : 130 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: (canCloseTicket || isOtpPending) ? 210 : 130 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
       >
+        {/* headerPad (30/420) is wider than this ScrollView's own hPad
+            (20/420) content padding — negative margin cancels that out so
+            the header still sits at its original, wider inset instead of
+            the narrower one every other card uses. */}
+        <View style={[styles.header, { marginHorizontal: -hPad, paddingHorizontal: headerPad }]}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
+            <ChevronLeft size={22} color="#979797" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Service Report</Text>
+          <View style={styles.headerButton}>
+            <Bell size={20} color="#979797" />
+          </View>
+        </View>
+
         {/* Surfaces a failed detail fetch instead of silently leaving the
             screen on stale nav-param data — pull down to retry. */}
         {!!detailError && (
@@ -180,6 +392,164 @@ export default function ServiceTaskReportScreen() {
             <Text style={styles.loadingText}>Loading full report...</Text>
           </View>
         )}
+
+        {/* Same "Pending Customer Sign-off" banner srTaskForm.tsx's Step 5
+            used to show — moved here since OTP verification itself now
+            lives on this screen. */}
+        {isOtpPending && (
+          <View style={styles.pendingSignOffBanner}>
+            <View style={styles.pendingSignOffIconChip}>
+              <Clock size={18} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pendingSignOffTitle}>Pending Customer Sign-off</Text>
+              <Text style={styles.pendingSignOffSubtitle}>Collect OTP from the customer to proceed.</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Same dedicated "Approval Status" card srTaskForm.tsx's Step 5
+            used to show (category badge + Work/Parts Approval banners) —
+            moved here as its own card rather than folded into Approval
+            Timeline below, which stays scoped to the Work Approval trail. */}
+        {!!category && (workApproval || partApproval) && (
+          <View style={styles.approvalStatusCard}>
+            <Text style={styles.approvalStatusLabel}>APPROVAL STATUS</Text>
+            <View style={styles.approvalStatusCatRow}>
+              <View style={[styles.approvalStatusCatBadge, { backgroundColor: categoryColor.bg }]}>
+                <Text style={[styles.approvalStatusCatBadgeText, { color: categoryColor.text }]}>{category}</Text>
+              </View>
+              <Text style={styles.approvalStatusCatName}>{(categoryColor as any).name || subCategory}</Text>
+            </View>
+
+            {!!workApproval && (workApproval.status === 'PENDING_AM' || workApproval.status === 'PENDING_RSM') && (
+              <View style={styles.partsApprovalBanner}>
+                <View style={styles.partsApprovalIconChip}>
+                  <Clock size={16} color="#B45309" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.partsApprovalTitle}>Work Approval</Text>
+                  <Text style={styles.partsApprovalSubtitle}>
+                    {workApproval.status === 'PENDING_AM' ? 'Awaiting Area Manager review' : 'AM approved — awaiting RSM confirmation'}
+                  </Text>
+                </View>
+                <View style={styles.pendingTag}>
+                  <Text style={styles.pendingTagText}>{workApproval.status === 'PENDING_AM' ? 'PENDING AM' : 'PENDING RSM'}</Text>
+                </View>
+              </View>
+            )}
+            {workApproval?.status === 'CONFIRMED' && (
+              <View style={styles.partsApprovalBannerDone}>
+                <View style={styles.partsApprovalIconChipDone}>
+                  <CheckCircle2 size={16} color="#16A34A" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.partsApprovalTitleDone}>Work Approval</Text>
+                  <Text style={styles.partsApprovalSubtitleDone}>RSM confirmed</Text>
+                </View>
+                <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
+              </View>
+            )}
+
+            {partApproval?.status === 'PENDING' && (
+              <View style={styles.partsApprovalBanner}>
+                <View style={styles.partsApprovalIconChip}>
+                  <Clock size={16} color="#B45309" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.partsApprovalTitle}>Parts Approval</Text>
+                  <Text style={styles.partsApprovalSubtitle}>Pending AM review</Text>
+                </View>
+                <View style={styles.pendingTag}>
+                  <Text style={styles.pendingTagText}>PENDING</Text>
+                </View>
+              </View>
+            )}
+            {!!partApproval && partApproval.status !== 'PENDING' && (
+              <View style={styles.partsApprovalBannerDone}>
+                <View style={styles.partsApprovalIconChipDone}>
+                  <CheckCircle2 size={16} color="#16A34A" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.partsApprovalTitleDone}>Parts Approval</Text>
+                  <Text style={styles.partsApprovalSubtitleDone}>Reviewed</Text>
+                </View>
+                <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Notes / Suggestion Comments / Voice of Customer / Customer
+            Remark / OTP Pending all share one plain card — same merged
+            pattern as commissioning's own taskReport.tsx. Voice of Customer
+            and Customer Remark are service-only (task.customerFeedback:
+            { customerName, rating, comment, submittedAt }); Notes and
+            Suggestion Comments read task.notes/task.suggestionComment. */}
+        <View style={styles.notesSuggestionCard}>
+          <Text style={styles.approvalStatusLabel}>NOTES</Text>
+          {!notes ? (
+            <Text style={styles.emptyText}>No notes recorded.</Text>
+          ) : (
+            <NotesBulletList notes={notes} />
+          )}
+
+          {!!task.suggestionComment && (
+            <>
+              <View style={styles.notesSuggestionDivider} />
+              <Text style={styles.approvalStatusLabel}>SUGGESTION COMMENTS</Text>
+              <NotesBulletList notes={task.suggestionComment} />
+            </>
+          )}
+
+          {!!customerFeedback && (
+            <>
+              <View style={styles.notesSuggestionDivider} />
+              <Text style={styles.approvalStatusLabel}>VOICE OF CUSTOMER</Text>
+              {!!customerFeedback.customerName && (
+                <Text style={styles.voiceOfCustomerName}>{customerFeedback.customerName}</Text>
+              )}
+              {!!customerFeedback.rating && (
+                <View style={styles.voiceOfCustomerStarRow}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Star
+                      key={n}
+                      size={20}
+                      color={n <= customerFeedback.rating ? '#F26722' : '#D1D5DB'}
+                      fill={n <= customerFeedback.rating ? '#F26722' : 'none'}
+                    />
+                  ))}
+                  <Text style={styles.voiceOfCustomerRatingLabel}>{RATING_LABELS[customerFeedback.rating]}</Text>
+                </View>
+              )}
+              {!!customerFeedback.comment && (
+                <>
+                  <Text style={[styles.approvalStatusLabel, { marginTop: 14, marginBottom: 6 }]}>CUSTOMER REMARK</Text>
+                  <NotesBulletList notes={customerFeedback.comment} />
+                </>
+              )}
+            </>
+          )}
+
+          {/* Same isOtpPending condition the floating footer's button and
+              the top "Pending Customer Sign-off" banner react to — states
+              the fact inline in this card too, matching commissioning's
+              own merged-card pattern. */}
+          {isOtpPending && (
+            <View style={[styles.otpPendingCard, { marginTop: 16 }]}>
+              <View style={styles.otpPendingCardIconCircle}>
+                <Text style={styles.otpPendingCardIconText}>!</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.otpPendingCardTitle}>OTP Pending</Text>
+                <Text style={styles.otpPendingCardSubtitle}>Client OTP not yet verified</Text>
+              </View>
+              <View style={styles.otpPendingCardPill}>
+                <Text style={styles.otpPendingCardPillText}>PENDING</Text>
+              </View>
+            </View>
+          )}
+        </View>
 
         <View style={{ marginTop: 16 }}>
           <ActivityHistoryCard task={task} />
@@ -486,91 +856,6 @@ export default function ServiceTaskReportScreen() {
           )}
         </ReportSectionCard>
 
-        <ReportSectionCard title="Work Summary / Notes" expanded={notesExpanded} onToggle={() => setNotesExpanded(!notesExpanded)}>
-          {!notes ? (
-            <Text style={styles.emptyText}>No notes recorded.</Text>
-          ) : (
-            <NotesBulletList notes={notes} />
-          )}
-        </ReportSectionCard>
-
-        <ReportSectionCard title="Approval Timeline" expanded={approvalExpanded} onToggle={() => setApprovalExpanded(!approvalExpanded)}>
-          {category ? (
-            <View style={[styles.categoryBadgeReport, { backgroundColor: categoryColor.bg, borderColor: categoryColor.border, marginBottom: 14 }]}>
-              <Text style={[styles.categoryBadgeReportText, { color: categoryColor.text }]}>
-                {category} — {subCategory}
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.emptyText}>No category selected.</Text>
-          )}
-
-          {!workApproval ? (
-            <Text style={styles.emptyText}>No approval requested yet.</Text>
-          ) : (
-            <>
-              {!!workApproval.requestedAt && (
-                <View style={styles.timelineRow}>
-                  <View style={[styles.timelineDot, { backgroundColor: '#3B82F6' }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>Submitted for Approval</Text>
-                    {!!workApproval.requestedBy?.name && (
-                      <Text style={styles.timelineSubtitle}>{workApproval.requestedBy.name}</Text>
-                    )}
-                    <Text style={styles.timelineTime}>
-                      {formatTimeAgoLabel(workApproval.requestedAt)}
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              {!!workApproval.amDecidedAt && (
-                <View style={styles.timelineRow}>
-                  <View style={[styles.timelineDot, { backgroundColor: '#16A34A' }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>AM Approved</Text>
-                    {!!workApproval.amDecidedBy?.name && (
-                      <Text style={styles.timelineSubtitle}>{workApproval.amDecidedBy.name}</Text>
-                    )}
-                    <Text style={styles.timelineTime}>
-                      {formatTimeAgoLabel(workApproval.amDecidedAt)}
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              {!!workApproval.rsmDecidedAt && (
-                <View style={styles.timelineRow}>
-                  <View style={[styles.timelineDot, { backgroundColor: '#16A34A' }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.timelineTitle}>RSM Confirmed</Text>
-                    {!!workApproval.rsmDecidedBy?.name && (
-                      <Text style={styles.timelineSubtitle}>{workApproval.rsmDecidedBy.name}</Text>
-                    )}
-                    <Text style={styles.timelineTime}>
-                      {formatTimeAgoLabel(workApproval.rsmDecidedAt)}
-                    </Text>
-                  </View>
-                </View>
-              )}
-
-              {workApproval.status === 'CONFIRMED' ? (
-                <View style={styles.timelineFinalRow}>
-                  <CheckCircle2 size={18} color="#16A34A" />
-                  <Text style={styles.timelineFinalTextApproved}>Fully Approved</Text>
-                </View>
-              ) : workApproval.status === 'REJECTED' ? (
-                <View style={styles.timelineFinalRow}>
-                  <Text style={styles.timelineFinalTextRejected}>
-                    Rejected{workApproval.rejectedBy ? ` by ${workApproval.rejectedBy}` : ''}
-                    {workApproval.rejectionNote ? ` — ${workApproval.rejectionNote}` : ''}
-                  </Text>
-                </View>
-              ) : null}
-            </>
-          )}
-        </ReportSectionCard>
-
         <View style={styles.footerCard}>
           <View style={styles.footerRow}>
             <View style={{ flexShrink: 0 }}>
@@ -610,16 +895,50 @@ export default function ServiceTaskReportScreen() {
         </View>
       </ScrollView>
 
+      <VerifyOtpSheet
+        visible={otpSheetOpen}
+        step={otpStep}
+        contactNumber={a?.primaryContactNumber}
+        otpGenerated={otpGenerated}
+        generatedOtp={generatedOtp}
+        customerOtp={customerOtp}
+        otpInputRefs={otpInputRefs}
+        otpLoading={otpLoading}
+        otpError={otpError}
+        remark={remark}
+        remarkSaving={remarkSaving}
+        remarkError={remarkError}
+        onClose={closeOtpSheet}
+        onGenerate={handleGenerateOtp}
+        onRegenerate={handleRegenerateOtp}
+        onChangeDigit={handleChangeCustomerOtpDigit}
+        onVerify={handleVerifyOtp}
+        onChangeRemark={setRemark}
+        onSaveRemark={handleSaveRemark}
+      />
+
       {/* Floats over the content instead of pushing the ScrollView up in
-          normal flow — same pattern as Dashboard/srDetail's own
-          floatingFooter. pointerEvents="box-none" lets touches pass
-          through the transparent space around the button/bar to whatever
-          scrolled content sits underneath. The ScrollView's own
-          contentContainerStyle paddingBottom above is sized to clear
-          this footer's actual height (taller when the Close Service
-          button is also showing) so the last card never ends up hidden
-          behind it. */}
+          normal flow — same pattern as commissioning's taskReport.tsx.
+          No BottomNavBar on this screen (removed) — Verify Client OTP/
+          Close Service are the only actions it offers, so they sit alone
+          at the bottom edge instead of alongside nav icons.
+          pointerEvents="box-none" lets touches pass through the
+          transparent space around the button/bar to whatever scrolled
+          content sits underneath. The ScrollView's own contentContainerStyle
+          paddingBottom above is sized to clear this footer's actual height
+          so the last card never ends up hidden behind it. */}
       <View style={styles.floatingFooter} pointerEvents="box-none">
+        {/* COMPLETED but the customer's OTP isn't verified yet — mutually
+            exclusive with canCloseTicket (that one requires OTP already
+            verified), so never shows alongside it. */}
+        {isOtpPending && (
+          <View style={[styles.closeServiceBar, { paddingHorizontal: hPad }]}>
+            <TouchableOpacity style={styles.closeServiceButton} onPress={openOtpSheet}>
+              <Text style={styles.closeServiceButtonText}>Verify Client OTP</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Same 3-gate close rule as srDetail.tsx/srTaskForm.tsx — the
             report screen is otherwise read-only, so this is the one
             action it offers once the ticket is actually eligible to
@@ -641,8 +960,6 @@ export default function ServiceTaskReportScreen() {
             {!!closeTicketError && <Text style={styles.closeServiceErrorText}>{closeTicketError}</Text>}
           </View>
         )}
-
-        <BottomNavBar active="services" />
       </View>
 
       <VideoPlayerModal
@@ -707,6 +1024,23 @@ const styles = StyleSheet.create({
   // two rather than one merged card (ActivityHistoryCard is self-contained
   // and used elsewhere on its own).
   identityCard: { backgroundColor: '#FFFFFF', borderRadius: 32, padding: 20, gap: 14, marginBottom: 4 },
+
+  // "Pending Customer Sign-off" banner — same shape/copy as srTaskForm.tsx's
+  // old Step 5 banner, now shown here above Activity History instead.
+  pendingSignOffBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#E76124',
+    borderRadius: 20,
+    padding: 16,
+    marginTop: 16,
+  },
+  pendingSignOffIconChip: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  pendingSignOffTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  pendingSignOffSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
   reportTaskTitle: { fontSize: 16, fontWeight: '700', color: '#000000' },
   reportCatStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   reportCatBadgeCircle: {
@@ -715,14 +1049,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   reportCatBadgeLetter: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
-
-  categoryBadgeReport: {
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-  },
-  categoryBadgeReportText: { fontSize: 12, fontWeight: '700' },
 
   loadingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
   loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
@@ -735,15 +1061,88 @@ const styles = StyleSheet.create({
 
   emptyText: { color: '#9CA3AF', fontSize: 13, fontStyle: 'italic' },
 
-  // ─── Approval Timeline ───
-  timelineRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  timelineDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
-  timelineTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
-  timelineSubtitle: { fontSize: 13, fontWeight: '500', color: '#6B7280', marginTop: 2 },
-  timelineTime: { fontSize: 12, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
-  timelineFinalRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 22 },
-  timelineFinalTextApproved: { fontSize: 15, fontWeight: '700', color: '#16A34A' },
-  timelineFinalTextRejected: { fontSize: 14, fontWeight: '600', color: '#DC2626' },
+  // ─── Approval Status card — same design as srTaskForm.tsx's old Step 5
+  // card (category badge + Work/Parts Approval banners). ───
+  approvalStatusCard: { backgroundColor: '#FFFFFF', borderRadius: 28, padding: 20, marginTop: 16 },
+  approvalStatusLabel: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.5, marginBottom: 14 },
+  approvalStatusCatRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  approvalStatusCatBadge: {
+    width: 32, height: 32, borderRadius: 16,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  approvalStatusCatBadgeText: { fontSize: 14, fontWeight: '700' },
+  approvalStatusCatName: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
+
+  // ─── Notes / Suggestion Comments / Voice of Customer / Customer Remark /
+  // OTP Pending — one merged card, same pattern as commissioning's own
+  // taskReport.tsx. ───
+  notesSuggestionCard: { backgroundColor: '#FFFFFF', borderRadius: 28, padding: 20, marginTop: 16 },
+  notesSuggestionDivider: { height: 1, backgroundColor: '#F3F4F6', marginVertical: 16 },
+  voiceOfCustomerName: { fontSize: 15, fontWeight: '700', color: '#1E1951', marginBottom: 10 },
+  voiceOfCustomerStarRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  voiceOfCustomerRatingLabel: { fontSize: 14, fontWeight: '600', color: '#4338CA', marginLeft: 6 },
+
+  otpPendingCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FEF9E7',
+    borderWidth: 1, borderColor: '#FBE8A6',
+    borderRadius: 24,
+    padding: 16,
+  },
+  otpPendingCardIconCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#F59E0B',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpPendingCardIconText: { color: '#FFFFFF', fontSize: 18, fontWeight: '900' },
+  otpPendingCardTitle: { fontSize: 15, fontWeight: '700', color: '#92400E' },
+  otpPendingCardSubtitle: { fontSize: 13, fontWeight: '500', color: '#B45309', marginTop: 2 },
+  otpPendingCardPill: {
+    backgroundColor: '#F59E0B',
+    borderRadius: 100,
+    paddingVertical: 6, paddingHorizontal: 14,
+  },
+  otpPendingCardPillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+
+  partsApprovalBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#FEF9C3', borderWidth: 1, borderColor: '#FDE68A',
+    borderRadius: 14, padding: 12,
+    marginTop: 16,
+  },
+  partsApprovalIconChip: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#FDE68A',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  partsApprovalTitle: { fontSize: 14, fontWeight: '700', color: '#92400E' },
+  partsApprovalSubtitle: { fontSize: 12, color: '#B45309', marginTop: 1 },
+  pendingTag: {
+    backgroundColor: '#FDE68A', borderRadius: 100,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  pendingTagText: { fontSize: 11, fontWeight: '700', color: '#92400E', letterSpacing: 0.4 },
+
+  // Same banner shape as partsApprovalBanner/pendingTag, green once
+  // confirmed instead of amber while pending.
+  partsApprovalBannerDone: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#BBF7D0',
+    borderRadius: 14, padding: 12,
+    marginTop: 16,
+  },
+  partsApprovalIconChipDone: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#BBF7D0',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  partsApprovalTitleDone: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
+  partsApprovalSubtitleDone: { fontSize: 12, color: '#16A34A', marginTop: 1 },
+  doneTag: {
+    backgroundColor: '#BBF7D0', borderRadius: 100,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  doneTagText: { fontSize: 11, fontWeight: '700', color: '#15803D', letterSpacing: 0.4 },
 
   complaintReportCard: {
     backgroundColor: '#F9FAFB',
@@ -854,4 +1253,102 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   workCompletionPendingText: { color: '#6B7280', fontSize: 13 },
+
+  // ─── Client OTP Verification sheet — same design as commissioning's own
+  // (taskReport.tsx), just a 1-2 stepper instead of 1-2-3. ───
+  otpModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  otpSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32, borderTopRightRadius: 32,
+    padding: 20, paddingBottom: 32,
+  },
+  otpSheetHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#E5E7EB',
+    alignSelf: 'center', marginBottom: 16,
+  },
+  otpSheetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  otpSheetTitle: { fontSize: 18, fontWeight: '700', color: '#1E1951' },
+  otpSheetContactNumber: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
+  otpCloseButton: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center', alignItems: 'center',
+  },
+
+  stepperRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  stepCircle: {
+    width: 28, height: 28, borderRadius: 14,
+    borderWidth: 1.5, borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  stepCircleActive: { backgroundColor: '#F26722', borderColor: '#F26722' },
+  stepCircleDone: { backgroundColor: '#16A34A', borderColor: '#16A34A' },
+  stepCircleText: { fontSize: 13, fontWeight: '700', color: '#9CA3AF' },
+  stepCircleTextActive: { color: '#FFFFFF' },
+  stepLine: { flex: 1, height: 2, backgroundColor: '#E5E7EB' },
+  stepLineDone: { backgroundColor: '#16A34A' },
+
+  otpStepCard: { backgroundColor: '#F3F4F6', borderRadius: 20, padding: 16 },
+  otpStepLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.4 },
+  otpStepIntroRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
+  otpKeyIconCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#FDECE1',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpStepIntroText: { flex: 1, fontSize: 14, color: '#374151', lineHeight: 20 },
+  otpGenerateButton: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10,
+    width: '100%', height: 56, borderRadius: 100,
+    backgroundColor: '#F26722',
+    marginTop: 20,
+  },
+  otpGenerateButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+
+  otpCodeCard: { backgroundColor: '#1E1951', borderRadius: 20, padding: 16 },
+  otpCodeCardLabel: { fontSize: 11, fontWeight: '700', color: '#B8B3D9', letterSpacing: 0.4, textAlign: 'center' },
+  otpBoxRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  otpBoxGenerated: {
+    width: 60, height: 60, borderRadius: 12,
+    backgroundColor: '#332C6B',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpBoxGeneratedText: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  otpBox: {
+    width: 60, height: 60, borderRadius: 12,
+    borderWidth: 1, borderColor: '#DBDBDB',
+    backgroundColor: '#F8F8F8',
+    fontSize: 20, fontWeight: '700', color: '#000000',
+  },
+  otpResendLink: { fontSize: 14, fontWeight: '600', color: '#F8BA3B', textAlign: 'center', textDecorationLine: 'underline' },
+  otpErrorText: { color: '#DC2626', fontSize: 13, fontWeight: '600', marginTop: 8 },
+  otpVerifyButton: {
+    width: '100%', height: 56, borderRadius: 100,
+    backgroundColor: '#4AC686',
+    justifyContent: 'center', alignItems: 'center',
+    marginTop: 16,
+  },
+  otpVerifyButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+
+  otpRemarkInput: {
+    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    padding: 12, fontSize: 14, color: '#1F2937',
+    minHeight: 100, textAlignVertical: 'top',
+  },
+  otpVerifiedBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 16,
+    padding: 14,
+  },
+  otpVerifiedIconCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#D1FAE5',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  otpVerifiedTitle: { fontSize: 15, fontWeight: '700', color: '#15803D' },
+  otpVerifiedSubtitle: { fontSize: 13, color: '#16A34A', marginTop: 1 },
 });

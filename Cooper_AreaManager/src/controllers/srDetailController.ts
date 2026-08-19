@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Linking } from 'react-native';
+import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import {
@@ -9,6 +11,7 @@ import { parseApiError } from '../utils/apiError';
 import { getRole, Role } from '../constants/permissions';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
+import { API_URL } from '../constants/StringConstants';
 
 type EditFaultCode = { codeId: string; code: string; description: string; observation: string; rootCause: string; correctiveAction: string };
 type EditPart = { partId: string; name: string; code: string; unit: string; quantity: number };
@@ -350,6 +353,47 @@ export function useSrDetailController(initialTask: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photosKey]);
 
+  // Full SR report PDF — GET /api/service/:id/pdf streams the raw bytes
+  // directly (same as commissioning's own GET /api/commissioning/:id/pdf,
+  // confirmed there via a real "%PDF-1.3..." response), not a JSON url
+  // wrapper, so this can't go through axiosClient (its default json/text
+  // parsing corrupts binary). Downloads to a local file via expo-file-
+  // system instead, then hands that off to the OS's own PDF viewer.
+  // task.pdfUrl (a raw GCS link) is kept only as a last-resort fallback —
+  // confirmed live on the commissioning side that bucket rejects anonymous/
+  // unsigned reads, so it only works if it happens to be a signed URL.
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState('');
+
+  const handleDownloadReport = useCallback(async () => {
+    if (!task?._id) return;
+    setDownloadingReport(true);
+    setDownloadReportError('');
+    try {
+      const token = await getToken();
+      if (!token) return;
+      // idempotent: true — re-downloading the same task's report overwrites
+      // the previous local copy instead of throwing DestinationAlreadyExists.
+      const destination = new File(Paths.cache, `service-report-${task._id}.pdf`);
+      const sourceUrl = `${API_URL}/api/service/${task._id}/pdf`;
+      try {
+        const file = await File.downloadFileAsync(
+          sourceUrl,
+          destination,
+          { headers: { Authorization: `Bearer ${token}` }, idempotent: true }
+        );
+        await Linking.openURL(file.uri);
+      } catch (primaryError: any) {
+        if (!task?.pdfUrl) throw primaryError;
+        await Linking.openURL(task.pdfUrl);
+      }
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to download the report. Please try again.').message);
+    } finally {
+      setDownloadingReport(false);
+    }
+  }, [task?._id, task?.pdfUrl]);
+
   return {
     task, asset, isLoading, role, isMyOwnTask,
     detailError, retryFetchDetail: fetchDetail,
@@ -362,5 +406,6 @@ export function useSrDetailController(initialTask: any) {
     workApprovalSaving, workApprovalError, handleAmWorkDecision, handleRsmWorkDecision,
     closingTicket, closeTicketError, handleCloseTicket,
     signedPhotoUrls, photosSigning,
+    downloadingReport, downloadReportError, handleDownloadReport,
   };
 }

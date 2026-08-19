@@ -334,16 +334,13 @@ export function useDashboardHomeController() {
   // else falls back to the list screen, same as the arrow's original
   // plain-navigation behavior.
   //
-  // Service's own COMPLETED is the one exception: per the backend dev
-  // guide it means OTP sign-off is still pending, not actually done, so it
-  // stays an Active-tab card and its arrow must go back into srTaskForm
-  // (which now auto-resumes at Step 5) rather than the read-only report —
-  // there's nothing to "view" yet since the customer hasn't signed off.
+  // Service's own COMPLETED now behaves the same as commissioning's — OTP
+  // sign-off and Close Service both moved to the read-only report screen,
+  // so there's no longer a reason to send it back into srTaskForm.
   const handleArrowPress = useCallback((task: any) => {
     const effectiveStatus = taskStatusOverrides[task._id] || task.status;
     if (effectiveStatus === 'ACCEPTED') return handleStartActiveTask(task);
     if (effectiveStatus === 'IN_PROGRESS') return goToTaskForm(task);
-    if (effectiveStatus === 'COMPLETED' && task.__kind === 'service') return goToTaskForm(task);
     if (effectiveStatus === 'COMPLETED' || effectiveStatus === 'CLOSED') return goToTaskReport(task);
     return router.push((task.__kind === 'service' ? '/screens/serviceTasks' : '/screens/commissioningTasks') as any);
   }, [taskStatusOverrides, handleStartActiveTask, goToTaskForm, goToTaskReport, router]);

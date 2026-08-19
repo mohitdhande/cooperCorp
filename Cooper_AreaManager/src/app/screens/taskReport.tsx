@@ -878,7 +878,12 @@ export default function TaskReportScreen() {
 
             <OtpStepper step={otpStep} />
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }}>
+            {/* keyboardShouldPersistTaps="handled" — without it, the first
+                tap on Verify OTP (or Generate/Regenerate) while the OTP
+                digit input still has focus only dismisses the keyboard
+                instead of registering as a press; a second tap was needed
+                to actually fire the button. */}
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
               {otpStep === 1 && (
                 <View style={styles.otpStepCard}>
                   <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>

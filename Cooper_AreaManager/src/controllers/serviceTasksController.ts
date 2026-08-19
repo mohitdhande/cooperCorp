@@ -306,14 +306,14 @@ export function useServiceTasksController() {
   // in serviceTasks.tsx) — matches commissioningTasksController.ts's arrow
   // handler shape, just service actions/routes.
   //
-  // COMPLETED means OTP sign-off is still pending (not actually done, per
-  // the backend dev guide) — its arrow goes back into srTaskForm (which
-  // auto-resumes at Step 5) rather than the read-only report, since there's
-  // nothing to view yet until the customer signs off.
+  // COMPLETED now goes to the read-only report (goToTaskReport), same as
+  // commissioning — OTP sign-off and Close Service both moved there off
+  // srTaskForm.tsx, so there's no longer anything left to do back in the
+  // form once the entry is COMPLETED.
   const handleArrowPress = useCallback((task: any) => {
     const effectiveStatus = taskStatusOverrides[task._id] || task.status;
     if (effectiveStatus === 'ACCEPTED') return handleStartTask(task._id);
-    if (effectiveStatus === 'IN_PROGRESS' || effectiveStatus === 'COMPLETED') return goToTaskForm(task);
+    if (effectiveStatus === 'IN_PROGRESS') return goToTaskForm(task);
     return goToTaskReport(task);
   }, [taskStatusOverrides, handleStartTask, goToTaskForm, goToTaskReport]);
 

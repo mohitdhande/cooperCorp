@@ -7,7 +7,7 @@ import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Wrench, Clock, Check, X, CheckCircle2, XCircle,
-  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck,
+  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck, FileDown,
 } from 'lucide-react-native';
 import { useSrDetailController } from '../../controllers/srDetailController';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
@@ -98,6 +98,7 @@ export default function SrDetailScreen() {
     workApprovalSaving, workApprovalError, handleAmWorkDecision, handleRsmWorkDecision,
     closingTicket, closeTicketError, handleCloseTicket,
     signedPhotoUrls, photosSigning,
+    downloadingReport, downloadReportError, handleDownloadReport,
   } = useSrDetailController(initialTask);
 
   const [photosExpanded, setPhotosExpanded] = useState(true);
@@ -278,9 +279,16 @@ export default function SrDetailScreen() {
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>SR Detail</Text>
-        <View style={{ width: 48 }} />
+        <Text style={styles.headerTitle}>SERVICE DETAILS</Text>
+        <TouchableOpacity style={styles.headerButton} onPress={handleDownloadReport} disabled={downloadingReport}>
+          {downloadingReport ? <ActivityIndicator size="small" color="#1E1951" /> : <FileDown size={20} color="#1E1951" />}
+        </TouchableOpacity>
       </View>
+      {!!downloadReportError && (
+        <View style={[styles.detailErrorBanner, { marginHorizontal: hPad, marginBottom: 12 }]}>
+          <Text style={styles.detailErrorBannerText}>{downloadReportError}</Text>
+        </View>
+      )}
 
       <ScrollView
         style={{ flex: 1 }}
@@ -320,17 +328,6 @@ export default function SrDetailScreen() {
               spacing above this, same as every other direct child here. */}
           <AssetLocationContact asset={asset || task.asset || task.assetId} hideContact noBorder />
         </View>
-
-        {/* Service title + notes — shown for every status (not just
-            Active), positioned above the lifecycle tracker. Replaces the
-            old Active-only inline notes box inside the identity card. */}
-        {(!!task.title || !!notes) && (
-          <View style={[styles.card, styles.serviceTitleCard, { marginTop: 20 }]}>
-            <Text style={styles.serviceTitleLabel}>SERVICE TITLE</Text>
-            {!!task.title && <Text style={styles.serviceTitleValue}>{task.title}</Text>}
-            {!!notes && <Text style={styles.serviceTitleNotes}>{notes}</Text>}
-          </View>
-        )}
 
         {/* The task's own lifecycle position (separate from the work-
             approval gate below) — shown for Active AND Completed (only
@@ -481,6 +478,18 @@ export default function SrDetailScreen() {
               <Text style={styles.acknowledgeSubtitle}>{pendingPartsCount} part(s) need your approval decision</Text>
             </View>
           </TouchableOpacity>
+        )}
+
+        {/* Service title + notes — shown for every status (not just
+            Active). Moved below Parts Awaiting Review (was above the
+            lifecycle tracker) so the "something to do" card stays the
+            first thing seen when there's pending review work. */}
+        {(!!task.title || !!notes) && (
+          <View style={[styles.card, styles.serviceTitleCard, { marginTop: 20 }]}>
+            <Text style={styles.serviceTitleLabel}>SERVICE TITLE</Text>
+            {!!task.title && <Text style={styles.serviceTitleValue}>{task.title}</Text>}
+            {!!notes && <Text style={styles.serviceTitleNotes}>{notes}</Text>}
+          </View>
         )}
 
         {(isClosedView || isCompletedView) && (

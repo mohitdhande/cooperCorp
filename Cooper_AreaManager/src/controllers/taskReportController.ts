@@ -37,34 +37,32 @@ export function useTaskReportController(initialTask: any) {
   // rerun for the new id instead of leaving `detail` (and its status field)
   // stuck on whichever task was first fetched here.
   const fetchDetail = useCallback(async (): Promise<boolean> => {
-    try {
-      const token = await getToken();
-      if (!token || !initialTask?._id) return true;
+    const token = await getToken();
+    if (!token || !initialTask?._id) return true;
 
+    // Task detail and asset are two independent fetches — each gets its own
+    // try/catch so a failure (offline or otherwise) on one doesn't skip the
+    // other's own cache-fallback logic. They used to share one try block,
+    // which meant an offline task-detail fetch threw straight past the
+    // asset fetch entirely: the task's own cached checks would still show,
+    // but Genset Identification/Engine Parameters/Alternator & Panel (all
+    // sourced from the asset, not the task) stayed blank even though a
+    // perfectly good cached asset existed from an earlier online visit.
+    let ok = true;
+    let assetIdToFetch = initialTask.assetId;
+    console.log('[Task Report] fetchDetail start — initialTask.assetId:', initialTask.assetId, 'taskId:', initialTask._id);
+
+    try {
       const data = await getCommissioningTaskDetail(token, initialTask._id);
       setDetail(data);
       // No user-scoping needed on the cache key — logout already clears all
       // of AsyncStorage, so a stale previous user's cached detail can never
       // leak into a fresh session (same rule as dashboard_summary's cache).
       await cacheData(`commissioning_detail_${initialTask._id}`, data);
-
-      const assetIdToFetch = data.assetId || initialTask.assetId;
-      if (assetIdToFetch) {
-        try {
-          const assetData = await getAssetById(token, assetIdToFetch);
-          setAsset(assetData);
-          await cacheData(`asset_${assetIdToFetch}`, assetData);
-        } catch (assetErr) {
-          console.log('[Task Report] Failed to load asset:', assetErr);
-          if (isNetworkError(assetErr)) {
-            const cachedAsset = await getCachedData(`asset_${assetIdToFetch}`);
-            if (cachedAsset) setAsset(cachedAsset.data);
-          }
-        }
-      }
-      return true;
-    } catch (error) {
-      console.log('[Task Report] Failed to load task detail:', error);
+      assetIdToFetch = data.assetId || initialTask.assetId;
+      console.log('[Task Report] Task detail fetched live. assetId from data:', data.assetId);
+    } catch (error: any) {
+      console.log('[Task Report] Failed to load task detail:', error?.message, '| isNetworkError:', isNetworkError(error), '| has response:', !!error?.response, '| has request:', !!error?.request);
       // No signal at all — fall back to the fullest detail this device last
       // saw for this task instead of leaving the screen on just initialTask
       // (the list's sparse summary, missing checklist/fault-code/parts
@@ -72,11 +70,35 @@ export function useTaskReportController(initialTask: any) {
       // stale data can't fix that.
       if (isNetworkError(error)) {
         const cached = await getCachedData(`commissioning_detail_${initialTask._id}`);
-        if (cached) { setDetail(cached.data); return true; }
+        console.log('[Task Report] Cached task detail found?', !!cached, '| cached assetId:', cached?.data?.assetId);
+        if (cached) { setDetail(cached.data); assetIdToFetch = cached.data.assetId || initialTask.assetId; }
+        else ok = false;
+      } else {
+        ok = false;
       }
-      return false;
     }
-  }, [initialTask?._id]);
+
+    console.log('[Task Report] Resolved assetIdToFetch:', assetIdToFetch);
+    if (assetIdToFetch) {
+      try {
+        const assetData = await getAssetById(token, assetIdToFetch);
+        setAsset(assetData);
+        await cacheData(`asset_${assetIdToFetch}`, assetData);
+        console.log('[Task Report] Asset fetched live.');
+      } catch (assetErr: any) {
+        console.log('[Task Report] Failed to load asset:', assetErr?.message, '| isNetworkError:', isNetworkError(assetErr));
+        if (isNetworkError(assetErr)) {
+          const cachedAsset = await getCachedData(`asset_${assetIdToFetch}`);
+          console.log('[Task Report] Cached asset found?', !!cachedAsset);
+          if (cachedAsset) setAsset(cachedAsset.data);
+        }
+      }
+    } else {
+      console.log('[Task Report] No assetIdToFetch resolved at all — asset fetch skipped entirely.');
+    }
+
+    return ok;
+  }, [initialTask?._id, initialTask?.assetId]);
 
   const [detailError, setDetailError] = useState('');
 

@@ -444,11 +444,16 @@ export const startServiceTask = async (token: string, taskId: string) => {
 
 // Closes an APPROVED/fully-confirmed entry — the final step once the work
 // approval chain reaches CONFIRMED and the customer OTP is verified.
-export const closeServiceTask = async (token: string, taskId: string) => {
+// `comment` is optional — the OTP sheet's own Step 3 (Customer Remark)
+// passes it here directly when the task is already close-eligible at that
+// point, instead of a separate PUT /:id/feedback call. Nested under
+// customerFeedback (not a bare `comment` key) per the confirmed backend
+// contract for this endpoint specifically.
+export const closeServiceTask = async (token: string, taskId: string, comment?: string) => {
   try {
     const response = await axiosClient.put(
       `/api/service/${taskId}/close`,
-      {},
+      comment ? { customerFeedback: { comment } } : {},
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;

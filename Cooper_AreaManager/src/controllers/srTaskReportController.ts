@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Linking, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { UserProfile } from '../models/Login';
-import { getServiceTaskById, getAssetById, getGcsSignedUrl, getGcsSignedUrls, closeServiceTask } from '../viewModel/commisionAPi';
+import {
+  getServiceTaskById, getAssetById, getGcsSignedUrl, getGcsSignedUrls, closeServiceTask,
+  generateServiceOtp, verifyServiceOtp,
+} from '../viewModel/commisionAPi';
 import { parseApiError } from '../utils/apiError';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
@@ -221,6 +224,144 @@ export function useSrTaskReportController(initialTask: any) {
     }
   }, [initialTask?._id, fetchDetail]);
 
+  // Client OTP verification — moved here from srTaskForm.tsx (Customer
+  // Sign-off used to live inline on Step 5), same as commissioning's own
+  // OTP step living on taskReport.tsx instead of taskForm.tsx. Same 3-step
+  // shape as commissioning: Generate OTP -> Customer Enters OTP -> Customer
+  // Remark (optional feedback, saved via PUT /:id/feedback — no status
+  // restriction). A successful verify moves status to CLIENT_APPROVED (not
+  // an auto-close like commissioning's COMPLETED → CLOSED) — Close Service
+  // above stays a separate, later step once partApproval/workApproval also
+  // clear.
+  const isOtpPending = task?.status === 'COMPLETED' && !task?.completionOtp?.verified;
+
+  const [otpSheetOpen, setOtpSheetOpen] = useState(false);
+  const [otpStep, setOtpStep] = useState<1 | 2 | 3>(1);
+  const [otpGenerated, setOtpGenerated] = useState(false);
+  const [generatedOtp, setGeneratedOtp] = useState<string[]>(['', '', '', '']);
+  const [customerOtp, setCustomerOtp] = useState<string[]>(['', '', '', '']);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const otpInputRefs = useRef<Array<TextInput | null>>([null, null, null, null]);
+  const [remark, setRemark] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [remarkError, setRemarkError] = useState('');
+
+  const openOtpSheet = useCallback(() => {
+    setOtpSheetOpen(true);
+    setOtpStep(1);
+    setOtpGenerated(false);
+    setGeneratedOtp(['', '', '', '']);
+    setCustomerOtp(['', '', '', '']);
+    setOtpError('');
+    setRemark('');
+    setRemarkError('');
+  }, []);
+
+  const closeOtpSheet = useCallback(() => setOtpSheetOpen(false), []);
+
+  const handleGenerateOtp = useCallback(async () => {
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+      const response = await generateServiceOtp(token, initialTask._id);
+      const code = String(response?.code || '');
+      setGeneratedOtp(code.split('').slice(0, 4));
+      setCustomerOtp(['', '', '', '']);
+      setOtpGenerated(true);
+      setOtpStep(2);
+    } catch (error: any) {
+      setOtpError(parseApiError(error, 'Failed to generate OTP. Please try again.').message);
+    } finally {
+      setOtpLoading(false);
+    }
+  }, [initialTask?._id]);
+
+  const handleRegenerateOtp = useCallback(async () => {
+    setOtpGenerated(false);
+    setCustomerOtp(['', '', '', '']);
+    setGeneratedOtp(['', '', '', '']);
+    await handleGenerateOtp();
+  }, [handleGenerateOtp]);
+
+  const handleChangeCustomerOtpDigit = useCallback((index: number, value: string) => {
+    const digit = value.replace(/[^0-9]/g, '').slice(-1);
+    setCustomerOtp(prev => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    if (digit && index < 3) otpInputRefs.current[index + 1]?.focus();
+  }, []);
+
+  const handleVerifyOtp = useCallback(async () => {
+    const code = customerOtp.join('');
+    if (code.length < 4) return;
+
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+
+      const verifyData = await verifyServiceOtp(token, initialTask._id, code);
+      if (!verifyData?.verified && verifyData?.status !== 'CLIENT_APPROVED') {
+        setOtpError('Incorrect OTP. Please ask the customer to check the code.');
+        return;
+      }
+
+      // Moves to the optional remark step instead of closing the sheet —
+      // refetching now (rather than waiting for the sheet to close) so the
+      // footer/status behind it are already correct by the time the user
+      // does close it. Same as commissioning's own handleVerifyOtp.
+      setOtpStep(3);
+      await fetchDetail();
+    } catch (error: any) {
+      const { code: errorCode, message } = parseApiError(error, 'Verification failed. Please try again.');
+      if (errorCode === 'OTP_LOCKED') {
+        // Too many failed attempts — force the customer-facing OTP back to
+        // "not generated" so the only way forward is a fresh code.
+        setOtpGenerated(false);
+        setCustomerOtp(['', '', '', '']);
+        setGeneratedOtp(['', '', '', '']);
+        setOtpStep(1);
+      }
+      setOtpError(message);
+    } finally {
+      setOtpLoading(false);
+    }
+  }, [customerOtp, initialTask?._id, fetchDetail]);
+
+  // Save & Close always calls PUT /:id/close — there's no separate
+  // /:id/feedback route for service tasks (confirmed: it 404s), unlike
+  // commissioning's own equivalent endpoint. If the task isn't actually
+  // close-eligible yet (parts/work approval still pending), the backend's
+  // own rejection surfaces normally below as remarkError.
+  const handleSaveRemark = useCallback(async () => {
+    setRemarkSaving(true);
+    setRemarkError('');
+    try {
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
+      const trimmed = remark.trim();
+
+      // PUT /:id/close is the only endpoint that exists for this — there's
+      // no separate /:id/feedback route on the backend for service tasks
+      // (confirmed: it 404s). The remark rides its customerFeedback field,
+      // sent whenever there's actually something to send.
+      await closeServiceTask(token, initialTask._id, trimmed || undefined);
+
+      setOtpSheetOpen(false);
+      await fetchDetail();
+    } catch (error: any) {
+      setRemarkError(parseApiError(error, 'Failed to save. Please try again.').message);
+    } finally {
+      setRemarkSaving(false);
+    }
+  }, [remark, initialTask?._id, fetchDetail]);
+
   return {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
     detailError,
@@ -228,5 +369,10 @@ export function useSrTaskReportController(initialTask: any) {
     documents, documentOpeningUrl, documentError, handleViewDocument,
     signedPhotoUrls, photosSigning,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    isOtpPending,
+    otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
+    otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
+    handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
+    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
   };
 }

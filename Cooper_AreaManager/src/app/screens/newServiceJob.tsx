@@ -50,7 +50,7 @@ const DEFAULT_FREE_SERVICE_STATUS_COLOR = FREE_SERVICE_STATUS_COLOR.no_date;
 const CATEGORY_DISPLAY_GROUPS: { group: string; titles: string[] }[] = [
   { group: 'General', titles: ['Free Service'] },
   { group: 'Standard', titles: ['Warranty Repair', 'Out Of Warranty'] },
-  { group: 'AMC / CAMC', titles: ['AMC', 'CAMC'] },
+  { group: 'AMC / CAMC', titles: ['AMC', 'CAMC', 'Cooper AMC', 'Cooper CAMC', 'Dealer AMC', 'Dealer CAMC'] },
   { group: 'Special', titles: ['Campaign', 'Other'] },
 ];
 
@@ -275,15 +275,15 @@ export default function NewServiceJobScreen() {
       <ScreenBackground />
       {(isSearching || assetLoading || creating) && <LoadingOverlay />}
 
-      {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
-          OS already shifts the whole screen up for the focused input;
-          pairing that with behavior="height" double-compensated and left
-          a large empty gap above the keyboard. undefined on Android leaves
-          the OS's native pan as the only mechanism; iOS still needs its
-          own "padding" here. */}
+      {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) alone
+          wasn't reliably shifting the layout enough to keep the focused
+          field clear of the keyboard — behavior="height" here (matching
+          newJob.tsx/taskForm.tsx's own fix) actually resizes the scrollable
+          area instead of just relying on the OS's own pan. iOS keeps its
+          own "padding" behavior. */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
       {/* App bar is now the ScrollView's own first child (was a fixed
@@ -294,7 +294,7 @@ export default function NewServiceJobScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 16, paddingBottom: 24, gap: 20 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 16, paddingBottom: 120, gap: 20 }}
         keyboardShouldPersistTaps="handled"
       >
         {/* headerPad (30/420) is wider than the ScrollView's own hPad
@@ -305,7 +305,7 @@ export default function NewServiceJobScreen() {
           <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
             <ChevronLeft size={22} color="#979797" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>NEW SERVICE JOB</Text>
+          <Text style={styles.headerTitle}>NEW SR</Text>
           <View style={styles.headerButton}>
             <Bell size={22} color="#979797" />
           </View>
@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 20, fontWeight: '400', color: '#000000', textTransform: 'uppercase' },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase'},
 
   placeholderText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center', marginTop: 40 },
 

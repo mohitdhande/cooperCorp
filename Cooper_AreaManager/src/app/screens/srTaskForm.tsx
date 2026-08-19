@@ -4,7 +4,17 @@ import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { ArrowLeft, AlertTriangle, Bell, Check, CheckCheck, CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Info, Lock, Pencil, Plus, Smartphone } from 'lucide-react-native';
+import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info, Pencil, Plus, Star } from 'lucide-react-native';
+
+// Voice of Customer's 1-5 star rating, labeled the same way for every
+// caller instead of showing a bare number.
+const RATING_LABELS: Record<number, string> = {
+  1: 'Poor',
+  2: 'Fair',
+  3: 'Good',
+  4: 'Very Good',
+  5: 'Excellent',
+};
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
 import { DropdownField } from '../../_components/taskForm/DropdownField';
@@ -20,7 +30,6 @@ import { TaskSummaryHeader } from '../../_components/shared/TaskSummaryHeader';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
 import { useFieldFocusChain } from '../../utils/useFieldFocusChain';
-import { PriorityBadge } from '../../_components/taskForm/PriorityBadge';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { formatFileSize } from '../../utils/reportFormatters';
 
@@ -104,304 +113,6 @@ function ReadingsDisplayField({ item }: { item: { kind: 'value'; label: string; 
   );
 }
 
-// Orange banner shown at the top of Step 5's post-Complete view while OTP
-// sign-off is still outstanding — mirrors the reference design's "Pending
-// Customer Sign-off" card. Hidden once vm.taskCompleted (OTP verified).
-function PendingSignOffBanner() {
-  return (
-    <View style={styles.pendingSignOffBanner}>
-      <View style={styles.pendingSignOffIconChip}>
-        <Clock size={18} color="#FFFFFF" />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.pendingSignOffTitle}>Pending Customer Sign-off</Text>
-        <Text style={styles.pendingSignOffSubtitle}>Collect OTP from the customer to proceed.</Text>
-      </View>
-    </View>
-  );
-}
-
-// Green banner — the sign-off banner's next state once OTP has been
-// verified but Close Ticket is still blocked on Parts/Work approval.
-function CompletedWaitingBanner() {
-  return (
-    <View style={styles.completedWaitingBanner}>
-      <View style={styles.completedWaitingIconChip}>
-        <Check size={18} color="#FFFFFF" strokeWidth={3} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.completedWaitingTitle}>Completed</Text>
-        <Text style={styles.completedWaitingSubtitle}>Waiting for approvals before closing.</Text>
-      </View>
-    </View>
-  );
-}
-
-// Customer Sign-off card — Send OTP (before generated) or the OTP-sent
-// state (code reveal, then the customer's entry boxes) once it has been.
-// The generated code stays visible until Verify succeeds or Resend
-// replaces it — same persistent behavior as the commissioning form's own
-// OTP step (taskForm.tsx), not a timed auto-hide. Shared by both the
-// engineer and area_manager Step 5 branches, which otherwise duplicate
-// this exact card.
-function CustomerSignOffCard({ vm }: { vm: any }) {
-  const cardRef = useRef<View>(null);
-
-  // Scrolls so this whole card (not just the tapped input) sits above the
-  // keyboard — a plain scrollToEnd would jump past this card entirely once
-  // Fault Codes/Parts Used/Notes render below it, cutting the OTP boxes
-  // and Verify button off-screen instead of showing them. Measures the
-  // card's own position relative to the ScrollView and scrolls exactly
-  // there, with a small top margin, instead of guessing.
-  const scrollCardIntoView = () => {
-    const scrollView = vm.scrollViewRef?.current;
-    const card = cardRef.current;
-    if (!scrollView || !card) return;
-    // A tick after focus — measureLayout on the same frame focus fires can
-    // read a stale (pre-keyboard-transition) layout on some Android
-    // devices.
-    setTimeout(() => {
-      // Pass the ScrollView ref itself, not a findNodeHandle()-derived
-      // numeric handle — under the New Architecture (default since RN
-      // 0.76+, this project's on 0.86), measureLayout's first argument
-      // must be an actual native component ref; a plain number throws
-      // "ref.measureLayout must be called with a ref to a native
-      // component" instead of silently working like it did on the old
-      // architecture.
-      card.measureLayout(
-        scrollView,
-        (_x: number, y: number) => { scrollView.scrollTo({ y: Math.max(0, y - 16), animated: true }); },
-        () => {}
-      );
-    }, 100);
-  };
-
-  // Auto-focuses the first OTP box the moment the entry row appears —
-  // the customer shouldn't need to tap it manually. A short delay lets the
-  // boxes actually mount first (focusing a not-yet-rendered ref is a
-  // no-op). Same dependency pair as the reveal countdown above — Resend
-  // clears customerOtp and generates a fresh code, so it re-focuses box 1
-  // too rather than leaving focus wherever it was. Programmatic .focus()
-  // still fires box 0's own onFocus (scrollCardIntoView above), which is
-  // scoped to only that one box — not the per-digit auto-advance between
-  // boxes — so this doesn't reintroduce the screen-jumping-while-typing
-  // issue.
-  useEffect(() => {
-    if (!vm.otpGenerated) return;
-    const timeout = setTimeout(() => { vm.otpInputRefs.current[0]?.focus(); }, 150);
-    return () => clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vm.otpGenerated, vm.generatedOtp.join('')]);
-
-  const canVerify = vm.customerOtp.join('').length >= 4 && !vm.otpLoading;
-
-  return (
-    <View ref={cardRef} style={styles.sectionCard}>
-      <Text style={styles.approvalStatusLabel}>CUSTOMER SIGN-OFF</Text>
-      {vm.taskCompleted ? (
-        <View style={styles.otpVerifiedBanner}>
-          <CheckCircle2 size={18} color="#16A34A" />
-          <Text style={styles.otpVerifiedBannerText}>Customer OTP Verified</Text>
-        </View>
-      ) : (
-        <View style={styles.otpInlineCard}>
-          {!vm.otpGenerated ? (
-            <TouchableOpacity
-              style={[styles.otpSendButton, vm.otpLoading && styles.buttonDisabled]}
-              onPress={vm.handleGenerateOtp}
-              disabled={vm.otpLoading}
-            >
-              {vm.otpLoading ? <ActivityIndicator color="#fff" size="small" /> : (
-                <>
-                  <Smartphone size={18} color="#FFFFFF" />
-                  <Text style={styles.otpInlineButtonText}>Send OTP to Customer</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          ) : (
-            <>
-              <View style={styles.otpSentRow}>
-                <View style={styles.otpSentLeft}>
-                  <View style={styles.otpSentCheck}>
-                    <Check size={11} color="#FFFFFF" strokeWidth={3} />
-                  </View>
-                  <Text style={styles.otpSentText}>OTP sent</Text>
-                </View>
-                <TouchableOpacity onPress={vm.handleRegenerateOtp} disabled={vm.otpLoading} hitSlop={8}>
-                  <Text style={styles.otpResendLinkV2}>Resend</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.otpRevealBox}>
-                <Text style={styles.otpRevealLabel}>SHARE WITH CUSTOMER</Text>
-                <Text style={styles.otpRevealCode}>{vm.generatedOtp.join('  ')}</Text>
-              </View>
-
-              <View style={styles.otpDividerRow}>
-                <View style={styles.otpDividerLine} />
-                <Text style={styles.otpDividerText}>CUSTOMER ENTERS</Text>
-                <View style={styles.otpDividerLine} />
-              </View>
-
-              <View style={styles.otpBoxRowV2}>
-                {vm.customerOtp.map((digit: string, index: number) => (
-                  <TextInput
-                    key={index}
-                    ref={(ref: any) => { vm.otpInputRefs.current[index] = ref; }}
-                    style={styles.otpBoxV2}
-                    value={digit}
-                    onChangeText={(text: string) => vm.handleChangeCustomerOtpDigit(index, text)}
-                    // Only the first box scrolls the row into view above the
-                    // keyboard — typing auto-advances focus through the
-                    // other three (see handleChangeCustomerOtpDigit), and
-                    // re-firing scrollToEnd on every one of those handoffs
-                    // was snapping the whole screen to the bottom after
-                    // every single digit, which read as the screen
-                    // "jumping" while entering the OTP.
-                    onFocus={index === 0 ? scrollCardIntoView : undefined}
-                    keyboardType="numeric"
-                    maxLength={1}
-                    textAlign="center"
-                  />
-                ))}
-              </View>
-              {vm.otpError ? <Text style={styles.sectionErrorText}>{vm.otpError}</Text> : null}
-
-              <TouchableOpacity
-                style={[styles.otpVerifyCompleteButton, (!canVerify) && styles.buttonDisabled]}
-                onPress={vm.handleVerifyAndComplete}
-                disabled={!canVerify}
-              >
-                {vm.otpLoading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyCompleteButtonText}>Verify & Complete</Text>}
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-// Step 5's read-only "what was actually submitted" summary — plain
-// uppercase section labels with each fault code's Observation/Root
-// Cause/Corrective Action called out in its own colored box. Rendered
-// inside a collapsible GroupHeader card by the caller now (see
-// summaryExpanded/toggleSummarySection) — this component itself is just
-// the body content, same as before.
-function SubmittedFaultCodesSection({ faultCodes }: { faultCodes: any[] }) {
-  return (
-    <View style={styles.submittedSection}>
-      {faultCodes.length === 0 ? (
-        <View style={styles.submittedCard}>
-          <Text style={styles.emptyApprovalText}>No fault codes recorded.</Text>
-        </View>
-      ) : (
-        faultCodes.map((fc) => (
-          <View key={fc.uid} style={styles.submittedCard}>
-            <View style={styles.approvalFaultHeader}>
-              <View style={styles.approvalCodeBadge}>
-                <Text style={styles.approvalCodeBadgeText}>{fc.code}</Text>
-              </View>
-              <Text style={styles.approvalFaultTitle} numberOfLines={1}>{fc.title}</Text>
-              <PriorityBadge priority={fc.priority} />
-            </View>
-            {!!(fc.categoryName || fc.subcategoryName) && (
-              <Text style={styles.submittedCardSubtitle}>
-                {fc.categoryName}{fc.categoryName && fc.subcategoryName ? ' › ' : ''}{fc.subcategoryName}
-              </Text>
-            )}
-            <View style={[styles.submittedDetailBox, fc.observation ? styles.submittedDetailBoxObservation : styles.submittedDetailBoxEmpty]}>
-              <Text style={[styles.submittedDetailLabel, fc.observation ? styles.submittedDetailLabelObservation : styles.submittedDetailLabelEmpty]}>OBSERVATION</Text>
-              {fc.observation ? (
-                <Text style={styles.submittedDetailValue}>{fc.observation}</Text>
-              ) : (
-                <Text style={styles.submittedDetailValueEmpty}>Not filled</Text>
-              )}
-            </View>
-            <View style={[styles.submittedDetailBox, fc.rootCause ? styles.submittedDetailBoxRootCause : styles.submittedDetailBoxEmpty]}>
-              <Text style={[styles.submittedDetailLabel, fc.rootCause ? styles.submittedDetailLabelRootCause : styles.submittedDetailLabelEmpty]}>ROOT CAUSE</Text>
-              {fc.rootCause ? (
-                <Text style={styles.submittedDetailValue}>{fc.rootCause}</Text>
-              ) : (
-                <Text style={styles.submittedDetailValueEmpty}>Not filled</Text>
-              )}
-            </View>
-            <View style={[styles.submittedDetailBox, fc.correctiveAction ? styles.submittedDetailBoxAction : styles.submittedDetailBoxEmpty]}>
-              <Text style={[styles.submittedDetailLabel, fc.correctiveAction ? styles.submittedDetailLabelAction : styles.submittedDetailLabelEmpty]}>CORRECTIVE ACTION</Text>
-              {fc.correctiveAction ? (
-                <Text style={styles.submittedDetailValue}>{fc.correctiveAction}</Text>
-              ) : (
-                <Text style={styles.submittedDetailValueEmpty}>Not filled</Text>
-              )}
-            </View>
-          </View>
-        ))
-      )}
-    </View>
-  );
-}
-
-// Same plain-label pattern for parts — a code/unit tag pair plus an "AM
-// Review" tag while part approval is still pending, a lock icon marking the
-// row read-only (parts can no longer be added/removed once submitted).
-function SubmittedPartsSection({ parts, awaitingAmReview }: { parts: any[]; awaitingAmReview: boolean }) {
-  return (
-    <View style={styles.submittedSection}>
-      {parts.length === 0 ? (
-        <View style={styles.submittedCard}>
-          <Text style={styles.emptyApprovalText}>No parts recorded.</Text>
-        </View>
-      ) : (
-        parts.map((p) => (
-          <View key={p.partId} style={styles.submittedCard}>
-            <View style={styles.submittedPartTagRow}>
-              <View style={styles.submittedPartTag}>
-                <Text style={styles.submittedPartTagText}>{p.code}</Text>
-              </View>
-              <View style={styles.submittedPartTag}>
-                <Text style={styles.submittedPartTagText}>{p.unit}</Text>
-              </View>
-              {awaitingAmReview && (
-                <View style={styles.submittedPartReviewTag}>
-                  <Text style={styles.submittedPartReviewTagText}>AM Review</Text>
-                </View>
-              )}
-              <View style={styles.submittedPartLock}>
-                <Lock size={13} color="#9CA3AF" />
-              </View>
-            </View>
-            <Text style={styles.approvalPartName}>{p.name}</Text>
-            {!!(p.category || p.subCategory) && (
-              <Text style={styles.submittedCardSubtitle}>
-                {p.category}{p.category && p.subCategory ? ' › ' : ''}{p.subCategory}
-              </Text>
-            )}
-            <View style={styles.submittedPartQtyRow}>
-              <View style={styles.submittedPartQtyPill}>
-                <Text style={styles.submittedPartQtyPillText}>×{p.quantity}</Text>
-              </View>
-            </View>
-          </View>
-        ))
-      )}
-    </View>
-  );
-}
-
-function SubmittedNotesSection({ notes }: { notes: string }) {
-  return (
-    <View style={styles.submittedSection}>
-      <View style={styles.submittedCard}>
-        {notes ? (
-          <Text style={styles.approvalNotesText}>{notes}</Text>
-        ) : (
-          <Text style={styles.emptyApprovalText}>No notes recorded.</Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
 // Main SR (service) task form screen — a 6-step wizard, redesigned to match
 // the commissioning task form (taskForm.tsx). Renders the UI and delegates
 // all state/API logic to the useSrTaskForm controller. The one genuine
@@ -452,8 +163,8 @@ export default function SrTaskFormScreen() {
   // make it look like every code/part is being saved together.
   const isBusy = (
     vm.initialDataLoading ||
-    vm.photosUploading || vm.videosUploading || vm.step5Saving || vm.step6Saving || vm.otpLoading ||
-    vm.faultCodesLoading || vm.partsLoading || vm.finishing || vm.closingTicket ||
+    vm.photosUploading || vm.videosUploading || vm.step5Saving || vm.step6Saving ||
+    vm.faultCodesLoading || vm.partsLoading || vm.finishing ||
     Object.values(vm.sectionSaving).some(Boolean)
   );
   // Photo/video upload is the one loading state worth a live % instead of
@@ -530,50 +241,12 @@ export default function SrTaskFormScreen() {
     (vm.selectedCategoryLetter === 'B' && ['Breakdown', 'BIS'].includes(vm.selectedSubCategory))
     || (vm.selectedCategoryLetter === 'E' && vm.selectedSubCategory === 'AMC Out Of Scope');
 
-  // Once finished, the task's own workApproval (the same object
-  // TaskPreviewCard/srDetail read) tells us whether it's still pending —
-  // this screen just labels it "Parts Approval" instead of "Work Approval".
+  // Once COMPLETED, this screen is done — OTP sign-off, Approval Status,
+  // and Close Ticket all moved to srTaskReport.tsx (handleFinishService
+  // navigates straight there on success). Kept here only to keep the form
+  // read-only if this screen is ever somehow reached with an already-
+  // COMPLETED task (e.g. a stale nav param), rather than as a live view.
   const isEngineerFinished = vm.isEngineer && vm.task?.status === 'COMPLETED';
-  // Pending-sign-off banner — shown once per screen, above the
-  // date/assignee summary card (TaskSummaryHeader) rather than buried
-  // inside the role-specific Customer Sign-off card below it. Only once
-  // the task has actually reached COMPLETED (work done, OTP outstanding)
-  // and only until that OTP is verified — never for IN_PROGRESS or earlier
-  // active statuses, and never once taskCompleted flips true.
-  const showPendingSignOffBanner = vm.currentStep === 5 && vm.task?.status === 'COMPLETED' && !vm.taskCompleted;
-  const engineerWorkApproval = vm.task?.workApproval;
-  // Categories that never need work approval at all (A/F/G, or B/C without
-  // Goodwill) never get a workApproval object — treating that as "blocked
-  // until CONFIRMED" left Close Ticket permanently disabled for them, since
-  // nothing was ever going to set a status. No workApproval means nothing
-  // to wait for.
-  const partsApprovalConfirmed = !engineerWorkApproval || engineerWorkApproval.status === 'CONFIRMED';
-  const partsApprovalSubtitle = engineerWorkApproval?.status === 'PENDING_RSM' ? 'Pending RSM confirmation' : 'Pending AM review';
-
-  // Close Ticket's real 3-gate rule per the backend dev guide — work
-  // approval (above) is only one of them; part approval is a genuinely
-  // separate gate the button was never actually checking before, so it
-  // could show "enabled" for a task the backend would still 400 on.
-  const enginePartApproval = vm.task?.partApproval;
-  const partApprovalDone = !enginePartApproval || enginePartApproval.status !== 'PENDING';
-  // OTP-verified via either this session's own flag (just verified, before
-  // any refetch) or the task's own persisted state (already verified in an
-  // earlier session) — taskCompleted alone missed the second case, leaving
-  // Close Ticket looking un-verified for a task that already was.
-  const otpVerifiedForClose = vm.taskCompleted || vm.task?.status === 'CLIENT_APPROVED' || vm.task?.completionOtp?.verified === true;
-  const canCloseTicketEngineer = partsApprovalConfirmed && partApprovalDone && otpVerifiedForClose;
-
-  const amPartApproval = vm.task?.partApproval;
-  const amPartApprovalDone = !amPartApproval || amPartApproval.status !== 'PENDING';
-  const canCloseTicketAM = vm.workApprovalStatus === 'CONFIRMED' && amPartApprovalDone && otpVerifiedForClose;
-
-  // Green "Completed / waiting for approvals" banner — the sign-off
-  // banner's own next state once OTP has actually been verified but Close
-  // Ticket is still blocked on Parts/Work approval. Mutually exclusive with
-  // showPendingSignOffBanner (that one requires status === 'COMPLETED',
-  // this one requires the task to have already moved past it).
-  const canCloseTicketFinal = vm.isEngineer ? canCloseTicketEngineer : canCloseTicketAM;
-  const showCompletedWaitingBanner = vm.currentStep === 5 && otpVerifiedForClose && !canCloseTicketFinal;
 
   // Step 1's five sections auto-minimize right after a successful save,
   // same pattern as the commissioning form — this tracks only the manual
@@ -582,16 +255,6 @@ export default function SrTaskFormScreen() {
   const isSectionExpanded = (key: string) => !vm.sectionSuccess[key] || !!sectionReopened[key];
 
   const toggleSectionReopen = (key: string) => setSectionReopened((prev) => ({ ...prev, [key]: !prev[key] }));
-
-  // Step 5's post-submission "what was actually submitted" cards (Fault
-  // Codes/Parts Used/Notes) — same collapse-by-default, tap-header-to-
-  // expand pattern as Step 1's sections above, but this data was never
-  // "saved" via its own button (it's read straight from steps 2/3's already-
-  // submitted state), so it gets its own independent toggle dict rather
-  // than reusing isSectionExpanded/vm.sectionSuccess, which would always
-  // read as expanded here (no matching sectionSuccess key ever gets set).
-  const [summaryExpanded, setSummaryExpanded] = useState<Record<string, boolean>>({});
-  const toggleSummarySection = (key: string) => setSummaryExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // Electrical Readings/Engine Parameters — unlike this step's other
   // sections, these default to an always-visible read-only display (real
@@ -613,16 +276,6 @@ export default function SrTaskFormScreen() {
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
       {isBusy && <LoadingOverlay message={loadingMessage} />}
-
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.headerButton} onPress={vm.handleCancel}>
-          <ChevronLeft size={22} color="#979797" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>SERVICE</Text>
-        <View style={styles.headerButton}>
-          <Bell size={22} color="#979797" />
-        </View>
-      </View>
 
       {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
           OS already shifts the whole screen up to keep the focused input
@@ -648,6 +301,22 @@ export default function SrTaskFormScreen() {
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={vm.refreshing} onRefresh={vm.onRefresh} colors={['#F26722']} tintColor="#F26722" />}
         >
+          {/* App bar is now the ScrollView's own first child (was a fixed
+              sibling above it) — the whole screen, header included, scrolls
+              as one unit, same fix already applied to newJob.tsx/
+              newServiceJob.tsx. paddingHorizontal: 0 override — scrollArea's
+              own style already insets the ScrollView by the same 20px this
+              header used, so keeping its own would double it up. */}
+          <View style={[styles.header, { paddingHorizontal: 0 }]}>
+            <TouchableOpacity style={styles.headerButton} onPress={vm.handleCancel}>
+              <ChevronLeft size={22} color="#979797" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>SERVICE</Text>
+            <View style={styles.headerButton}>
+              <Bell size={22} color="#979797" />
+            </View>
+          </View>
+
           <StepperRow
             steps={SR_STEP_SEQUENCE}
             currentStep={vm.currentStep}
@@ -658,16 +327,7 @@ export default function SrTaskFormScreen() {
               fields become read-only — the stepper above stays interactive
               so the user can still page back through and review what was
               submitted, they just can't change anything. */}
-          <View pointerEvents={(vm.taskCompleted || isEngineerFinished) ? 'none' : 'auto'} style={(vm.taskCompleted || isEngineerFinished) ? styles.readOnlyDim : undefined}>
-
-          {/* Pending-sign-off banner sits above the summary card (not
-              inside the Customer Sign-off card below), matching the
-              reference design's top-of-screen placement. Once OTP is
-              verified, the green "Completed / waiting for approvals"
-              banner takes over the same slot until Close Ticket is
-              actually enabled. */}
-          {showPendingSignOffBanner && <PendingSignOffBanner />}
-          {showCompletedWaitingBanner && <CompletedWaitingBanner />}
+          <View pointerEvents={vm.task?.status === 'COMPLETED' ? 'none' : 'auto'} style={vm.task?.status === 'COMPLETED' ? styles.readOnlyDim : undefined}>
 
           {/* Step 1 and Step 5 only — reverted from showing on every step,
               then Step 5 added back since the post-Complete/Send-for-
@@ -1064,7 +724,7 @@ export default function SrTaskFormScreen() {
               {vm.step2Error ? <Text style={styles.sectionErrorText}>{vm.step2Error}</Text> : null}
 
               {/* Below the added-codes list now, not above it. */}
-              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openComplaintPicker} disabled={vm.taskCompleted}>
+              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openComplaintPicker} disabled={vm.task?.status === 'COMPLETED'}>
                 <Plus size={18} color="#0F0F0F" />
                 <Text style={styles.addCodeButtonText}>ADD CODE</Text>
               </TouchableOpacity>
@@ -1096,7 +756,7 @@ export default function SrTaskFormScreen() {
               {vm.step3Error ? <Text style={styles.sectionErrorText}>{vm.step3Error}</Text> : null}
 
               {/* Below the added-parts list now, not above it. */}
-              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openPartPicker} disabled={vm.taskCompleted}>
+              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openPartPicker} disabled={vm.task?.status === 'COMPLETED'}>
                 <Plus size={18} color="#0F0F0F" />
                 <Text style={styles.addCodeButtonText}>ADD PARTS</Text>
               </TouchableOpacity>
@@ -1152,6 +812,68 @@ export default function SrTaskFormScreen() {
                 onPickPdf={vm.handlePickPdf}
                 onRemove={vm.handleRemovePhoto}
               />
+
+              {/* Notes / Suggestion Comment / Voice of Customer — UI only for
+                  now, no save wiring yet. */}
+              <View style={[styles.sectionCard, { marginTop: 16 }]}>
+                <Text style={styles.vocLabel}>NOTES</Text>
+                <TextInput
+                  style={[styles.fieldInput, styles.feedbackTextArea]}
+                  placeholder="Enter work notes (one per line)..."
+                  placeholderTextColor="#9CA3AF"
+                  value={vm.workNotes}
+                  onChangeText={vm.setWorkNotes}
+                  multiline
+                  numberOfLines={4}
+                />
+
+                <View style={styles.vocDivider} />
+
+                <Text style={styles.vocLabel}>SUGGESTION COMMENT</Text>
+                <TextInput
+                  style={[styles.fieldInput, styles.feedbackTextArea]}
+                  placeholder="Enter suggestion comments (one per line)..."
+                  placeholderTextColor="#9CA3AF"
+                  value={vm.suggestionComment}
+                  onChangeText={vm.setSuggestionComment}
+                  multiline
+                  numberOfLines={4}
+                />
+
+                <View style={styles.vocDivider} />
+
+                <Text style={styles.vocLabel}>VOICE OF CUSTOMER</Text>
+                <TextInput
+                  style={[styles.fieldInput, { marginBottom: 14 }]}
+                  placeholder="Customer name..."
+                  placeholderTextColor="#9CA3AF"
+                  value={vm.voiceOfCustomerName}
+                  onChangeText={vm.setVoiceOfCustomerName}
+                />
+                <View style={styles.vocStarRow}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <TouchableOpacity key={n} onPress={() => vm.setVoiceOfCustomerRating(n)} hitSlop={6}>
+                      <Star
+                        size={28}
+                        color={n <= vm.voiceOfCustomerRating ? '#F26722' : '#D1D5DB'}
+                        fill={n <= vm.voiceOfCustomerRating ? '#F26722' : 'none'}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                  {!!vm.voiceOfCustomerRating && (
+                    <Text style={styles.vocRatingLabel}>{RATING_LABELS[vm.voiceOfCustomerRating]}</Text>
+                  )}
+                </View>
+                <TextInput
+                  style={[styles.fieldInput, styles.feedbackTextArea, { marginTop: 14 }]}
+                  placeholder="Customer remark..."
+                  placeholderTextColor="#9CA3AF"
+                  value={vm.voiceOfCustomerRemark}
+                  onChangeText={vm.setVoiceOfCustomerRemark}
+                  multiline
+                  numberOfLines={4}
+                />
+              </View>
             </>
           )}
 
@@ -1166,8 +888,6 @@ export default function SrTaskFormScreen() {
               isEngineerFinished. */}
           {vm.currentStep === 5 && vm.isEngineer && !isEngineerFinished && (
             <>
-              <Text style={styles.stepSectionLabel}>STEP 5 — CATEGORY & APPROVAL</Text>
-
               <View style={styles.sectionCard}>
                 {vm.categoryPresetAtCreation ? (
                   <>
@@ -1342,10 +1062,6 @@ export default function SrTaskFormScreen() {
           {/* ══════════════ STEP 5 (area_manager) — CATEGORY, APPROVAL & COMPLETION ══════════════ */}
           {vm.currentStep === 5 && !vm.isEngineer && (
             <>
-              <Text style={styles.stepSectionLabel}>STEP 5 — CATEGORY & APPROVAL</Text>
-
-              {vm.workApprovalStatus === '' ? (
-                <>
                   {/* Same 3-way branch the engineer's own Step 5 uses —
                       category+sub-type both preset at creation (read-only),
                       category only preset (this card + Service Type
@@ -1510,300 +1226,10 @@ export default function SrTaskFormScreen() {
                       {vm.step6Saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.completeTaskButtonText}>Complete Task</Text>}
                     </TouchableOpacity>
                   </View>
-                </>
-              ) : (
-                <>
-                  <CustomerSignOffCard vm={vm} />
-
-                  {/* Approval Status — same finishCatRow badge style as the
-                      engineer's own version, plus a pending banner for
-                      whichever stage (AM/RSM) is still outstanding. */}
-                  <View style={styles.sectionCard}>
-                    <Text style={styles.approvalStatusLabel}>APPROVAL STATUS</Text>
-                    <View style={styles.finishCatRow}>
-                      <View style={[styles.finishCatBadgeCircle, { backgroundColor: selectedCategoryColor.bg }]}>
-                        <Text style={[styles.finishCatBadgeLetter, { color: selectedCategoryColor.text }]}>{vm.selectedCategoryLetter}</Text>
-                      </View>
-                      <Text style={styles.finishCatTitle}>{vm.selectedSubCategory}</Text>
-                    </View>
-
-                    {(vm.workApprovalStatus === 'PENDING_AM' || vm.workApprovalStatus === 'PENDING_RSM') && (
-                      <View style={styles.partsApprovalBanner}>
-                        <View style={styles.partsApprovalIconChip}>
-                          <Clock size={16} color="#B45309" />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.partsApprovalTitle}>Work Approval</Text>
-                          <Text style={styles.partsApprovalSubtitle}>
-                            {vm.workApprovalStatus === 'PENDING_AM' ? 'Awaiting Area Manager review' : 'AM approved — awaiting RSM confirmation'}
-                          </Text>
-                        </View>
-                        <View style={styles.pendingTag}>
-                          <Text style={styles.pendingTagText}>{vm.workApprovalStatus === 'PENDING_AM' ? 'PENDING AM' : 'PENDING RSM'}</Text>
-                        </View>
-                      </View>
-                    )}
-
-                    {/* Reads the real task.workApproval, not the simplified
-                        workApprovalStatus gate above — that one defaults to
-                        'CONFIRMED' for categories that never needed approval
-                        at all, which shouldn't claim "RSM confirmed" when
-                        RSM was never involved. */}
-                    {vm.task?.workApproval?.status === 'CONFIRMED' && (
-                      <View style={styles.partsApprovalBannerDone}>
-                        <View style={styles.partsApprovalIconChipDone}>
-                          <CheckCircle2 size={16} color="#16A34A" />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.partsApprovalTitleDone}>Work Approval</Text>
-                          <Text style={styles.partsApprovalSubtitleDone}>RSM confirmed</Text>
-                        </View>
-                        <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
-                      </View>
-                    )}
-
-                    {/* A genuinely separate gate from Work Approval above —
-                        per the backend dev guide, parts get their own AM
-                        review independent of whether the category needs
-                        work approval at all (e.g. Category F never does,
-                        but can still have a part sitting PENDING). Reads
-                        task.partApproval directly rather than being folded
-                        into the Work Approval banner. */}
-                    {amPartApproval?.status === 'PENDING' && (
-                      <View style={styles.partsApprovalBanner}>
-                        <View style={styles.partsApprovalIconChip}>
-                          <Clock size={16} color="#B45309" />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.partsApprovalTitle}>Parts Approval</Text>
-                          <Text style={styles.partsApprovalSubtitle}>Pending AM review</Text>
-                        </View>
-                        <View style={styles.pendingTag}>
-                          <Text style={styles.pendingTagText}>PENDING</Text>
-                        </View>
-                      </View>
-                    )}
-                    {amPartApproval && amPartApproval.status !== 'PENDING' && (
-                      <View style={styles.partsApprovalBannerDone}>
-                        <View style={styles.partsApprovalIconChipDone}>
-                          <CheckCircle2 size={16} color="#16A34A" />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.partsApprovalTitleDone}>Parts Approval</Text>
-                          <Text style={styles.partsApprovalSubtitleDone}>Reviewed</Text>
-                        </View>
-                        <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Close Ticket's real 3-gate rule per the backend dev
-                      guide: OTP verified (CLIENT_APPROVED) AND part
-                      approval not still PENDING AND work approval
-                      CONFIRMED (or never required). */}
-                  <TouchableOpacity
-                    style={[styles.otpVerifyButtonV2, (!canCloseTicketAM || vm.closingTicket) && styles.buttonDisabled]}
-                    onPress={vm.handleCloseTicket}
-                    disabled={!canCloseTicketAM || vm.closingTicket}
-                  >
-                    {vm.closingTicket ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonV2Text}>Close Ticket</Text>}
-                  </TouchableOpacity>
-                  {!canCloseTicketAM && (
-                    <Text style={styles.waitingApprovalText}>
-                      {!otpVerifiedForClose ? 'Collect customer OTP and wait for approvals' : 'Waiting for approvals before closing'}
-                    </Text>
-                  )}
-                  {!!vm.closeTicketError && <Text style={styles.sectionErrorText}>{vm.closeTicketError}</Text>}
-
-                  {/* What was actually submitted for approval — collapsed
-                      by default, same tap-to-expand pattern as Step 1's
-                      sections (see summaryExpanded/toggleSummarySection). */}
-                  <View style={[styles.sectionCard, { marginTop: 16 }]}>
-                    <GroupHeader
-                      title={`Fault Codes (${vm.selectedComplaintCodes.length})`}
-                      saved
-                      onPress={() => toggleSummarySection('amFaultCodes')}
-                      expanded={!!summaryExpanded['amFaultCodes']}
-                    />
-                    {!!summaryExpanded['amFaultCodes'] && (
-                      <SubmittedFaultCodesSection faultCodes={vm.selectedComplaintCodes} />
-                    )}
-                  </View>
-                  <View style={styles.sectionCard}>
-                    <GroupHeader
-                      title={`Parts Used (${vm.selectedParts.length})`}
-                      saved
-                      onPress={() => toggleSummarySection('amParts')}
-                      expanded={!!summaryExpanded['amParts']}
-                    />
-                    {!!summaryExpanded['amParts'] && (
-                      <SubmittedPartsSection parts={vm.selectedParts} awaitingAmReview={amPartApproval?.status === 'PENDING'} />
-                    )}
-                  </View>
-                  <View style={styles.sectionCard}>
-                    <GroupHeader
-                      title="Notes"
-                      saved
-                      onPress={() => toggleSummarySection('amNotes')}
-                      expanded={!!summaryExpanded['amNotes']}
-                    />
-                    {!!summaryExpanded['amNotes'] && (
-                      <SubmittedNotesSection notes={vm.notes} />
-                    )}
-                  </View>
-                </>
-              )}
             </>
           )}
 
           </View>
-
-          {/* Engineer's post-finish view — stays interactive for the same
-              reason as the block above (Close Ticket needs to work even
-              though Step 5's category card above is now read-only). */}
-          {vm.currentStep === 5 && vm.isEngineer && isEngineerFinished && (
-            <>
-              <CustomerSignOffCard vm={vm} />
-
-              <View style={styles.sectionCard}>
-                <Text style={styles.approvalStatusLabel}>APPROVAL STATUS</Text>
-                <View style={styles.finishCatRow}>
-                  <View style={[styles.finishCatBadgeCircle, { backgroundColor: finishedCategoryBg }]}>
-                    <Text style={[styles.finishCatBadgeLetter, { color: finishedCategoryText }]}>{vm.selectedCategoryLetter}</Text>
-                  </View>
-                  <Text style={styles.finishCatTitle}>{vm.selectedSubCategory}</Text>
-                </View>
-
-                {/* This is genuinely Work Approval (workApproval, AM then
-                    RSM) — previously mislabeled "Parts Approval" here even
-                    though it reads the same field AM's own version above
-                    correctly calls "Work Approval". */}
-                {!partsApprovalConfirmed && (
-                  <View style={styles.partsApprovalBanner}>
-                    <View style={styles.partsApprovalIconChip}>
-                      <Clock size={16} color="#B45309" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.partsApprovalTitle}>Work Approval</Text>
-                      <Text style={styles.partsApprovalSubtitle}>{partsApprovalSubtitle}</Text>
-                    </View>
-                    <View style={styles.pendingTag}>
-                      <Text style={styles.pendingTagText}>{engineerWorkApproval?.status === 'PENDING_RSM' ? 'PENDING RSM' : 'PENDING AM'}</Text>
-                    </View>
-                  </View>
-                )}
-
-                {/* Only when a real workApproval actually reached
-                    CONFIRMED — partsApprovalConfirmed alone is also true
-                    for categories that never needed approval in the first
-                    place (no workApproval object at all), which shouldn't
-                    claim "RSM confirmed" when RSM was never involved. */}
-                {engineerWorkApproval?.status === 'CONFIRMED' && (
-                  <View style={styles.partsApprovalBannerDone}>
-                    <View style={styles.partsApprovalIconChipDone}>
-                      <CheckCircle2 size={16} color="#16A34A" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.partsApprovalTitleDone}>Work Approval</Text>
-                      <Text style={styles.partsApprovalSubtitleDone}>RSM confirmed</Text>
-                    </View>
-                    <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
-                  </View>
-                )}
-
-                {/* A genuinely separate gate from Work Approval above — per
-                    the backend dev guide, parts get their own AM review
-                    independent of whether the category needs work approval
-                    at all (e.g. Category F never does, but can still have a
-                    part sitting PENDING). Reads task.partApproval directly. */}
-                {enginePartApproval?.status === 'PENDING' && (
-                  <View style={styles.partsApprovalBanner}>
-                    <View style={styles.partsApprovalIconChip}>
-                      <Clock size={16} color="#B45309" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.partsApprovalTitle}>Parts Approval</Text>
-                      <Text style={styles.partsApprovalSubtitle}>Pending AM review</Text>
-                    </View>
-                    <View style={styles.pendingTag}>
-                      <Text style={styles.pendingTagText}>PENDING</Text>
-                    </View>
-                  </View>
-                )}
-                {enginePartApproval && enginePartApproval.status !== 'PENDING' && (
-                  <View style={styles.partsApprovalBannerDone}>
-                    <View style={styles.partsApprovalIconChipDone}>
-                      <CheckCircle2 size={16} color="#16A34A" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.partsApprovalTitleDone}>Parts Approval</Text>
-                      <Text style={styles.partsApprovalSubtitleDone}>Reviewed</Text>
-                    </View>
-                    <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
-                  </View>
-                )}
-              </View>
-
-              {/* Close Ticket's real 3-gate rule per the backend dev guide:
-                  OTP verified (CLIENT_APPROVED) AND part approval not still
-                  PENDING AND work approval CONFIRMED (or never required). */}
-              <TouchableOpacity
-                style={[styles.otpVerifyButtonV2, (!canCloseTicketEngineer || vm.closingTicket) && styles.buttonDisabled]}
-                onPress={vm.handleCloseTicket}
-                disabled={!canCloseTicketEngineer || vm.closingTicket}
-              >
-                {vm.closingTicket ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonV2Text}>Close Ticket</Text>}
-              </TouchableOpacity>
-              {!canCloseTicketEngineer && (
-                <Text style={styles.waitingApprovalText}>
-                  {!otpVerifiedForClose ? 'Collect customer OTP and wait for approvals' : 'Waiting for approvals before closing'}
-                </Text>
-              )}
-              {!!vm.closeTicketError && <Text style={styles.sectionErrorText}>{vm.closeTicketError}</Text>}
-
-              {/* Same "what was actually submitted" pattern as the
-                  area_manager's own Step 5 above — collapsed by default,
-                  tap the header to expand. */}
-              <View style={[styles.sectionCard, { marginTop: 16 }]}>
-                <GroupHeader
-                  title={`Fault Codes (${vm.selectedComplaintCodes.length})`}
-                  saved
-                  onPress={() => toggleSummarySection('engFaultCodes')}
-                  expanded={!!summaryExpanded['engFaultCodes']}
-                />
-                {!!summaryExpanded['engFaultCodes'] && (
-                  <SubmittedFaultCodesSection faultCodes={vm.selectedComplaintCodes} />
-                )}
-              </View>
-              <View style={styles.sectionCard}>
-                <GroupHeader
-                  title={`Parts Used (${vm.selectedParts.length})`}
-                  saved
-                  onPress={() => toggleSummarySection('engParts')}
-                  expanded={!!summaryExpanded['engParts']}
-                />
-                {!!summaryExpanded['engParts'] && (
-                  <SubmittedPartsSection parts={vm.selectedParts} awaitingAmReview={enginePartApproval?.status === 'PENDING'} />
-                )}
-              </View>
-              <View style={styles.sectionCard}>
-                <GroupHeader
-                  title="Notes"
-                  saved
-                  onPress={() => toggleSummarySection('engNotes')}
-                  expanded={!!summaryExpanded['engNotes']}
-                />
-                {!!summaryExpanded['engNotes'] && (
-                  <SubmittedNotesSection notes={vm.notes} />
-                )}
-              </View>
-
-              <TouchableOpacity style={[styles.finishBackButton, { marginTop: 16 }]} onPress={vm.handleBack}>
-                <ArrowLeft size={16} color="#4B5563" />
-                <Text style={styles.finishBackButtonText}>Back</Text>
-              </TouchableOpacity>
-            </>
-          )}
 
           {/* One combined sheet for the merged Photos & Video card — a
               single gallery row handles both photos and videos
@@ -1921,6 +1347,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#1F2937', backgroundColor: '#fff',
   },
   feedbackTextArea: { minHeight: 100, textAlignVertical: 'top' },
+
+  vocLabel: { fontSize: 13, fontWeight: '700', color: '#1E1951', marginBottom: 10, letterSpacing: 0.3 },
+  vocDivider: { height: 1, backgroundColor: '#F3F4F6', marginVertical: 18 },
+  vocStarRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  vocRatingLabel: { fontSize: 14, fontWeight: '600', color: '#4338CA', marginLeft: 4 },
 
   toggleRow: { flexDirection: 'row' },
   toggleOption: {
@@ -2055,14 +1486,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 13, fontSize: 14, color: '#1F2937', backgroundColor: '#fff',
   },
   finishActionsRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  finishBackButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    flex: 1,
-    borderWidth: 1.5, borderColor: '#D1D5DB', borderRadius: 100,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-  },
-  finishBackButtonText: { fontSize: 15, fontWeight: '700', color: '#4B5563' },
   finishCompleteButton: {
     flex: 1.4,
     backgroundColor: '#1E1951',
@@ -2072,178 +1495,6 @@ const styles = StyleSheet.create({
   },
   finishCompleteButtonText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 
-  // Engineer's post-finish Approval Status card.
-  approvalStatusLabel: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.5, marginBottom: 14 },
-
-  otpInlineCard: { backgroundColor: '#F3F4F6', borderRadius: 20, padding: 16 },
-  otpInlineButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-
-  // OTP-sent state — "OTP sent" check + Resend link row.
-  otpSentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  otpSentLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  otpSentCheck: {
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#16A34A',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  otpSentText: { fontSize: 14, fontWeight: '700', color: '#16A34A' },
-  otpResendLinkV2: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
-
-  // Code-reveal box — stays visible until Verify succeeds or Resend
-  // replaces the code, same as the commissioning form's own OTP step.
-  otpRevealBox: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, marginTop: 14 },
-  otpRevealLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.4 },
-  otpRevealCode: { fontSize: 24, fontWeight: '700', color: '#1F2937', letterSpacing: 6, marginTop: 8 },
-
-  otpDividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18 },
-  otpDividerLine: { flex: 1, height: 1, backgroundColor: '#E5E7EB' },
-  otpDividerText: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.4 },
-
-  otpVerifyCompleteButton: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#4AC686',
-    borderRadius: 100,
-    paddingVertical: 15,
-    marginTop: 18,
-  },
-  otpVerifyCompleteButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-
-  otpVerifiedBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#DCFCE7',
-    borderRadius: 20,
-    paddingVertical: 14, paddingHorizontal: 16,
-  },
-  otpVerifiedBannerText: { fontSize: 15, fontWeight: '700', color: '#15803D' },
-
-  partsApprovalBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#FEF9C3', borderWidth: 1, borderColor: '#FDE68A',
-    borderRadius: 14, padding: 12,
-    marginTop: 16,
-  },
-  partsApprovalIconChip: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#FDE68A',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  partsApprovalTitle: { fontSize: 14, fontWeight: '700', color: '#92400E' },
-  partsApprovalSubtitle: { fontSize: 12, color: '#B45309', marginTop: 1 },
-  pendingTag: {
-    backgroundColor: '#FDE68A', borderRadius: 100,
-    paddingHorizontal: 10, paddingVertical: 4,
-  },
-  pendingTagText: { fontSize: 11, fontWeight: '700', color: '#92400E', letterSpacing: 0.4 },
-  waitingApprovalText: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginTop: 8 },
-
-  // Same banner shape as partsApprovalBanner/pendingTag, green once
-  // confirmed instead of amber while pending.
-  partsApprovalBannerDone: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#BBF7D0',
-    borderRadius: 14, padding: 12,
-    marginTop: 16,
-  },
-  partsApprovalIconChipDone: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#BBF7D0',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  partsApprovalTitleDone: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
-  partsApprovalSubtitleDone: { fontSize: 12, color: '#16A34A', marginTop: 1 },
-  doneTag: {
-    backgroundColor: '#BBF7D0', borderRadius: 100,
-    paddingHorizontal: 10, paddingVertical: 4,
-  },
-  doneTagText: { fontSize: 11, fontWeight: '700', color: '#15803D', letterSpacing: 0.4 },
-
-  // Step 5's post-submission "what did I send for approval" cards.
-  emptyApprovalText: { color: '#9CA3AF', fontSize: 13, textAlign: 'center', paddingVertical: 8 },
-  approvalFaultHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  approvalCodeBadge: { backgroundColor: '#FFEDD5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  approvalCodeBadgeText: { fontSize: 11, fontWeight: '700', color: '#C2410C' },
-  approvalFaultTitle: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1F2937' },
-  approvalPartName: { fontSize: 14, fontWeight: '700', color: '#1F2937', marginTop: 2 },
-  approvalNotesText: { fontSize: 13, color: '#374151', lineHeight: 19 },
-
-  // Pending Customer Sign-off banner — Step 5's post-Complete orange call-
-  // out, shown until OTP is verified.
-  pendingSignOffBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#E76124',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-  },
-  pendingSignOffIconChip: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  pendingSignOffTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  pendingSignOffSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
-
-  // Green "Completed / waiting for approvals" banner — same shape as
-  // pendingSignOffBanner, takes over its slot once OTP is verified.
-  completedWaitingBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: '#16A34A',
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-  },
-  completedWaitingIconChip: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  completedWaitingTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  completedWaitingSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
-
-  // "Send OTP to Customer" — the same pill shape as otpInlineButton, just
-  // navy instead of orange to match the reference design's first-step CTA.
-  otpSendButton: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10,
-    backgroundColor: '#1E1951',
-    borderRadius: 100,
-    paddingVertical: 15,
-  },
-
-  // Plain-label "what was submitted" sections (Fault Codes/Parts Used/
-  // Notes) — the body content sits inside a collapsible GroupHeader card
-  // now (see summaryExpanded), these styles are just the cards themselves.
-  submittedSection: { marginTop: 16 },
-  submittedCard: {
-    backgroundColor: '#FFFFFF', borderRadius: 16,
-    padding: 14, marginBottom: 10,
-  },
-  submittedCardSubtitle: { fontSize: 12, color: '#9CA3AF', marginBottom: 10 },
-  submittedDetailBox: { borderRadius: 12, padding: 10, marginTop: 8 },
-  submittedDetailBoxObservation: { backgroundColor: '#FEF9C3' },
-  submittedDetailBoxRootCause: { backgroundColor: '#FEE2E2' },
-  submittedDetailBoxAction: { backgroundColor: '#DCFCE7' },
-  // Neutral gray variant for whichever of the three fields wasn't filled in
-  // — shown always (not hidden) so the card's shape stays consistent
-  // whether or not the engineer recorded that particular field.
-  submittedDetailBoxEmpty: { backgroundColor: '#F3F4F6' },
-  submittedDetailLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 3 },
-  submittedDetailLabelObservation: { color: '#A16207' },
-  submittedDetailLabelRootCause: { color: '#B91C1C' },
-  submittedDetailLabelAction: { color: '#15803D' },
-  submittedDetailLabelEmpty: { color: '#9CA3AF' },
-  submittedDetailValue: { fontSize: 13, fontWeight: '600', color: '#1F2937' },
-  submittedDetailValueEmpty: { fontSize: 13, fontWeight: '500', fontStyle: 'italic', color: '#9CA3AF' },
-
-  submittedPartTagRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  submittedPartTag: { backgroundColor: '#FFEDD5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  submittedPartTagText: { fontSize: 11, fontWeight: '700', color: '#C2410C' },
-  submittedPartReviewTag: { backgroundColor: '#FEF9C3', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  submittedPartReviewTagText: { fontSize: 11, fontWeight: '700', color: '#92400E' },
-  submittedPartLock: { marginLeft: 'auto' },
-  submittedPartQtyRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 },
-  submittedPartQtyPill: { backgroundColor: '#F3F4F6', borderRadius: 100, paddingHorizontal: 12, paddingVertical: 4 },
-  submittedPartQtyPillText: { fontSize: 12, fontWeight: '700', color: '#1F2937' },
-
   completeTaskButton: {
     backgroundColor: '#4AC686', borderRadius: 24,
     borderWidth: 1, borderColor: '#DEDEDE',
@@ -2251,21 +1502,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18, textTransform: 'uppercase' },
-
-  otpBoxRowV2: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  otpBoxV2: {
-    width: 60, height: 60, borderRadius: 12,
-    borderWidth: 1, borderColor: '#DBDBDB',
-    backgroundColor: '#F8F8F8',
-    fontSize: 20, fontWeight: '700', color: '#000000',
-  },
-  otpVerifyButtonV2: {
-    width: '100%', height: 56, borderRadius: 24,
-    backgroundColor: '#4AC686',
-    justifyContent: 'center', alignItems: 'center',
-    marginTop: 24,
-  },
-  otpVerifyButtonV2Text: { color: '#FFFFFF', fontWeight: '600', fontSize: 18, textTransform: 'uppercase' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   optionsSheet: {

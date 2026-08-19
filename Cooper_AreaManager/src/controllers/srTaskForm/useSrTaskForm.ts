@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, TextInput } from 'react-native';
+import { Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../../utils/tokenStore';
@@ -8,7 +8,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import {
   getAssetById, getServiceTaskById, getFaultCodes, getParts,
   uploadServicePhotos, uploadServiceVideos,
-  generateServiceOtp, verifyServiceOtp, closeServiceTask,
   getServiceCategoryConfig, finishServiceTask, getFreeServiceAvailability,
 } from '../../viewModel/commisionAPi';
 import { cacheData, getCachedData } from '../../utils/offlineCache';
@@ -585,6 +584,19 @@ export function useSrTaskForm() {
   // pre-filled with old/unrelated saved text. Synced into `notes` right
   // after a successful Complete Task so the summary view reflects it.
   const [completionComment, setCompletionComment] = useState('');
+
+  // Step 3's own Work Notes + Suggestion Comment + Voice of Customer fields
+  // — UI only for now, no save wiring yet (endpoint/field names TBD).
+  // workNotes is deliberately its own always-blank-at-mount state, not an
+  // editor for `notes` above — same reasoning as completionComment's own
+  // comment just above: `notes` pre-fills from whatever was already saved
+  // for this task, and this field shouldn't show up pre-filled with that.
+  const [workNotes, setWorkNotes] = useState('');
+  const [suggestionComment, setSuggestionComment] = useState('');
+  const [voiceOfCustomerName, setVoiceOfCustomerName] = useState('');
+  const [voiceOfCustomerRating, setVoiceOfCustomerRating] = useState(0);
+  const [voiceOfCustomerRemark, setVoiceOfCustomerRemark] = useState('');
+
   const [step5Saving, setStep5Saving] = useState(false);
   const [step5Success, setStep5Success] = useState(false);
   const [step5Error, setStep5Error] = useState('');
@@ -626,7 +638,6 @@ export function useSrTaskForm() {
   // above (both set) and from picking live in the unlocked accordion (neither
   // set). Drives a third Step 6 view: category locked, sub-type picker only.
   const categoryOnlyPresetAtCreation = !!task?.category && !task?.subCategory;
-  const [workApprovalStatus, setWorkApprovalStatus] = useState<'' | 'PENDING_AM' | 'PENDING_RSM' | 'CONFIRMED'>('');
   const [step6Saving, setStep6Saving] = useState(false);
   const [step6Success, setStep6Success] = useState(false);
   const [step6Error, setStep6Error] = useState('');
@@ -645,6 +656,30 @@ export function useSrTaskForm() {
     setSelectedCategoryLetter(letter);
     setSelectedSubCategory(sub);
   }, []);
+
+  // Step 3's Notes/Suggestion Comment/Voice of Customer fields, sent
+  // together in the Complete/Send-for-Approval call's body — shared between
+  // both flows below rather than duplicated. Each key only appears when
+  // there's actually something to send, matching the empty-guard pattern
+  // the commissioning form's own suggestionComment already uses.
+  const buildFinishExtras = useCallback(() => {
+    const extras: Record<string, any> = {};
+    const trimmedNotes = workNotes.trim();
+    const trimmedSuggestion = suggestionComment.trim();
+    const trimmedRemark = voiceOfCustomerRemark.trim();
+    const trimmedCustomerName = voiceOfCustomerName.trim();
+    if (trimmedNotes) extras.notes = trimmedNotes;
+    if (trimmedSuggestion) extras.suggestionComment = trimmedSuggestion;
+    if (trimmedCustomerName || voiceOfCustomerRating || trimmedRemark) {
+      extras.customerFeedback = {
+        customerName: trimmedCustomerName,
+        rating: voiceOfCustomerRating,
+        comment: trimmedRemark,
+        submittedAt: new Date().toISOString(),
+      };
+    }
+    return extras;
+  }, [workNotes, suggestionComment, voiceOfCustomerName, voiceOfCustomerRating, voiceOfCustomerRemark]);
 
   const handleSendForApproval = useCallback(async () => {
     if (!selectedCategoryLetter || !selectedSubCategory) return;
@@ -689,34 +724,33 @@ export function useSrTaskForm() {
       // stayed IN_PROGRESS instead of COMPLETED). /finish is the call that
       // marks the entry COMPLETED and auto-seeds partApproval/workApproval,
       // and area_manager is one of its allowed roles per the dev guide.
-      const response = await finishServiceTask(token, taskId, {
-        category: selectedCategoryLetter, subCategory: selectedSubCategory, notes: completionComment,
+      await finishServiceTask(token, taskId, {
+        category: selectedCategoryLetter, subCategory: selectedSubCategory,
         ...(billingTypeRequired ? { billingType } : {}),
+        ...buildFinishExtras(),
       });
       setStep6Success(true);
-      // Categories that never need work approval (A/F/G, or B/C without
-      // Goodwill) never get a workApproval object back — defaulting that
-      // to 'PENDING_AM' left Close Ticket waiting on an approval that was
-      // never going to happen. No workApproval means nothing to wait for.
-      setWorkApprovalStatus(response?.workApproval?.status || 'CONFIRMED');
-      setTask((prev: any) => ({ ...prev, ...response }));
-      // Keeps the read-only "Submitted" Notes summary (which reads `notes`,
-      // not `completionComment`) in sync with what was actually just sent.
-      setNotes(completionComment);
-
       // Deliberately NOT calling completeServiceTask (/service/:id/complete)
       // here — per the backend dev guide, that's a separate, optional
       // "mark work done" call, not part of this flow. The entry's real
       // "done" signal for service is reaching CLIENT_APPROVED via customer
-      // OTP verify (handleVerifyAndComplete below) — nothing here should
-      // force a further status change, and the task correctly stays in the
-      // Active tab (via bucketTaskStatus) until that happens.
+      // OTP verify, which now happens on srTaskReport.tsx — nothing here
+      // should force a further status change, and the task correctly stays
+      // in the Active tab (via bucketTaskStatus) until that happens.
+      //
+      // Navigates straight to the report screen on success, same as
+      // commissioning's own Complete action — OTP sign-off, Approval
+      // Status, and Close Ticket all live there now, not back on this form.
+      router.replace({
+        pathname: '/screens/srTaskReport',
+        params: { task: JSON.stringify({ _id: taskId, assetId }) },
+      } as any);
     } catch (error: any) {
       setStep6Error(parseApiError(error, 'Failed to send for approval. Please try again.').message);
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, selectedCategoryLetter, selectedSubCategory, billingType, completionComment, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos, router]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -819,116 +853,30 @@ export function useSrTaskForm() {
     try {
       const token = await getToken();
       if (!token || !taskId) return;
-      const response = await finishServiceTask(token, taskId, {
-        category: selectedCategoryLetter, subCategory: selectedSubCategory, notes: completionComment,
+      await finishServiceTask(token, taskId, {
+        category: selectedCategoryLetter, subCategory: selectedSubCategory,
         ...(billingTypeRequired ? { billingType } : {}),
+        ...buildFinishExtras(),
       });
-      setTask((prev: any) => ({ ...prev, ...response }));
-      // Keeps the read-only "Submitted" Notes summary (which reads `notes`,
-      // not `completionComment`) in sync with what was actually just sent.
-      setNotes(completionComment);
+      // Navigates straight to the report screen on success, same as
+      // commissioning's own Complete action — OTP sign-off, Approval
+      // Status, and Close Ticket all live there now, not back on this form.
+      router.replace({
+        pathname: '/screens/srTaskReport',
+        params: { task: JSON.stringify({ _id: taskId, assetId }) },
+      } as any);
     } catch (error: any) {
       setFinishError(parseApiError(error, 'Failed to complete this service. Please try again.').message);
     } finally {
       setFinishing(false);
     }
-  }, [taskId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, completionComment, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos, router]);
 
-  // ── OTP completion (available once workApprovalStatus === 'CONFIRMED') ──
-  const [otpGenerated, setOtpGenerated] = useState(false);
-  const [generatedOtp, setGeneratedOtp] = useState<string[]>(['', '', '', '']);
-  const [customerOtp, setCustomerOtp] = useState<string[]>(['', '', '', '']);
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otpError, setOtpError] = useState('');
-  const [taskCompleted, setTaskCompleted] = useState(false);
-  const otpInputRefs = useRef<Array<TextInput | null>>([null, null, null, null]);
+  // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
+  // handleFinishService/handleSendForApproval below navigate straight there
+  // on success, matching commissioning's own pattern. scrollViewRef is kept
+  // (Step 5's own comment field still uses it for keyboard scrolling).
   const scrollViewRef = useRef<any>(null);
-
-  const handleGenerateOtp = useCallback(async () => {
-    setOtpLoading(true);
-    setOtpError('');
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return;
-      const response = await generateServiceOtp(token, taskId);
-      const code = String(response?.code || '');
-      setGeneratedOtp(code.split('').slice(0, 4));
-      setOtpGenerated(true);
-      setCustomerOtp(['', '', '', '']);
-    } catch (error: any) {
-      const { message } = parseApiError(error, 'Failed to generate OTP. Please try again.');
-      setOtpError(message);
-    } finally {
-      setOtpLoading(false);
-    }
-  }, [taskId]);
-
-  const handleRegenerateOtp = useCallback(() => { handleGenerateOtp(); }, [handleGenerateOtp]);
-
-  const handleChangeCustomerOtpDigit = useCallback((index: number, text: string) => {
-    const digit = text.replace(/[^0-9]/g, '').slice(-1);
-    setCustomerOtp(prev => {
-      const next = [...prev];
-      next[index] = digit;
-      return next;
-    });
-    if (digit && index < 3) otpInputRefs.current[index + 1]?.focus();
-  }, []);
-
-  const handleVerifyAndComplete = useCallback(async () => {
-    const code = customerOtp.join('');
-    if (code.length < 4) return;
-    setOtpLoading(true);
-    setOtpError('');
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return;
-      const verifyResponse = await verifyServiceOtp(token, taskId, code);
-      // Per the backend dev guide, a successful verify returns the full
-      // updated entry (status flips to CLIENT_APPROVED, completionOtp.
-      // verified becomes true) — merge it into task state so anything
-      // reading vm.task directly (e.g. Close Ticket's own gate) reflects
-      // the real server state, not just this session's local flag.
-      if (verifyResponse?.verified || verifyResponse?.status === 'CLIENT_APPROVED') {
-        setTask((prev: any) => ({ ...prev, ...verifyResponse }));
-        setTaskCompleted(true);
-      } else {
-        setOtpError('OTP verification failed. Please check the code and try again.');
-      }
-    } catch (error: any) {
-      const { code: errorCode, message } = parseApiError(error, 'Failed to verify OTP. Please try again.');
-      if (errorCode === 'OTP_LOCKED') {
-        // Too many failed attempts — force the customer-facing OTP back to
-        // "not generated" so the only way forward is a fresh code.
-        setOtpGenerated(false);
-        setCustomerOtp(['', '', '', '']);
-        setGeneratedOtp(['', '', '', '']);
-      }
-      setOtpError(message);
-    } finally {
-      setOtpLoading(false);
-    }
-  }, [taskId, customerOtp]);
-
-  // ── Close Ticket (available once the OTP-verified completion screen is showing) ──
-  const [closingTicket, setClosingTicket] = useState(false);
-  const [closeTicketError, setCloseTicketError] = useState('');
-
-  const handleCloseTicket = useCallback(async () => {
-    setClosingTicket(true);
-    setCloseTicketError('');
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return;
-      await closeServiceTask(token, taskId);
-      router.replace('/screens/serviceTasks' as any);
-    } catch (error: any) {
-      const { message } = parseApiError(error, 'Failed to close this ticket. Please try again.');
-      setCloseTicketError(message);
-    } finally {
-      setClosingTicket(false);
-    }
-  }, [taskId, router]);
 
   // ── Data loading ──
   const loadPreviousData = useCallback(async () => {
@@ -967,23 +915,13 @@ export function useSrTaskForm() {
         setNotes(serviceData.notes ?? '');
         if (serviceData.category) setSelectedCategoryLetter(serviceData.category);
         if (serviceData.subCategory) setSelectedSubCategory(serviceData.subCategory);
-        // Same fallback handleSendForApproval uses: categories that never
-        // need work approval (A/F/G, or B/C without Goodwill) never get a
-        // workApproval object back from the backend at all. Without this,
-        // reopening an already-COMPLETED task in one of those categories
-        // left workApprovalStatus stuck at its default '' forever, which
-        // both kept the AM's Step 5 stuck showing the pre-Complete category
-        // picker (gated on workApprovalStatus === '') and left Close Ticket
-        // permanently disabled (gated on workApprovalStatus === 'CONFIRMED').
-        if (serviceData.status === 'COMPLETED') {
-          setWorkApprovalStatus(serviceData.workApproval?.status || 'CONFIRMED');
-        } else if (serviceData.workApproval?.status) {
-          setWorkApprovalStatus(serviceData.workApproval.status);
-        }
-        // Reopening a task that's already COMPLETED (OTP still pending) —
-        // e.g. tapping the Active-tab card's arrow again — should land
-        // straight on Step 5's post-Complete view (Customer Sign-off/
-        // Approval Status/Close Ticket), not back at Step 1's asset form.
+        // Reopening a task that's already COMPLETED — this form no longer
+        // has anything to show once past that point (OTP sign-off/Approval
+        // Status/Close Ticket all live on srTaskReport.tsx now), but the
+        // dashboard/list arrow-press routing already sends COMPLETED tasks
+        // there directly. Landing on Step 5's read-only category display
+        // instead of Step 1 is still the more sensible fallback if this
+        // screen is ever reached with one some other way.
         if (serviceData.status === 'COMPLETED') setCurrentStep(5);
       }
 
@@ -1107,12 +1045,6 @@ export function useSrTaskForm() {
       if (serviceData) setTask((prev: any) => ({ ...prev, ...serviceData }));
       if (serviceData?.category) setSelectedCategoryLetter(serviceData.category);
       if (serviceData?.subCategory) setSelectedSubCategory(serviceData.subCategory);
-      // Same A/F/G (no workApproval object) fallback as loadPreviousData.
-      if (serviceData?.status === 'COMPLETED') {
-        setWorkApprovalStatus(serviceData.workApproval?.status || 'CONFIRMED');
-      } else if (serviceData?.workApproval?.status) {
-        setWorkApprovalStatus(serviceData.workApproval.status);
-      }
       if (serviceData?.notes != null) setNotes(serviceData.notes);
     } catch (error) {
       console.log('[SR Task Form] Pull-to-refresh failed:', error);
@@ -1130,45 +1062,18 @@ export function useSrTaskForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Polls while Step 5's waiting banner is showing (CompletedWaitingBanner,
-  // gated on workApprovalStatus === PENDING_AM/PENDING_RSM in the screen) —
-  // this is the AM/engineer's own "sitting and watching" screen, so an
-  // approve/reject decision made elsewhere should clear the banner within
-  // one tick instead of requiring the user to pull-to-refresh themselves.
-  // Same silent-refetch shape as onRefresh but without the pull-to-refresh
-  // spinner toggle.
-  useEffect(() => {
-    if (workApprovalStatus !== 'PENDING_AM' && workApprovalStatus !== 'PENDING_RSM') return;
-    const interval = setInterval(async () => {
-      try {
-        const token = await getToken();
-        if (!token || !taskId) return;
-        const serviceData = await getServiceTaskById(token, taskId);
-        if (serviceData) setTask((prev: any) => ({ ...prev, ...serviceData }));
-        if (serviceData?.workApproval?.status) setWorkApprovalStatus(serviceData.workApproval.status);
-      } catch (error) {
-        console.log('[SR Task Form] Approval status poll failed:', error);
-      }
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [workApprovalStatus, taskId]);
+  // The approval-status polling that used to live here (for the removed
+  // Step 5 waiting banner) moved to srTaskReportController.ts, which polls
+  // the same way while task.workApproval.status is PENDING_AM/PENDING_RSM.
 
   // ── Navigation ──
   const handleBack = useCallback(() => setCurrentStep(prev => Math.max(1, prev - 1)), []);
   const handleNext = useCallback(() => setCurrentStep(prev => Math.min(5, prev + 1)), []);
-  // A plain back() pops to whichever list screen sent us here without
-  // refetching it — fine most of the time, but once OTP has been verified
-  // this session (status just moved COMPLETED -> CLIENT_APPROVED) that
-  // screen would keep showing this card as OTP-pending until a manual
-  // pull-to-refresh. Same reason handleCloseTicket replaces rather than
-  // goes back — force a fresh Services list load in that one case instead.
-  const handleCancel = useCallback(() => {
-    if (taskCompleted) {
-      router.replace('/screens/serviceTasks' as any);
-    } else {
-      router.back();
-    }
-  }, [router, taskCompleted]);
+  // OTP verification (and the special-cased "force a fresh list reload"
+  // this used to need once it happened mid-session) both moved to
+  // srTaskReport.tsx — this screen never changes the task's status past
+  // COMPLETED itself, so a plain back() is always correct here now.
+  const handleCancel = useCallback(() => router.back(), [router]);
   // Where the completion success screen's "DONE" button lands — this form
   // is service-only (the commissioning equivalent is taskForm.tsx), so it
   // always goes to the Services list.
@@ -1215,9 +1120,14 @@ export function useSrTaskForm() {
 
     // Step 5
     notes, setNotes, completionComment, setCompletionComment, step5Saving, step5Success, step5Error, handleSaveNotes,
+    workNotes, setWorkNotes,
+    suggestionComment, setSuggestionComment,
+    voiceOfCustomerName, setVoiceOfCustomerName,
+    voiceOfCustomerRating, setVoiceOfCustomerRating,
+    voiceOfCustomerRemark, setVoiceOfCustomerRemark,
 
     // Step 6
-    expandedCategory, selectedCategoryLetter, selectedSubCategory, workApprovalStatus,
+    expandedCategory, selectedCategoryLetter, selectedSubCategory,
     toggleCategory, selectSubCategory, step6Saving, step6Success, step6Error, handleSendForApproval,
     categoryPresetAtCreation, categoryOnlyPresetAtCreation,
     billingType, setBillingType,
@@ -1225,13 +1135,7 @@ export function useSrTaskForm() {
     // Step 6 — engineer-only Complete/finish flow
     categoryConfig, categoryConfigLoading, finishing, finishError, handleFinishService,
     freeServiceEligible, freeServiceBlockedReason, freeServiceLoading,
-
-    // OTP
-    otpGenerated, generatedOtp, customerOtp, otpLoading, otpError, taskCompleted, otpInputRefs, scrollViewRef,
-    handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyAndComplete,
-
-    // Close Ticket
-    closingTicket, closeTicketError, handleCloseTicket,
+    scrollViewRef,
 
     // Navigation
     handleBack, handleNext, handleCancel, goToServiceList,
