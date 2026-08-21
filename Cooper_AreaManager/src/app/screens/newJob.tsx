@@ -91,7 +91,7 @@ export default function NewJobScreen() {
 
   const {
     searchText, setSearchText, handleSearch, handleClearSearch, searched, isSearching, searchError,
-    asset, assetLoading, availableActions, assetHasBeenServiced,
+    asset, assetLoading, availableActions, assetHasBeenServiced, assetHasActiveCommissioningTask,
     sapAsset,
     engineers, engineersLoading,
     assignPickerActionType, openAssignPicker, handleCancelAssign,
@@ -292,7 +292,10 @@ export default function NewJobScreen() {
                   rather than letting a commissioning entry get created for
                   an asset already past that point. See
                   assetHasBeenServiced's own comment in
-                  newJobController.ts for how this is detected. */}
+                  newJobController.ts for how this is detected. Checked
+                  before assetHasActiveCommissioningTask below since a
+                  serviced asset's commissioning is, by definition, already
+                  done — the two states can't both apply. */}
               {assetHasBeenServiced ? (
                 <View style={styles.servicedBlockBox}>
                   <View style={styles.servicedBlockTitleRow}>
@@ -301,6 +304,21 @@ export default function NewJobScreen() {
                   </View>
                   <Text style={styles.servicedBlockBody}>
                     This asset has already been serviced and can no longer be commissioned.
+                  </Text>
+                </View>
+              ) : assetHasActiveCommissioningTask ? (
+                // Mirrors New Service Job's own "Commissioning required"
+                // block (newServiceJob.tsx) — same reasoning in reverse:
+                // don't let a second commissioning task get created while
+                // one's still open. HISTORY further down still shows which
+                // one and its status.
+                <View style={styles.servicedBlockBox}>
+                  <View style={styles.servicedBlockTitleRow}>
+                    <Info size={18} color="#B45309" />
+                    <Text style={styles.servicedBlockTitle}>Commissioning in progress</Text>
+                  </View>
+                  <Text style={styles.servicedBlockBody}>
+                    This asset already has an active commissioning task. Wait for it to complete before creating another — see HISTORY below for its current status.
                   </Text>
                 </View>
               ) : (
@@ -520,7 +538,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: '#000000', textTransform: 'uppercase' },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   placeholderText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center', marginTop: 40 },
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { useRouter } from 'expo-router';
-import { getServiceEntries } from '../viewModel/commisionAPi';
+import { getServiceEntries, getAssetById } from '../viewModel/commisionAPi';
 import { UserProfile } from '../models/Login';
 import { isApprovalPending } from '../utils/reportFormatters';
 import { parseApiError } from '../utils/apiError';
@@ -43,7 +43,24 @@ export function useSrApprovalsController() {
       const list = Array.isArray(data) ? data : data?.service || data?.entries || [];
       // Only entries actually in an approval flow — this screen isn't a
       // general SR list, just the ones with something to review/decide.
-      setEntries(list.filter((e: any) => !!e.workApproval || !!e.partApproval));
+      const filtered = list.filter((e: any) => !!e.workApproval || !!e.partApproval);
+
+      // GET /api/service's list items only carry a raw assetId string, no
+      // embedded asset — unlike GET /me/dashboard's approvalList. Fetch each
+      // one's genset/engine number separately so the card shows the real
+      // S/N pair instead of falling back to the task's own title.
+      const withAssets = await Promise.all(filtered.map(async (entry: any) => {
+        if (entry.asset?.gensetNumber || !entry.assetId || typeof entry.assetId !== 'string') return entry;
+        try {
+          const asset = await getAssetById(token, entry.assetId);
+          return { ...entry, asset };
+        } catch (assetError) {
+          console.log('[SR Approvals] Failed to load asset for entry:', entry._id, assetError);
+          return entry;
+        }
+      }));
+
+      setEntries(withAssets);
     } catch (error: any) {
       const { message } = parseApiError(error, 'Failed to load SR approvals.');
       setError(message);

@@ -366,8 +366,7 @@ export default function ServiceTaskReportScreen() {
             task={task}
             isService
             taskPeople={getTaskPeople(task)}
-            gensetNumberOverride={a.gensetNumber}
-            engineNumberOverride={a.engineNumber}
+            assetOverride={a}
           />
 
           {!!task.title && <Text style={styles.reportTaskTitle}>{task.title}</Text>}
@@ -748,9 +747,24 @@ export default function ServiceTaskReportScreen() {
                       </View>
                     )}
                   </View>
-                  {fc.observation && <InfoRow label="Observation" value={fc.observation} />}
-                  {fc.rootCause && <InfoRow label="Root Cause" value={fc.rootCause} />}
-                  {fc.correctiveAction && <InfoRow label="Corrective Action" value={fc.correctiveAction} />}
+                  {!!fc.observation && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#FFFAD9' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Observation</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.observation}</Text>
+                    </View>
+                  )}
+                  {!!fc.rootCause && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#FFD9D9' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Root Cause</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.rootCause}</Text>
+                    </View>
+                  )}
+                  {!!fc.correctiveAction && (
+                    <View style={[styles.complaintInfoBlock, { backgroundColor: '#DBF9E2' }]}>
+                      <Text style={styles.complaintInfoBlockTitle}>Corrective Action</Text>
+                      <Text style={styles.complaintInfoBlockValue}>{fc.correctiveAction}</Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -1014,7 +1028,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '400', color: '#6B7280' },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
   statusPill: { borderRadius: 100, paddingHorizontal: 12, paddingVertical: 6 },
   statusPillText: { fontSize: 13, fontWeight: '700' },
 
@@ -1171,6 +1185,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   priorityBadgeText: { fontSize: 11, fontWeight: '700' },
+  complaintInfoBlock: { borderRadius: 12, padding: 12, marginTop: 12, gap: 4 },
+  complaintInfoBlockTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', textTransform: 'uppercase', letterSpacing: 0.3 },
+  complaintInfoBlockValue: { fontSize: 14, color: '#374151' },
 
   partReportCard: {
     backgroundColor: '#F9FAFB',

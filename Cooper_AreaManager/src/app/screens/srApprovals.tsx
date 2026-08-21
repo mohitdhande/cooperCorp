@@ -3,7 +3,7 @@ import { View, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, useWind
 import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { ChevronLeft, Bell } from 'lucide-react-native';
+import { ChevronLeft, Bell, Wrench, Clock, CheckCircle2, XCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useSrApprovalsController } from '../../controllers/srApprovalsController';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
@@ -124,7 +124,7 @@ export default function SrApprovalsScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 8, paddingBottom: 24, gap: 16 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 8, paddingBottom: 130, gap: 16 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
       >
         {isLoading ? null : error ? (
@@ -144,9 +144,8 @@ export default function SrApprovalsScreen() {
             // there instead of rendering a blank title when asset is
             // absent/unpopulated.
             const gensetNumber = entry.asset?.gensetNumber || entry.assetId?.gensetNumber || entry.gensetNumber;
-            const clientName = entry.asset?.clientName || entry.assetId?.clientName;
+            const engineNumber = entry.asset?.engineNumber || entry.assetId?.engineNumber || entry.engineNumber;
             const primaryLabel = gensetNumber || entry.title || entry.srNumber || 'Service Request';
-            const showTitleAsSubtitle = !!entry.title && entry.title !== primaryLabel;
 
             return (
               <TouchableOpacity
@@ -156,28 +155,42 @@ export default function SrApprovalsScreen() {
                 onPress={() => goToDetail(entry)}
               >
                 <View style={styles.cardTopRow}>
-                  <View style={styles.categoryPill}>
-                    <Text style={styles.categoryPillText} numberOfLines={1}>
-                      {entry.category}{categoryInfo ? ` — ${categoryInfo.name}` : ''}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
-                    {!!entry.srNumber && <SrNumberText srNumber={entry.srNumber} style={styles.srNumber} />}
-                    {!!entry.date && <Text style={styles.time}>{relTime}</Text>}
-                  </View>
+                  {!!entry.srNumber && <SrNumberText srNumber={entry.srNumber} style={styles.ticketNumber} />}
+                  <Text style={styles.categoryLabel} numberOfLines={1}>
+                    {entry.category}{categoryInfo ? ` · ${categoryInfo.name}` : ''}
+                  </Text>
                 </View>
 
-                <Text style={styles.genset}>{primaryLabel}</Text>
-                {!!clientName && <Text style={styles.subtitle}>{clientName}</Text>}
-                {showTitleAsSubtitle && <Text style={styles.subtitle}>{entry.title}</Text>}
+                <View style={styles.cardMidRow}>
+                  <View style={styles.gensetRow}>
+                    <Wrench size={16} color="#6B7280" />
+                    <Text style={styles.genset} numberOfLines={1}>{primaryLabel}</Text>
+                  </View>
+                  {!!entry.date && <Text style={styles.time}>{relTime}</Text>}
+                </View>
 
-                {statusPills.length > 0 && (
-                  <View style={[styles.cardBottomRow, { flexWrap: 'wrap' }]}>
-                    {statusPills.map((pill) => (
-                      <View key={pill.label} style={[styles.entryStatusPill, { backgroundColor: pill.bg }]}>
-                        <Text style={[styles.entryStatusPillText, { color: pill.text }]}>{pill.label}</Text>
-                      </View>
-                    ))}
+                {(!!engineNumber || statusPills.length > 0) && (
+                  <View style={styles.cardBottomRow}>
+                    <Text style={styles.engineNumber} numberOfLines={1}>{engineNumber || ''}</Text>
+                    <View style={styles.statusPillGroup}>
+                      {statusPills.map((pill) => {
+                        // Pending gates read as an in-progress/info state on
+                        // this card (blue), not the amber "needs attention"
+                        // tone used elsewhere — Reviewed/Rejected keep their
+                        // own colors from the shared resolver unchanged.
+                        const isPending = pill.label.includes('Pending');
+                        const bg = isPending ? '#DBEAFE' : pill.bg;
+                        const text = isPending ? '#1D4ED8' : pill.text;
+                        const label = isPending ? pill.label.replace('Pending', 'Awaiting') : pill.label;
+                        const Icon = pill.label.includes('Rejected') ? XCircle : isPending ? Clock : CheckCircle2;
+                        return (
+                          <View key={pill.label} style={[styles.entryStatusPill, { backgroundColor: bg }]}>
+                            <Icon size={13} color={text} />
+                            <Text style={[styles.entryStatusPillText, { color: text }]}>{label}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
                   </View>
                 )}
               </TouchableOpacity>
@@ -186,13 +199,20 @@ export default function SrApprovalsScreen() {
         )}
       </ScrollView>
 
-      <BottomNavBar active="home" />
+      {/* Floats over the ScrollView (instead of sitting below it as a
+          normal flex sibling) so cards keep visibly scrolling behind this
+          bar rather than the scroll area stopping flush above it. */}
+      <View style={styles.floatingFooter} pointerEvents="box-none">
+        <BottomNavBar active="home" />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6F6F6' },
+
+  floatingFooter: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   header: {
     flexDirection: 'row',
@@ -206,7 +226,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 20, fontWeight: '800', color: '#000000', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   // My/All — small pill toggle, navy active state.
   scopeToggle: {
@@ -264,24 +284,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
     padding: 18,
-    gap: 10,
+    gap: 8,
   },
-  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  categoryPill: {
-    alignSelf: 'flex-start',
-    flexShrink: 1,
-    backgroundColor: '#1E1951',
-    borderRadius: 100,
-    paddingVertical: 6, paddingHorizontal: 14,
+  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  ticketNumber: { fontSize: 12, color: '#9CA3AF' },
+  categoryLabel: { fontSize: 14, fontWeight: '700', color: '#1E1951', flexShrink: 1, textAlign: 'right' },
+
+  cardMidRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  gensetRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  genset: { fontSize: 16, fontWeight: '700', color: '#000000', flexShrink: 1 },
+  time: { fontSize: 13, fontWeight: '500', color: '#9CA3AF' },
+
+  cardBottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  engineNumber: { fontSize: 14, fontWeight: '500', color: '#9CA3AF', flexShrink: 1 },
+  statusPillGroup: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, flexShrink: 0 },
+  entryStatusPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    borderRadius: 100, paddingVertical: 6, paddingHorizontal: 12,
   },
-  categoryPillText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  srNumber: { fontSize: 11, color: '#D1D5DB', fontFamily: 'monospace' },
-  time: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
-
-  genset: { fontSize: 17, fontWeight: '700', color: '#000000' },
-  subtitle: { fontSize: 14, fontWeight: '500', color: '#9CA3AF' },
-
-  cardBottomRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
-  entryStatusPill: { borderRadius: 100, paddingVertical: 6, paddingHorizontal: 14 },
   entryStatusPillText: { fontSize: 12, fontWeight: '700' },
 });

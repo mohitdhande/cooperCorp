@@ -1,24 +1,18 @@
 import React from 'react';
-import { View, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { Text } from '@/_components/AppText';
-import { Camera, CheckCheck, Image as ImageIcon, Trash2, Video, X } from 'lucide-react-native';
+import { Camera, Image as ImageIcon, Trash2, Video, X } from 'lucide-react-native';
 import { SitePhoto } from '../../models/taskForm.types';
 import { formatFileSize } from '../../utils/reportFormatters';
-import { MAX_PHOTO_SIZE_BYTES } from '../../utils/photoValidation';
+import { MAX_PHOTO_SIZE_BYTES, MAX_VIDEO_SIZE_BYTES } from '../../utils/photoValidation';
 
 const MAX_PHOTO_MB = MAX_PHOTO_SIZE_BYTES / (1024 * 1024);
+const MAX_VIDEO_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
 
 type Props = {
   sitePhotos: SitePhoto[];
   onRemove: (id: string) => void;
   onAddPress: () => void;
-  photosUploading: boolean;
-  photosUploadProgress: number;
-  photosUploadSuccess: boolean;
-  photosUploadError?: string;
-  videosUploading: boolean;
-  videosUploadProgress: number;
-  videosUploadSuccess: boolean;
   // Step 2's running-hours upload only ever takes images (no video, no
   // PDF) — flips the header/add-box copy to match instead of always
   // claiming "& Video" for a caller that can never actually add one.
@@ -29,19 +23,18 @@ type Props = {
 // (taskForm.tsx) and Service (srTaskForm.tsx) forms' own Step 6 / Step 3,
 // instead of each screen hand-rolling its own copy. Photos render as a
 // thumbnail grid (multipart upload); videos render as their own list rows
-// with filename/size/status (GCS upload — no multipart endpoint for video
-// on either backend), all behind one "Add Photo or Video" trigger — that
+// with filename/size (GCS upload — no multipart endpoint for video on
+// either backend), all behind one "Add Photo or Video" trigger — that
 // split is invisible to the user here. PDFs never appear in this card even
 // if present in sitePhotos — they belong to the separate DocumentsCard.
-export function PhotosVideoCard({
-  sitePhotos, onRemove, onAddPress,
-  photosUploading, photosUploadProgress, photosUploadSuccess, photosUploadError,
-  videosUploading, videosUploadProgress, videosUploadSuccess,
-  imagesOnly = false,
-}: Props) {
+//
+// No in-card upload-progress state anymore — every item only ever lands in
+// sitePhotos once its own upload has already succeeded (see
+// useMediaUploadQueue), so this card is never rendered mid-upload in the
+// first place; MediaUploadOverlay is the single place that shows progress.
+export function PhotosVideoCard({ sitePhotos, onRemove, onAddPress, imagesOnly = false }: Props) {
   const photos = sitePhotos.filter((p) => p.mediaType !== 'video' && p.mediaType !== 'pdf');
   const videos = sitePhotos.filter((p) => p.mediaType === 'video');
-  const videoStatusLabel = videosUploading ? `Uploading… ${videosUploadProgress}%` : videosUploadSuccess ? 'Uploaded' : 'Ready';
 
   return (
     <View style={styles.card}>
@@ -52,11 +45,8 @@ export function PhotosVideoCard({
           </View>
           <Text style={styles.title}>{imagesOnly ? 'PHOTOS' : 'PHOTOS & VIDEO'}</Text>
         </View>
-        {/* Real enforced limits (photoValidation.ts) — photos are capped,
-            videos deliberately aren't ("per explicit instruction not to
-            restrict video size at all"), so this never claims a video cap. */}
         <Text style={styles.subtitle}>
-          Photo {MAX_PHOTO_MB} MB max{imagesOnly ? '' : ' · Video 100 mb max'}
+          Photo {MAX_PHOTO_MB} MB max{imagesOnly ? '' : ` · Video ${MAX_VIDEO_MB} MB max`}
         </Text>
       </View>
 
@@ -84,7 +74,7 @@ export function PhotosVideoCard({
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.videoFileName} numberOfLines={1}>{video.fileName}</Text>
-                  <Text style={styles.videoMeta}>{sizeLabel ? `${sizeLabel} · ${videoStatusLabel}` : videoStatusLabel}</Text>
+                  {!!sizeLabel && <Text style={styles.videoMeta}>{sizeLabel}</Text>}
                 </View>
                 <TouchableOpacity style={styles.videoDeleteButton} onPress={() => onRemove(video.id)}>
                   <Trash2 size={16} color="#DC2626" />
@@ -105,21 +95,6 @@ export function PhotosVideoCard({
         <Text style={styles.addSubtitle}>Tap to open camera or gallery</Text>
       </TouchableOpacity>
 
-      {/* No separate save button — photos/videos upload automatically when
-          leaving this step, with live % progress shown right here. */}
-      {photosUploading && (
-        <View style={styles.statusRow}>
-          <ActivityIndicator size="small" color="#E76124" />
-          <Text style={styles.statusText}>Uploading photos... {photosUploadProgress}%</Text>
-        </View>
-      )}
-      {!photosUploading && photosUploadSuccess && (
-        <View style={styles.statusRow}>
-          <CheckCheck size={16} color="#16A34A" />
-          <Text style={[styles.statusText, { color: '#16A34A' }]}>Photos uploaded</Text>
-        </View>
-      )}
-      {!!photosUploadError && <Text style={styles.errorText}>{photosUploadError}</Text>}
     </View>
   );
 }
@@ -127,6 +102,7 @@ export function PhotosVideoCard({
 const styles = StyleSheet.create({
   card: { backgroundColor: '#FFFFFF', borderRadius: 32, padding: 16, gap: 16 },
   headerBlock: { gap: 4 },
+  subtitle: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   iconChip: {
     width: 30, height: 30, borderRadius: 8,
@@ -134,7 +110,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   title: { fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4 },
-  subtitle: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   thumbWrapper: { width: 150, height: 120, borderRadius: 16, overflow: 'hidden' },
   thumb: { width: '100%', height: '100%' },
@@ -174,7 +149,4 @@ const styles = StyleSheet.create({
   },
   addTitle: { fontSize: 18, fontWeight: '700', color: '#000000' },
   addSubtitle: { fontSize: 16, fontWeight: '400', color: '#000000', opacity: 0.3 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  statusText: { fontSize: 13, fontWeight: '600', color: '#E76124' },
-  errorText: { color: '#DC2626', fontSize: 13, fontWeight: '500' },
 });

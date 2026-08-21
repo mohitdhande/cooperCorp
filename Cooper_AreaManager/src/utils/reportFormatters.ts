@@ -134,6 +134,21 @@ export function formatDateTime(d?: string | Date | null): string {
   });
 }
 
+// "20 Aug 2026, 09:21 pm" — 12-hour, lowercase am/pm, zero-padded hour.
+// Used by TaskPreviewCard's "Assigned" banner — distinct from
+// formatDateTime above (24-hour) since that style doesn't match this one.
+export function formatDateTime12h(d?: string | Date | null): string {
+  if (!d) return '';
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return '';
+  const datePart = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const hours24 = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const ampm = hours24 >= 12 ? 'pm' : 'am';
+  const hours12 = String(hours24 % 12 || 12).padStart(2, '0');
+  return `${datePart}, ${hours12}:${minutes} ${ampm}`;
+}
+
 // Ported verbatim from the reference design's own timeAgo() (the source of
 // truth for every "X ago" label in the reference app) — do not re-derive
 // this from scratch again; match this exact algorithm if it ever needs to

@@ -10,10 +10,6 @@ const MAX_PDF_MB = MAX_PDF_SIZE_BYTES / (1024 * 1024);
 
 type Props = {
   pdfs: SitePhoto[];
-  uploading: boolean;
-  uploadProgress: number;
-  uploadSuccess: boolean;
-  uploadError?: string;
   onPickPdf: () => void;
   onRemove: (id: string) => void;
 };
@@ -23,12 +19,13 @@ type Props = {
 // screen hand-rolling its own copy of this same list+upload UI. No camera
 // option (a PDF can't be "captured"), and no dedicated document endpoint on
 // either backend — picked PDFs ride the same GCS video-confirm flow as
-// recorded videos, which is why upload state here is named generically
-// (uploading/uploadProgress/...) rather than "pdf"-specific — it's shared
-// with whatever's driving the caller's own video upload.
-export function DocumentsCard({ pdfs, uploading, uploadProgress, uploadSuccess, uploadError, onPickPdf, onRemove }: Props) {
-  const statusLabel = uploading ? `Uploading… ${uploadProgress}%` : uploadSuccess ? 'Uploaded' : 'Ready';
-
+// recorded videos.
+//
+// No in-card upload-progress state anymore — every PDF only ever lands
+// here once its own upload has already succeeded (see
+// useMediaUploadQueue), so this card is never rendered mid-upload in the
+// first place; MediaUploadOverlay is the single place that shows progress.
+export function DocumentsCard({ pdfs, onPickPdf, onRemove }: Props) {
   return (
     <View style={styles.card}>
       <View style={styles.headerBlock}>
@@ -57,7 +54,7 @@ export function DocumentsCard({ pdfs, uploading, uploadProgress, uploadSuccess, 
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.fileName} numberOfLines={1}>{pdf.fileName}</Text>
-                  <Text style={styles.meta}>{sizeLabel ? `${sizeLabel} · ${statusLabel}` : statusLabel}</Text>
+                  {!!sizeLabel && <Text style={styles.meta}>{sizeLabel}</Text>}
                 </View>
                 <TouchableOpacity style={styles.deleteButton} onPress={() => onRemove(pdf.id)}>
                   <Trash2 size={16} color="#DC2626" />
@@ -72,8 +69,6 @@ export function DocumentsCard({ pdfs, uploading, uploadProgress, uploadSuccess, 
         <Plus size={18} color="#374151" />
         <Text style={styles.uploadButtonText}>Upload PDF</Text>
       </TouchableOpacity>
-
-      {!!uploadError && <Text style={styles.errorText}>{uploadError}</Text>}
     </View>
   );
 }
@@ -86,8 +81,8 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   headerBlock: { gap: 4 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   subtitle: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   iconChip: {
     width: 30, height: 30, borderRadius: 8,
     backgroundColor: '#FCEEDD',
@@ -126,5 +121,4 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   uploadButtonText: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  errorText: { color: '#DC2626', fontSize: 13, fontWeight: '500' },
 });

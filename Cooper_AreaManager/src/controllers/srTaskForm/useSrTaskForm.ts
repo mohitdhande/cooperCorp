@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,7 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   getAssetById, getServiceTaskById, getFaultCodes, getParts,
-  uploadServicePhotos, uploadServiceVideos,
+  uploadServicePhotos, uploadOneServiceVideoOrPdf, getGcsSignedUrls,
   getServiceCategoryConfig, finishServiceTask, getFreeServiceAvailability,
 } from '../../viewModel/commisionAPi';
 import { cacheData, getCachedData } from '../../utils/offlineCache';
@@ -23,6 +23,8 @@ import {
 } from '../../_components/srTaskForm/srDropdownOptions';
 import { parseApiError } from '../../utils/apiError';
 import { getPhotoValidationError, partitionValidPhotos, getPdfValidationError } from '../../utils/photoValidation';
+import { videoFileName } from '../../utils/reportFormatters';
+import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 
 // GET /api/service/category-config's per-category shape, merged with the
 // local SERVICE_CATEGORY_META (colors/description — not part of that
@@ -85,6 +87,14 @@ export function useSrTaskForm() {
   // ── Step 1: Genset Identification ──
   const [gensetModel, setGensetModel] = useState('');
   const [gensetSrNumber, setGensetSrNumber] = useState('');
+  // The raw, untouched asset fetch result — kept separately from the
+  // individual editable fields below (gensetSrNumber etc., which the user
+  // can change in Step 1) purely so TaskSummaryHeader's identity pill has
+  // one single object to read (gensetNumber/engineNumber/gensetModel/
+  // dispatchDate/...) instead of this hook having to thread a new override
+  // prop through every caller each time the header wants to show one more
+  // field of it.
+  const [assetDetail, setAssetDetail] = useState<any>(null);
   const [engineModel, setEngineModel] = useState('');
   const [engineNumber, setEngineNumber] = useState('');
   const [engineKw, setEngineKw] = useState('');
@@ -353,14 +363,28 @@ export function useSrTaskForm() {
   // ── Step 4: Photos & Video ──
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
-  const [photosUploading, setPhotosUploading] = useState(false);
-  const [photosUploadProgress, setPhotosUploadProgress] = useState(0);
-  const [photosUploadSuccess, setPhotosUploadSuccess] = useState(false);
-  const [photosUploadError, setPhotosUploadError] = useState('');
-  const [videosUploading, setVideosUploading] = useState(false);
-  const [videosUploadProgress, setVideosUploadProgress] = useState(0);
-  const [videosUploadSuccess, setVideosUploadSuccess] = useState(false);
-  const [videosUploadError, setVideosUploadError] = useState('');
+
+  function toSitePhoto(item: QueueItem): SitePhoto {
+    return { id: item.localId, uri: item.uri, fileName: item.fileName, mediaType: item.kind === 'photo' ? 'image' : item.kind, fileSize: item.fileSize };
+  }
+
+  const mediaUploaders = useMemo(() => ({
+    uploadPhoto: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+      const token = await getToken();
+      if (!token || !taskId) throw new Error('Not authenticated.');
+      await uploadServicePhotos(token, taskId, [file], onProgress, signal);
+    },
+    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+      const token = await getToken();
+      if (!token || !taskId) throw new Error('Not authenticated.');
+      await uploadOneServiceVideoOrPdf(token, taskId, file, onProgress, signal);
+    },
+  }), [taskId]);
+
+  const mediaQueue = useMediaUploadQueue(
+    mediaUploaders,
+    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), [])
+  );
 
   // Android's native camera intent can't mix photo and video capture in
   // one launch (ACTION_IMAGE_CAPTURE vs ACTION_VIDEO_CAPTURE are separate
@@ -397,13 +421,13 @@ export function useSrTaskForm() {
           return;
         }
         const isVideo = mediaType === 'videos';
-        setSitePhotos(prev => [...prev, {
-          id: `${Date.now()}`,
+        const picked: PickedAsset = {
           uri: asset.uri,
-          fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${prev.length + 1}.${isVideo ? 'mp4' : 'jpg'}`,
-          mediaType: isVideo ? 'video' : 'image',
+          fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`,
           fileSize: asset.fileSize,
-        }]);
+          kind: isVideo ? 'video' : 'photo',
+        };
+        mediaQueue.startBatch([picked]);
       }
     } catch (error) {
       // A native picker/camera failure would otherwise fail silently — the
@@ -411,7 +435,7 @@ export function useSrTaskForm() {
       console.log('[SR Task Form Photos] Camera failed:', error);
       Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
     }
-  }, []);
+  }, [mediaQueue]);
 
   const handleTakePhoto = useCallback(async () => {
     setPhotoOptionsVisible(false);
@@ -445,30 +469,28 @@ export function useSrTaskForm() {
       });
       if (!result.canceled && result.assets) {
         const { valid, skippedMessage } = partitionValidPhotos(result.assets);
-        const newPhotos = valid.map((asset, i) => {
+        const picked: PickedAsset[] = valid.map((asset, i) => {
           const isVideo = asset.type === 'video';
           return {
-            id: `${Date.now()}-${i}`,
             uri: asset.uri,
-            fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${i + 1}.${isVideo ? 'mp4' : 'jpg'}`,
-            mediaType: (isVideo ? 'video' : 'image') as 'image' | 'video',
+            fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${Date.now()}_${i}.${isVideo ? 'mp4' : 'jpg'}`,
             fileSize: asset.fileSize,
+            kind: isVideo ? 'video' as const : 'photo' as const,
           };
         });
-        setSitePhotos(prev => [...prev, ...newPhotos]);
+        if (picked.length > 0) mediaQueue.startBatch(picked);
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
       }
     } catch (error) {
       console.log('[SR Task Form Photos] Gallery picker failed:', error);
       Alert.alert('Gallery unavailable', 'Could not open the gallery. Please try again.');
     }
-  }, []);
+  }, [mediaQueue]);
 
   // Documents card's own picker — device storage only (no camera option;
   // a PDF can't be "captured"). No dedicated document endpoint exists on
   // the backend, so picked PDFs are tagged mediaType: 'pdf' and ride the
-  // same photo-only multipart call as images (handleSaveAllPhotos below) —
-  // uploadServicePhotos already maps a .pdf extension to application/pdf.
+  // same GCS-sign + confirm flow as videos (uploadOneServiceVideoOrPdf).
   const handlePickPdf = useCallback(async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -485,14 +507,13 @@ export function useSrTaskForm() {
         if (error) reasons.add(error);
         else valid.push(asset);
       }
-      const newPdfs = valid.map((asset, i) => ({
-        id: `${Date.now()}-${i}`,
+      const picked: PickedAsset[] = valid.map((asset, i) => ({
         uri: asset.uri,
         fileName: asset.name || `document_${i + 1}.pdf`,
-        mediaType: 'pdf' as const,
         fileSize: asset.size,
+        kind: 'pdf',
       }));
-      setSitePhotos(prev => [...prev, ...newPdfs]);
+      if (picked.length > 0) mediaQueue.startBatch(picked);
 
       const skippedCount = result.assets.length - valid.length;
       if (skippedCount > 0) {
@@ -502,95 +523,56 @@ export function useSrTaskForm() {
       console.log('[SR Task Form Photos] PDF picker failed:', error);
       Alert.alert('Storage unavailable', 'Could not open device storage. Please try again.');
     }
-  }, []);
+  }, [mediaQueue]);
 
   const handleRemovePhoto = useCallback((id: string) => {
     setSitePhotos(prev => prev.filter(p => p.id !== id));
   }, []);
 
-  // Returns a boolean so handleFinishService (below) can gate on it — no
-  // separate save button for photos anymore, this is only ever called from
-  // there now, right before completing.
-  const handleSaveAllPhotos = useCallback(async () => {
-    // Videos AND PDFs go through their own handleSaveAllVideos (GCS
-    // upload+confirm flow, no multipart endpoint for either) — excluded
-    // here so they aren't sent to this image-only upload call. See
-    // SitePhoto.mediaType.
-    const photosOnly = sitePhotos.filter(p => p.mediaType !== 'video' && p.mediaType !== 'pdf');
-    // No photos is a no-op success now, not a blocking error — same
-    // optional-by-default treatment as handleSaveAllVideos below. A
-    // video/PDF-only submission (no actual photo) should never get stuck
-    // behind a "please add a photo" requirement.
-    if (photosOnly.length === 0) return true;
-    setPhotosUploading(true);
-    setPhotosUploadProgress(0);
-    setPhotosUploadError('');
-    setPhotosUploadSuccess(false);
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return false;
-      await uploadServicePhotos(token, taskId, photosOnly.map(p => ({ uri: p.uri, fileName: p.fileName })), setPhotosUploadProgress);
-      setPhotosUploadSuccess(true);
-      return true;
-    } catch (error: any) {
-      setPhotosUploadError(parseApiError(error, 'Failed to upload photos. Please try again.').message);
-      return false;
-    } finally {
-      setPhotosUploading(false);
-    }
-  }, [taskId, sitePhotos]);
+  // Shows whatever was already uploaded in an earlier session — called once
+  // when the task detail first loads (see loadPreviousData below), so
+  // reopening a task you'd already added photos/videos/PDFs to doesn't look
+  // empty just because this session's own sitePhotos state starts fresh.
+  // Unlike commissioning, service keeps photos and videos in two separate
+  // server fields already (photosUrls/videosUrls) — PDFs still ride the
+  // videos field, split out by their .pdf extension, same as
+  // srTaskReportController.ts's own read-side split. Photos need a signed
+  // URL to actually render as a thumbnail (private GCS bucket); video/PDF
+  // rows only ever show a filename/icon, so the raw URL is fine for those.
+  const hydrateSitePhotos = useCallback(async (photosUrls: string[], videosUrls: string[]) => {
+    if (photosUrls.length === 0 && videosUrls.length === 0) return;
+    const realVideoUrls = videosUrls.filter((url) => !url.toLowerCase().split('?')[0].endsWith('.pdf'));
+    const pdfUrls = videosUrls.filter((url) => url.toLowerCase().split('?')[0].endsWith('.pdf'));
 
-  // Videos (and PDFs — see below) are optional (unlike photos, which are
-  // required before finishing) — none added is just a no-op success, not
-  // an error. Each file uploads to GCS and confirms individually inside
-  // uploadServiceVideos, so a failure partway through still keeps whatever
-  // confirmed successfully; the remaining (still-local) items stay in
-  // sitePhotos for the user to retry via the same Complete tap.
-  //
-  // PDFs ride this exact same GCS-sign + confirm flow as videos (per
-  // request: same array, same URL mechanism the backend uses for videos —
-  // not the photos multipart endpoint) — they land in task.videos
-  // alongside real videos, distinguishable there only by their .pdf
-  // extension. The Report/Detail screens split them back out by extension
-  // into their own Documents section.
-  const handleSaveAllVideos = useCallback(async () => {
-    const videosOnly = sitePhotos.filter(p => p.mediaType === 'video' || p.mediaType === 'pdf');
-    if (videosOnly.length === 0) return true;
-    setVideosUploading(true);
-    setVideosUploadProgress(0);
-    setVideosUploadError('');
-    setVideosUploadSuccess(false);
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return false;
-      await uploadServiceVideos(token, taskId, videosOnly.map(v => ({ uri: v.uri, fileName: v.fileName })), setVideosUploadProgress);
-      setVideosUploadSuccess(true);
-      return true;
-    } catch (error: any) {
-      setVideosUploadError(parseApiError(error, 'Failed to upload video. Please try again.').message);
-      return false;
-    } finally {
-      setVideosUploading(false);
+    let signedPhotoUrls: Record<string, string> = {};
+    if (photosUrls.length > 0) {
+      try {
+        const token = await getToken();
+        if (token) signedPhotoUrls = await getGcsSignedUrls(token, photosUrls);
+      } catch (error) {
+        console.log('[SR Task Form Photos] Failed to sign previously-uploaded photo URLs:', error);
+      }
     }
-  }, [taskId, sitePhotos]);
+
+    const hydrated: SitePhoto[] = [
+      ...photosUrls.map((url) => ({ id: url, uri: signedPhotoUrls[url] || url, fileName: videoFileName(url), mediaType: 'image' as const })),
+      ...realVideoUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'video' as const })),
+      ...pdfUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'pdf' as const })),
+    ];
+    setSitePhotos((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id));
+      return [...prev, ...hydrated.filter((p) => !existingIds.has(p.id))];
+    });
+  }, []);
 
   // ── Step 5: Notes ──
   const [notes, setNotes] = useState('');
-  // The "COMMENT (OPTIONAL)" box shown right above Complete Task is a fresh
-  // per-completion comment, not an editor for `notes` above (which holds
-  // whatever was already saved for this task and is also what the read-only
-  // "Submitted" Notes summary displays after Complete Task). Keeping it a
-  // separate, always-blank-at-mount state is what stops it from showing up
-  // pre-filled with old/unrelated saved text. Synced into `notes` right
-  // after a successful Complete Task so the summary view reflects it.
-  const [completionComment, setCompletionComment] = useState('');
 
-  // Step 3's own Work Notes + Suggestion Comment + Voice of Customer fields
-  // — UI only for now, no save wiring yet (endpoint/field names TBD).
+  // Step 3's own Work Notes + Suggestion Comment + Voice of Customer fields.
   // workNotes is deliberately its own always-blank-at-mount state, not an
-  // editor for `notes` above — same reasoning as completionComment's own
-  // comment just above: `notes` pre-fills from whatever was already saved
-  // for this task, and this field shouldn't show up pre-filled with that.
+  // editor for `notes` above — `notes` pre-fills from whatever was already
+  // saved for this task, and this field shouldn't show up pre-filled with
+  // that.
   const [workNotes, setWorkNotes] = useState('');
   const [suggestionComment, setSuggestionComment] = useState('');
   const [voiceOfCustomerName, setVoiceOfCustomerName] = useState('');
@@ -690,26 +672,8 @@ export function useSrTaskForm() {
     const billingTypeRequired = (selectedCategoryLetter === 'B' && ['Breakdown', 'BIS'].includes(selectedSubCategory))
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope');
     if (billingTypeRequired && !billingType) return;
-    // Same as the engineer's own handleFinishService — photos/videos (Step
-    // 4) have no save button of their own, they upload right before
-    // completing. This was missing here entirely: AM's Complete Task went
-    // straight to /finish, so any photos/videos added in Step 4 were never
-    // actually uploaded — nothing to show later on the report screen.
-    //
-    // Both handleSaveAllPhotos/handleSaveAllVideos are now no-ops when
-    // given an empty list, so calling them unconditionally would be
-    // harmless — still gated here purely to skip the redundant call/state
-    // churn when there's nothing of that kind to upload. PDFs count as
-    // "videos" for this split (see SitePhoto.mediaType) since they ride
-    // handleSaveAllVideos's GCS flow, not the photos multipart call.
-    if (sitePhotos.some((p) => p.mediaType !== 'video' && p.mediaType !== 'pdf') && !photosUploadSuccess) {
-      const photosOk = await handleSaveAllPhotos();
-      if (!photosOk) return;
-    }
-    if (sitePhotos.some((p) => p.mediaType === 'video' || p.mediaType === 'pdf') && !videosUploadSuccess) {
-      const videosOk = await handleSaveAllVideos();
-      if (!videosOk) return;
-    }
+    // Photos/videos/PDFs already uploaded immediately when picked (see
+    // mediaQueue/MediaUploadOverlay) — nothing left to upload here.
     setStep6Saving(true);
     setStep6Error('');
     setStep6Success(false);
@@ -750,7 +714,7 @@ export function useSrTaskForm() {
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos, router]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -835,19 +799,8 @@ export function useSrTaskForm() {
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope')
     );
     if (billingTypeRequired && !billingType) return;
-    // Both handleSaveAllPhotos/handleSaveAllVideos are no-ops when given an
-    // empty list, so this gating is purely to skip a redundant call — not
-    // a requirement. PDFs count as "videos" here (see SitePhoto.mediaType),
-    // since they ride handleSaveAllVideos's GCS flow, not the photos
-    // multipart call.
-    if (sitePhotos.some(p => p.mediaType !== 'video' && p.mediaType !== 'pdf') && !photosUploadSuccess) {
-      const photosOk = await handleSaveAllPhotos();
-      if (!photosOk) return;
-    }
-    if (sitePhotos.some(p => p.mediaType === 'video' || p.mediaType === 'pdf') && !videosUploadSuccess) {
-      const videosOk = await handleSaveAllVideos();
-      if (!videosOk) return;
-    }
+    // Photos/videos/PDFs already uploaded immediately when picked (see
+    // mediaQueue/MediaUploadOverlay) — nothing left to upload here.
     setFinishing(true);
     setFinishError('');
     try {
@@ -870,7 +823,7 @@ export function useSrTaskForm() {
     } finally {
       setFinishing(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, sitePhotos, photosUploadSuccess, handleSaveAllPhotos, videosUploadSuccess, handleSaveAllVideos, router]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router]);
 
   // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
   // handleFinishService/handleSendForApproval below navigate straight there
@@ -915,6 +868,11 @@ export function useSrTaskForm() {
         setNotes(serviceData.notes ?? '');
         if (serviceData.category) setSelectedCategoryLetter(serviceData.category);
         if (serviceData.subCategory) setSelectedSubCategory(serviceData.subCategory);
+        // Shows whatever was already uploaded in an earlier session — see
+        // hydrateSitePhotos's own comment above.
+        if (serviceData.photos?.length || serviceData.videos?.length) {
+          hydrateSitePhotos(serviceData.photos || [], serviceData.videos || []);
+        }
         // Reopening a task that's already COMPLETED — this form no longer
         // has anything to show once past that point (OTP sign-off/Approval
         // Status/Close Ticket all live on srTaskReport.tsx now), but the
@@ -938,6 +896,7 @@ export function useSrTaskForm() {
       }
 
       if (assetData) {
+        setAssetDetail(assetData);
         setGensetModel(assetData.gensetModel ?? '');
         setGensetSrNumber(assetData.gensetNumber ?? params.gensetNumber ?? '');
         setEngineModel(assetData.engineModel ?? '');
@@ -1017,7 +976,7 @@ export function useSrTaskForm() {
     } finally {
       setInitialDataLoading(false);
     }
-  }, [assetId, taskId, params.gensetNumber, params.engineNumber]);
+  }, [assetId, taskId, params.gensetNumber, params.engineNumber, hydrateSitePhotos]);
 
   const loadFaultCodesAndParts = useCallback(async () => {
     try {
@@ -1083,7 +1042,7 @@ export function useSrTaskForm() {
     params, currentStep, setCurrentStep, initialDataLoading, refreshing, onRefresh, profile, task, isEngineer,
 
     // Step 1
-    gensetModel, setGensetModel, gensetSrNumber, setGensetSrNumber, engineModel, setEngineModel,
+    gensetModel, setGensetModel, gensetSrNumber, setGensetSrNumber, assetDetail, engineModel, setEngineModel,
     engineNumber, setEngineNumber, engineKw, setEngineKw, engineType, setEngineType, engineFamily, setEngineFamily,
     fuelType, setFuelType, application, setApplication,
     altMake, setAltMake, altModel, setAltModel, altSn, setAltSn, atsSn, setAtsSn,
@@ -1115,11 +1074,11 @@ export function useSrTaskForm() {
 
     // Step 4
     sitePhotos, photoOptionsVisible, setPhotoOptionsVisible, handleTakePhoto, handleRecordVideo, handleChoosePhotos, handlePickPdf, handleRemovePhoto,
-    photosUploading, photosUploadProgress, photosUploadSuccess, photosUploadError, handleSaveAllPhotos,
-    videosUploading, videosUploadProgress, videosUploadSuccess, videosUploadError, handleSaveAllVideos,
+    // Real-time upload state/controls for MediaUploadOverlay, see useMediaUploadQueue.
+    mediaUploadQueue: mediaQueue,
 
     // Step 5
-    notes, setNotes, completionComment, setCompletionComment, step5Saving, step5Success, step5Error, handleSaveNotes,
+    notes, setNotes, step5Saving, step5Success, step5Error, handleSaveNotes,
     workNotes, setWorkNotes,
     suggestionComment, setSuggestionComment,
     voiceOfCustomerName, setVoiceOfCustomerName,

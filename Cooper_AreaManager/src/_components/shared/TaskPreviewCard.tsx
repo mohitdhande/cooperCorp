@@ -1,4 +1,4 @@
-import { formatDate, formatTimeAgoLabel, initials, taskTypeLabel, getTaskPeople } from '../../utils/reportFormatters';
+import { formatDate, formatDateTime12h, formatTimeAgoLabel, initials, taskTypeLabel, getTaskPeople } from '../../utils/reportFormatters';
 import { View, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { ArrowRight, BookmarkCheck, CalendarCheck, Check, ChevronRight, Clock, FileText, RefreshCw, Settings, UserCog } from 'lucide-react-native';
@@ -124,6 +124,13 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
     ? (SERVICE_CATEGORIES.find((c) => c.letter === task.category)?.name || task.category)
     : taskTypeLabel(task);
   const subCategoryLabel = isService ? task.subCategory : null;
+  // When this task was first handed out — a fixed historical fact shown on
+  // every card regardless of its current status/tab (Active/Completed/
+  // Closed), not "whichever stage it's in now". Falls back to the backend's
+  // own actionLog (event: 'Assigned') the same way getActivityStages does,
+  // since assignedAt isn't always present as its own flat field.
+  const assignedAtRaw = task.assignedAt || (task.actionLog || []).find((e: any) => e?.event === 'Assigned')?.at;
+  const assignedAtLabel = assignedAtRaw ? formatDateTime12h(assignedAtRaw) : null;
 
   return (
     <Pressable style={[styles.card, isOtpPending && styles.cardOtpPending]} onPress={onCardPress}>
@@ -170,6 +177,16 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
           above, the completed box below, rather than the completed box
           replacing notes entirely. */}
       <TaskNotesBlock notes={task.notes} />
+
+      {/* When this task was first assigned — shown on every card regardless
+          of its current status/tab, right below the notes. */}
+      {!!assignedAtLabel && (
+        <View style={styles.assignedBanner}>
+          <CalendarCheck size={16} color="#1D4ED8" />
+          <Text style={styles.assignedBannerLabel}>Assigned</Text>
+          <Text style={styles.assignedBannerValue}>{assignedAtLabel}</Text>
+        </View>
+      )}
 
       {isDone && (
         <View style={styles.completedBox}>
@@ -358,6 +375,16 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   otpPendingBannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#B8460E' },
+
+  // "Assigned <date/time>" — shown on every card regardless of status.
+  assignedBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    paddingVertical: 12, paddingHorizontal: 14,
+  },
+  assignedBannerLabel: { fontSize: 14, fontWeight: '700', color: '#1D4ED8' },
+  assignedBannerValue: { flex: 1, fontSize: 14, fontWeight: '800', color: '#1E1951', textAlign: 'right' },
 
   // Full-width type label — "Commissioning" or a service's category, always
   // its own dark pill (icon + text), same spot for both task kinds.

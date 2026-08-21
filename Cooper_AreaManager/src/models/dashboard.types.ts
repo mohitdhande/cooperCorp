@@ -64,6 +64,10 @@ export type DashboardSummary = {
     commissioning: any[];
     service: any[];
   };
+  recentClosed: {
+    commissioning: any[];
+    service: any[];
+  };
   summaryCounts: {
     myActive: number;
     teamActive: number;

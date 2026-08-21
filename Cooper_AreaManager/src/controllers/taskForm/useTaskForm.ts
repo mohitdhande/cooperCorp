@@ -108,7 +108,7 @@ export function useTaskForm() {
   }, []);
 
   const apiData = useTaskFormApiData({ taskId, showToast });
-  const photos = useTaskFormPhotos({ taskId, showToast });
+  const photos = useTaskFormPhotos({ taskId });
   const otp = useTaskFormOtp({ taskId, showToast, isEngineer });
 
   // Step 6's own optional freetext field, sent as suggestionComment in the
@@ -131,7 +131,14 @@ export function useTaskForm() {
         const token = await getToken();
         if (!token) return;
         const detail = await getCommissioningTaskDetail(token, taskId);
-        if (!cancelled) setTask(detail);
+        if (!cancelled) {
+          setTask(detail);
+          // Shows whatever was already uploaded in an earlier session —
+          // see hydrateSitePhotos's own comment in useTaskFormPhotos.ts.
+          if (Array.isArray(detail?.photos) && detail.photos.length > 0) {
+            photos.hydrateSitePhotos(detail.photos);
+          }
+        }
       } catch (error) {
         console.log('[Task Form] Failed to load task summary:', error);
       } finally {
@@ -139,7 +146,7 @@ export function useTaskForm() {
       }
     })();
     return () => { cancelled = true; };
-  }, [taskId]);
+  }, [taskId, photos.hydrateSitePhotos]);
 
   useEffect(() => {
     if (currentStep === 3) apiData.loadFaultCodes();
@@ -168,6 +175,14 @@ export function useTaskForm() {
   // ── Step 1 — asset fields ──
   const [gensetModel, setGensetModel] = useState('');
   const [gensetSrNumber, setGensetSrNumber] = useState('');
+  // The raw, untouched asset fetch result — kept separately from the
+  // individual editable fields below (gensetSrNumber etc., which the user
+  // can change in Step 1) purely so TaskSummaryHeader's identity pill has
+  // one single object to read (gensetNumber/engineNumber/gensetModel/
+  // dispatchDate/...) instead of this hook having to thread a new override
+  // prop through every caller each time the header wants to show one more
+  // field of it.
+  const [assetDetail, setAssetDetail] = useState<any>(null);
   const [engineModel, setEngineModel] = useState('');
   const [engineNumber, setEngineNumber] = useState('');
   const [engineKw, setEngineKw] = useState('');
@@ -205,6 +220,7 @@ export function useTaskForm() {
   // Shared by both the live fetch below and its offline cache fallback —
   // same field population either way.
   const applyAssetData = useCallback((data: any) => {
+    setAssetDetail(data);
     if (data.gensetModel) setGensetModel(data.gensetModel);
     if (data.gensetNumber) setGensetSrNumber(data.gensetNumber);
     if (data.engineModel) setEngineModel(data.engineModel);
@@ -728,26 +744,12 @@ export function useTaskForm() {
     }
   }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer]);
 
-  // Step 6's "Complete" action: saves any unsaved photos, marks the task
-  // complete, then navigates straight to the View Report screen for this
-  // task — that screen now owns the OTP verification step (its own
-  // "Verify Client OTP" footer), so this form has nothing left to do once
-  // Complete succeeds.
+  // Step 6's "Complete" action: every photo/video/PDF has already uploaded
+  // immediately when it was picked (see useTaskFormPhotos/
+  // MediaUploadOverlay) — this just marks the task complete and navigates
+  // to the View Report screen, which now owns the OTP verification step
+  // (its own "Verify Client OTP" footer).
   const handleCompletePhotosStep = useCallback(async () => {
-    if (photos.sitePhotos.length > 0 && !photos.photosUploadSuccess) {
-      const photosOk = await photos.handleSaveAllPhotos();
-      if (!photosOk) return;
-    }
-    // Videos and PDFs upload separately (their own GCS flow, see
-    // handleSaveAllVideos) — checked independently of the photo gate above
-    // so a video/PDF still gets uploaded even on a run where photos were
-    // already uploaded (or there weren't any) and the photo branch above
-    // was skipped.
-    if (photos.sitePhotos.some(p => p.mediaType === 'video' || p.mediaType === 'pdf') && !photos.videosUploadSuccess) {
-      const videosOk = await photos.handleSaveAllVideos();
-      if (!videosOk) return;
-    }
-
     const completeOk = await otp.handleMarkComplete(suggestionComment);
     if (!completeOk) return;
 
@@ -755,7 +757,7 @@ export function useTaskForm() {
       pathname: '/screens/taskReport',
       params: { task: JSON.stringify({ _id: taskId, assetId }) },
     } as any);
-  }, [photos, otp, taskId, assetId, router, suggestionComment]);
+  }, [otp, taskId, assetId, router, suggestionComment]);
 
   // ── Profile (for the shared AppBar) ──
   const [userName, setUserName] = useState('');
@@ -807,7 +809,7 @@ export function useTaskForm() {
 
     // Step 1
     assetLoading, sectionSaving, sectionError, sectionSuccess, customerContactNumber,
-    gensetModel, setGensetModel, gensetSrNumber, setGensetSrNumber, engineModel, setEngineModel,
+    gensetModel, setGensetModel, gensetSrNumber, setGensetSrNumber, assetDetail, engineModel, setEngineModel,
     engineNumber, setEngineNumber, engineKw, setEngineKw, engineType, setEngineType, engineFamily, setEngineFamily,
     fuelType, setFuelType, application, setApplication,
     altMake, setAltMake, altModel, setAltModel, altSn, setAltSn, atsSn, setAtsSn,
@@ -855,17 +857,15 @@ export function useTaskForm() {
     handleChooseSitePhotos: photos.handleChooseSitePhotos,
     handleRemoveSitePhoto: photos.handleRemoveSitePhoto,
     handlePickPdf: photos.handlePickPdf,
-    videosUploading: photos.videosUploading, videosUploadProgress: photos.videosUploadProgress,
-    videosUploadError: photos.videosUploadError, videosUploadSuccess: photos.videosUploadSuccess,
-    handleSaveAllVideos: photos.handleSaveAllVideos,
     runningHoursPhotos: photos.runningHoursPhotos,
     step2PhotoOptionsVisible: photos.step2PhotoOptionsVisible,
     setStep2PhotoOptionsVisible: photos.setStep2PhotoOptionsVisible,
     handleTakeRunningHoursPhoto: photos.handleTakeRunningHoursPhoto,
     handleChooseRunningHoursPhotos: photos.handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto: photos.handleRemoveRunningHoursPhoto,
-    photosUploading: photos.photosUploading, photosUploadProgress: photos.photosUploadProgress, photosUploadError: photos.photosUploadError,
-    photosUploadSuccess: photos.photosUploadSuccess, handleSaveAllPhotos: photos.handleSaveAllPhotos,
+    // Real-time upload state/controls for MediaUploadOverlay — one queue
+    // per list (Step 2 running-hours, Step 6 site), see useMediaUploadQueue.
+    siteUploadQueue: photos.siteQueue, runningHoursUploadQueue: photos.runningHoursQueue,
     markCompleteLoading: otp.markCompleteLoading, markCompleteError: otp.markCompleteError,
     suggestionComment, setSuggestionComment,
     handleCompletePhotosStep,

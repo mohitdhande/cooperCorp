@@ -20,6 +20,14 @@ export const PANEL_TYPE_OPTIONS = ['STD', 'ASAS', 'AMF', 'SYNC'];
 
 export const CPCB_NORM_OPTIONS = ['CPCB I', 'CPCB II', 'CPCB IV+'];
 
+// New Service Request's "Financing Bank" field — only shown for the two
+// Cooper-managed AMC/CAMC categories (letters D/E), which are the ones
+// financed through a bank tie-up rather than paid directly by the customer.
+export const FINANCING_BANK_OPTIONS = [
+  'HDFC Bank', 'ICICI Bank', 'IndusInd Bank', 'IDBI Bank',
+  'IDFC Bank', 'Jana Bank', 'Reliance Retail Ltd',
+];
+
 // New Service Request's "Category" field — a flat, grouped taxonomy (group
 // header + leaf item) distinct from SERVICE_CATEGORIES below (which covers
 // complaint/fault codes, not the job's own category). Request body sends
@@ -66,7 +74,7 @@ export const SERVICE_CATEGORIES = [
     name: 'AMC (Annual Maintenance Contract)',
     subCategories: ['AMC Visit', 'PM Service', 'Diesel Filling Rental Genset', 'Breakdown'],
     bg: '#F3E8FF', border: '#D8B4FE', text: '#7E22CE',
-    description: 'Preventive and corrective maintenance under an Annual Maintenance Contract.',
+    description: 'Preventive and corrective maintenance under a Cooper-managed Annual Maintenance Contract.',
     subCategoryAtStep6: true,
   },
   {
@@ -74,7 +82,7 @@ export const SERVICE_CATEGORIES = [
     name: 'CAMC (Comprehensive AMC)',
     subCategories: ['AMC In Scope', 'AMC Out Of Scope', 'Breakdown', 'Demonstration', 'PM Service'],
     bg: '#E0E7FF', border: '#C7D2FE', text: '#4338CA',
-    description: 'Comprehensive AMC covering parts and labour — all in-scope repairs are included.',
+    description: 'Comprehensive AMC covering parts and labour, managed by Cooper — all in-scope repairs are included.',
     subCategoryAtStep6: true,
   },
   {
@@ -93,6 +101,22 @@ export const SERVICE_CATEGORIES = [
     ],
     bg: '#F3F4F6', border: '#D1D5DB', text: '#374151',
     description: 'Site work that falls outside the standard service categories above.',
+  },
+  {
+    letter: 'H',
+    name: 'Dealer AMC',
+    subCategories: ['AMC Visit', 'PM Service', 'Diesel Filling Rental Genset', 'Breakdown'],
+    bg: '#EDE9FE', border: '#C4B5FD', text: '#6D28D9',
+    description: 'Preventive and corrective maintenance under a Dealer-managed Annual Maintenance Contract.',
+    subCategoryAtStep6: true,
+  },
+  {
+    letter: 'I',
+    name: 'Dealer CAMC',
+    subCategories: ['AMC In Scope', 'AMC Out Of Scope', 'Breakdown', 'Demonstration', 'PM Service'],
+    bg: '#CFFAFE', border: '#67E8F9', text: '#0E7490',
+    description: 'Comprehensive AMC covering parts and labour, managed by the dealer.',
+    subCategoryAtStep6: true,
   },
 ];
 
@@ -121,12 +145,12 @@ export const SERVICE_CATEGORY_META: Record<string, {
   },
   D: {
     bg: '#F3E8FF', border: '#D8B4FE', text: '#7E22CE',
-    description: 'Preventive and corrective maintenance under an Annual Maintenance Contract.',
+    description: 'Preventive and corrective maintenance under a Cooper-managed Annual Maintenance Contract.',
     subCategoryAtStep6: true,
   },
   E: {
     bg: '#E0E7FF', border: '#C7D2FE', text: '#4338CA',
-    description: 'Comprehensive AMC covering parts and labour — all in-scope repairs are included.',
+    description: 'Comprehensive AMC covering parts and labour, managed by Cooper — all in-scope repairs are included.',
     subCategoryAtStep6: true,
   },
   F: {
@@ -136,5 +160,15 @@ export const SERVICE_CATEGORY_META: Record<string, {
   G: {
     bg: '#F3F4F6', border: '#D1D5DB', text: '#374151',
     description: 'Site work that falls outside the standard service categories above.',
+  },
+  H: {
+    bg: '#EDE9FE', border: '#C4B5FD', text: '#6D28D9',
+    description: 'Preventive and corrective maintenance under a Dealer-managed Annual Maintenance Contract.',
+    subCategoryAtStep6: true,
+  },
+  I: {
+    bg: '#CFFAFE', border: '#67E8F9', text: '#0E7490',
+    description: 'Comprehensive AMC covering parts and labour, managed by the dealer.',
+    subCategoryAtStep6: true,
   },
 };

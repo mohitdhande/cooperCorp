@@ -5,7 +5,7 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import {
-  ChevronLeft, Bell, Wrench,
+  ChevronLeft, Bell,
   ChevronDown, ChevronRight, Info, Zap, UserRoundCog, Plus,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
@@ -16,8 +16,11 @@ import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModa
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { AssetLocationContact } from '../../_components/shared/AssetLocationContact';
+import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
 import { AnchoredPanel, Anchor } from '../../_components/shared/AnchoredPanel';
 import { FreeServiceItem, ServiceCategory } from '../../controllers/newServiceJobController';
+import { FINANCING_BANK_OPTIONS } from '../../_components/srTaskForm/srDropdownOptions';
+import { DateField } from '../../_components/shared/DateField';
 
 // "03 Aug" (no year) or "03 Feb 2027" (withYear) — the compact window-range
 // display under a selected Free Service sub-category, distinct from
@@ -210,6 +213,47 @@ function SubCategoryPickerField({
   );
 }
 
+// Financing Bank — only asked for the two Cooper-managed AMC/CAMC
+// categories (letters D/E), which are financed through a bank tie-up.
+// Plain flat list, same trigger/panel shape as the pickers above.
+function BankPickerField({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
+  const [visible, setVisible] = useState(false);
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const triggerRef = useRef<View>(null);
+
+  const openDropdown = () => {
+    triggerRef.current?.measureInWindow((x, y, width, height) => {
+      setAnchor({ x, y, width, height });
+      setVisible(true);
+    });
+  };
+
+  return (
+    <View>
+      <TouchableOpacity ref={triggerRef} style={styles.categoryTrigger} activeOpacity={0.7} onPress={openDropdown}>
+        <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
+          {value || 'Select bank...'}
+        </Text>
+        <ChevronDown size={18} color="#9CA3AF" />
+      </TouchableOpacity>
+
+      <AnchoredPanel visible={visible} anchor={anchor} onRequestClose={() => setVisible(false)} maxHeight={300}>
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false}>
+          {FINANCING_BANK_OPTIONS.map((bank) => (
+            <TouchableOpacity
+              key={bank}
+              style={[styles.categoryOptionRow, value === bank && styles.categoryOptionRowSelected]}
+              onPress={() => { onSelect(bank); setVisible(false); }}
+            >
+              <Text style={styles.categoryOptionText}>{bank}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </AnchoredPanel>
+    </View>
+  );
+}
+
 const REF_WIDTH = 420;
 
 // Same peach->light radial gradient backdrop as the other screens
@@ -259,6 +303,7 @@ export default function NewServiceJobScreen() {
     jobTitle, setJobTitle, jobDate,
     category, handleSelectCategory, categoryConfig, categoryConfigLoading, categoryConfigError,
     subCategory, handleSelectSubCategory, needsSubCategoryNow,
+    financingBank, setFinancingBank,
     freeServiceItems, freeServiceLoading, freeServiceError,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,
@@ -380,6 +425,41 @@ export default function NewServiceJobScreen() {
               </TouchableOpacity>
             </>
           )
+        ) : !asset.completedAt ? (
+          // Asset exists but has never had a commissioning task completed on
+          // it (completedAt absent from GET /api/assets/:id) — raising a
+          // service request for it isn't a valid flow, so the New Service
+          // Request form is replaced entirely by this notice instead of
+          // just being disabled/hidden below a still-visible form.
+          <>
+            {/* Same shared AssetIdentityHeader every task list/form/report
+                screen uses — task/taskPeople are empty here since nothing's
+                been created yet (no SR number, nobody assigned), so the
+                ribbon and avatar cluster just don't render; only the
+                identity pill itself (icon, genset/engine number, dispatch
+                date) shows. hideGensetModel keeps this screen's existing
+                "always bold genset number" look instead of switching to a
+                model-first headline. */}
+            <View style={styles.assetCard}>
+              <AssetIdentityHeader task={{}} isService taskPeople={[]} hideGensetModel assetOverride={{
+                gensetNumber: asset.gensetNumber, engineNumber: asset.engineNumber,
+                gensetModel: asset.gensetModel, dispatchDate: asset.dispatchDate,
+              }} />
+              <View style={{ marginTop: 12 }}>
+                <AssetLocationContact asset={asset} hideContact />
+              </View>
+            </View>
+
+            <View style={styles.commissioningRequiredBox}>
+              <Info size={20} color="#EA580C" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.commissioningRequiredTitle}>Commissioning required</Text>
+                <Text style={styles.commissioningRequiredText}>
+                  This asset has not been commissioned yet. Complete commissioning before raising a service request.
+                </Text>
+              </View>
+            </View>
+          </>
         ) : (
           <>
             {/* Compact identity pill + client contact — reference's own
@@ -387,15 +467,10 @@ export default function NewServiceJobScreen() {
                 to confirm which asset you're on), folding location/contact
                 straight into it instead of behind a CLIENT INFO accordion. */}
             <View style={styles.assetCard}>
-              <View style={styles.assetIdentityPill}>
-                <View style={styles.assetIdentityIconChip}>
-                  <Wrench size={18} color="#FFFFFF" />
-                </View>
-                <Text style={styles.assetIdentityName} numberOfLines={1}>{asset.gensetNumber}</Text>
-                {!!asset.engineNumber && (
-                  <Text style={styles.assetIdentitySecondary} numberOfLines={1}>{asset.engineNumber}</Text>
-                )}
-              </View>
+              <AssetIdentityHeader task={{}} isService taskPeople={[]} hideGensetModel assetOverride={{
+                gensetNumber: asset.gensetNumber, engineNumber: asset.engineNumber,
+                gensetModel: asset.gensetModel, dispatchDate: asset.dispatchDate,
+              }} />
               <View style={{ marginTop: 12 }}>
                 <AssetLocationContact asset={asset} hideContact />
               </View>
@@ -423,6 +498,15 @@ export default function NewServiceJobScreen() {
                   {categoryConfigLoading && <ActivityIndicator style={{ marginTop: 8 }} color="#F26722" />}
                   {!!categoryConfigError && <Text style={[styles.errorText, { marginTop: 8 }]}>{categoryConfigError}</Text>}
                 </View>
+
+                {/* Cooper AMC/CAMC only (letters D/E) — those are the two
+                    categories financed through a bank tie-up. */}
+                {(category?.letter === 'D' || category?.letter === 'E') && (
+                  <View style={[styles.formField, { marginTop: 16 }]}>
+                    <Text style={styles.formLabel}>Financing Bank</Text>
+                    <BankPickerField value={financingBank} onSelect={setFinancingBank} />
+                  </View>
+                )}
 
                 {!!category && (
                   <View style={[styles.categoryInfoCard, { marginTop: 16, borderColor: category.border, backgroundColor: category.bg }]}>
@@ -494,6 +578,10 @@ export default function NewServiceJobScreen() {
 
         
 
+                <View style={{ marginTop: 16 }}>
+                  <DateField label="Due Date" value={dueDate} onChangeText={setDueDate} placeholder="dd/mm/yyyy" />
+                </View>
+
                 <View style={[styles.formField, { marginTop: 16 }]}>
                   <Text style={styles.formLabel}>Assign To</Text>
                   <TouchableOpacity style={styles.assignToField} onPress={openAssigneePicker}>
@@ -556,6 +644,18 @@ const styles = StyleSheet.create({
 
   placeholderText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center', marginTop: 40 },
 
+  // Asset found but never commissioned — replaces the New Service Request
+  // form entirely with this notice.
+  commissioningRequiredBox: {
+    flexDirection: 'row', gap: 12,
+    backgroundColor: '#FEF9E7',
+    borderWidth: 1, borderColor: '#F5D68C',
+    borderRadius: 16,
+    padding: 16,
+  },
+  commissioningRequiredTitle: { fontSize: 15, fontWeight: '700', color: '#C2410C', marginBottom: 4 },
+  commissioningRequiredText: { fontSize: 13, fontWeight: '500', color: '#B45309', lineHeight: 19 },
+
   noAssetCard: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 12,
     backgroundColor: '#FEF2F2',
@@ -588,20 +688,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 20,
   },
-  assetIdentityPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#EEF2FF',
-    borderRadius: 14,
-    paddingHorizontal: 12, paddingVertical: 10,
-  },
-  assetIdentityIconChip: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#1E1951',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  assetIdentityName: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  assetIdentitySecondary: { fontSize: 14, fontWeight: '500', color: '#9CA3AF', flexShrink: 1 },
-
   errorBox: { backgroundColor: '#FEE2E2', borderRadius: 12, padding: 12 },
   errorText: { color: '#DC2626', fontSize: 13, fontWeight: '500', textAlign: 'center' },
 

@@ -279,8 +279,7 @@ export default function TaskReportScreen() {
             task={task}
             isService={false}
             taskPeople={getTaskPeople(task)}
-            gensetNumberOverride={a.gensetNumber}
-            engineNumberOverride={a.engineNumber}
+            assetOverride={a}
           />
           <View style={styles.identityPillRow}>
             <View style={[styles.identityPill, { backgroundColor: typeBadge.bg }]}>

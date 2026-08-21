@@ -5,6 +5,7 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { ChevronLeft, ChevronDown, Info } from 'lucide-react-native';
+import { DateField } from '../../_components/shared/DateField';
 import { useCreateAssetCommissionController, ENTRY_TYPES } from '../../controllers/createAssetCommissionController';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
@@ -133,14 +134,13 @@ export default function CreateAssetCommissionScreen() {
   // view explicitly instead of guessing how much padding pan already
   // accounts for.
   const scrollViewRef = useRef<ScrollView>(null);
-  // Same fix as FormField (see scrollFieldIntoView above), for the two
-  // hand-rolled fields in the COMMISSIONING ENTRY card that aren't
-  // FormField instances — called directly with scrollViewRef rather than
+  // Same fix as FormField (see scrollFieldIntoView above), for the one
+  // hand-rolled field in the COMMISSIONING ENTRY card that isn't a
+  // FormField instance — called directly with scrollViewRef rather than
   // through useScrollIntoViewOnFocus's context lookup, since this
   // component is the one that renders ScrollRefContext.Provider, not a
-  // descendant of it. Entry Type is a dropdown, not a text field, so it
-  // never opens the keyboard and doesn't need this.
-  const entryDateFieldRef = useRef<View>(null);
+  // descendant of it. Entry Type is a dropdown and Date opens a native
+  // picker instead of the keyboard, so neither needs this.
   const notesFieldRef = useRef<View>(null);
 
   const {
@@ -250,7 +250,7 @@ export default function CreateAssetCommissionScreen() {
                 {/* This read-only summary shows the same "29 Dec 2023" style
                     as New Job/New Service Job's own SAP card — deliberately
                     NOT the dispatchDate/entryDate state below, which stays
-                    in mm/dd/yyyy specifically because those feed the
+                    in dd/mm/yyyy specifically because those feed the
                     editable Dispatch Date/Entry Date text inputs further
                     down this form. */}
                 <SummaryField label="BILLING DATE" value={sapAsset.billingDate ? formatDate(sapAsset.billingDate) : undefined} />
@@ -285,19 +285,19 @@ export default function CreateAssetCommissionScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>CLIENT</Text>
           <View style={styles.fieldRow}>
-            <FormField label="Client Name" value={clientName} onChangeText={setClientName} />
+            <FormField label="Client Name" required value={clientName} onChangeText={setClientName} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Client Code" value={clientCode} onChangeText={setClientCode} />
+            <FormField label="Client Code" required value={clientCode} onChangeText={setClientCode} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Client Email" value={clientEmail} onChangeText={setClientEmail} />
+            <FormField label="Client Email" required value={clientEmail} onChangeText={setClientEmail} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Primary Contact Name" value={primaryContactName} onChangeText={setPrimaryContactName} />
+            <FormField label="Primary Contact Name" required value={primaryContactName} onChangeText={setPrimaryContactName} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Primary Contact No." value={primaryContactNumber} onChangeText={setPrimaryContactNumber} />
+            <FormField label="Primary Contact No." required value={primaryContactNumber} onChangeText={setPrimaryContactNumber} />
           </View>
           <View style={styles.fieldRow}>
             <FormField label="Alternate Contact Name" value={alternateContactName} onChangeText={setAlternateContactName} />
@@ -306,22 +306,25 @@ export default function CreateAssetCommissionScreen() {
             <FormField label="Alternate Contact No." value={alternateContactNumber} onChangeText={setAlternateContactNumber} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Dispatch Date" value={dispatchDate} onChangeText={setDispatchDate} placeholder="mm/dd/yyyy" />
+            <DateField
+              label="Dispatch Date" required value={dispatchDate} onChangeText={setDispatchDate} placeholder="dd/mm/yyyy"
+              containerStyle={styles.fieldHalf} inputStyle={styles.fieldInput}
+            />
           </View>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>ADDRESS</Text>
           <View style={styles.fieldRow}>
-            <FormField label="PIN Code" value={pinCode} onChangeText={setPinCode} />
+            <FormField label="PIN Code" required value={pinCode} onChangeText={setPinCode} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="State" value={state} onChangeText={setState} />
-            <FormField label="District" value={district} onChangeText={setDistrict} />
+            <FormField label="State" required value={state} onChangeText={setState} />
+            <FormField label="District" required value={district} onChangeText={setDistrict} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Taluk" value={taluk} onChangeText={setTaluk} placeholder="Taluk..." />
-            <FormField label="City" value={city} onChangeText={setCity} />
+            <FormField label="Taluk" required value={taluk} onChangeText={setTaluk} placeholder="Taluk..." />
+            <FormField label="City" required value={city} onChangeText={setCity} />
           </View>
           <View style={styles.fieldRow}>
             <FormField label="Address Line 1" value={addressLine1} onChangeText={setAddressLine1} />
@@ -330,7 +333,7 @@ export default function CreateAssetCommissionScreen() {
             <FormField label="Address Line 2" value={addressLine2} onChangeText={setAddressLine2} placeholder="Street / Road / Lane" />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Locality / Area / Village" value={locality} onChangeText={setLocality} placeholder="Locality or village..." />
+            <FormField label="Locality / Area / Village" required value={locality} onChangeText={setLocality} placeholder="Locality or village..." />
           </View>
           <View style={styles.countryRow}>
             <Text style={styles.fieldLabel}>Country</Text>
@@ -369,17 +372,14 @@ export default function CreateAssetCommissionScreen() {
                   <ChevronDown size={18} color="#9CA3AF" />
                 </TouchableOpacity>
               </View>
-              <View style={styles.fieldFull} ref={entryDateFieldRef}>
-                <Text style={styles.fieldLabel}>
-                  Date {dispatchType === 'auto' && <Text style={styles.optionalLabel}>(pre-filled from SAP)</Text>}
-                </Text>
-                <TextInput
-                  style={styles.fieldInput}
+              <View style={styles.fieldFull}>
+                <DateField
+                  label="Date"
+                  labelExtra={dispatchType === 'auto' ? <Text style={styles.optionalLabel}>(pre-filled from SAP)</Text> : undefined}
                   value={entryDate}
                   onChangeText={setEntryDate}
-                  placeholder="mm/dd/yyyy"
-                  placeholderTextColor="#9CA3AF"
-                  onFocus={() => scrollFieldIntoView(scrollViewRef.current, entryDateFieldRef.current)}
+                  placeholder="dd/mm/yyyy"
+                  inputStyle={styles.fieldInput}
                 />
               </View>
               <View style={styles.fieldFull} ref={notesFieldRef}>
@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#000000', flexShrink: 1 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
   headerSubtitle: { fontSize: 12, fontWeight: '500', color: '#6B7280', marginTop: 2 },
 
   infoBanner: {

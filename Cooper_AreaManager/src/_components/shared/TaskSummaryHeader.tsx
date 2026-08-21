@@ -8,11 +8,10 @@ import { AssetIdentityHeader } from './AssetIdentityHeader';
 type Props = {
   task: any;
   // The task detail endpoint (getCommissioningTaskDetail) has no embedded
-  // `asset` object — only an `assetId` string — so genset/engine numbers
-  // come from the screen's own asset fetch (getAssetById), not from `task`.
-  // Forwarded straight through to AssetIdentityHeader's own override props.
-  gensetNumber?: string;
-  engineNumber?: string;
+  // `asset` object — only an `assetId` string — so the screen's own asset
+  // fetch (getAssetById) result is passed straight through here, then on
+  // into AssetIdentityHeader's own assetOverride prop.
+  asset?: { gensetNumber?: string | null; engineNumber?: string | null; gensetModel?: string | null; dispatchDate?: string | null } | null;
 };
 
 // "07 Aug '26" — distinct from every other short-date helper in this app
@@ -50,7 +49,7 @@ const STATUS_INFO: Record<string, { label: string; bg: string; text: string }> =
 // just its own "Comm" type badge above — that badge is real information on
 // this screen specifically, since the Task Form's own header just says
 // "TASK", not "COMMISSIONING" the way the SR form's header says "SERVICE".
-export function TaskSummaryHeader({ task, gensetNumber, engineNumber }: Props) {
+export function TaskSummaryHeader({ task, asset }: Props) {
   if (!task) return null;
   const taskPeople = getTaskPeople(task);
   // Service tasks never carry a `type` — same tell TaskPreviewCard uses.
@@ -65,8 +64,7 @@ export function TaskSummaryHeader({ task, gensetNumber, engineNumber }: Props) {
           task={task}
           isService
           taskPeople={taskPeople}
-          gensetNumberOverride={gensetNumber}
-          engineNumberOverride={engineNumber}
+          assetOverride={asset}
         />
 
         {/* Service tasks only carry a `title` (e.g. "accept_1") — same field
@@ -108,8 +106,7 @@ export function TaskSummaryHeader({ task, gensetNumber, engineNumber }: Props) {
         task={task}
         isService={false}
         taskPeople={taskPeople}
-        gensetNumberOverride={gensetNumber}
-        engineNumberOverride={engineNumber}
+        assetOverride={asset}
       />
     </View>
   );

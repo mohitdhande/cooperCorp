@@ -1,41 +1,58 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { getToken } from '../../utils/tokenStore';
-import { uploadCommissioningPhotos, uploadCommissioningVideos } from '../../viewModel/commisionAPi';
+import { uploadCommissioningPhotos, uploadOneCommissioningVideoOrPdf, getGcsSignedUrls } from '../../viewModel/commisionAPi';
 import { SitePhoto } from '../../models/taskForm.types';
-import { parseApiError } from '../../utils/apiError';
 import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } from '../../utils/photoValidation';
+import { splitMediaByExtension, videoFileName } from '../../utils/reportFormatters';
+import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 
 type UseTaskFormPhotosArgs = {
   taskId: string;
-  showToast: (message: string, type: 'success' | 'error') => void;
 };
 
-// Keeps photo capture, selection, and upload behavior isolated from the screen component.
-export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) {
+function toSitePhoto(item: QueueItem): SitePhoto {
+  return { id: item.localId, uri: item.uri, fileName: item.fileName, mediaType: item.kind === 'photo' ? 'image' : item.kind, fileSize: item.fileSize };
+}
+
+// Keeps photo capture, selection, and upload behavior isolated from the
+// screen component. Every photo/video/PDF now uploads immediately (via
+// useMediaUploadQueue) the moment it's picked/captured, rather than sitting
+// local until a final "Complete" batch upload — see MediaUploadOverlay for
+// the overlay this drives.
+export function useTaskFormPhotos({ taskId }: UseTaskFormPhotosArgs) {
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
   const [runningHoursPhotos, setRunningHoursPhotos] = useState<SitePhoto[]>([]);
   const [step2PhotoOptionsVisible, setStep2PhotoOptionsVisible] = useState(false);
-  const [photosUploading, setPhotosUploading] = useState(false);
-  const [photosUploadProgress, setPhotosUploadProgress] = useState(0);
-  const [photosUploadError, setPhotosUploadError] = useState('');
-  const [photosUploadSuccess, setPhotosUploadSuccess] = useState(false);
-  const [uploadedPhotoUrls, setUploadedPhotoUrls] = useState<string[]>([]);
-  const [videosUploading, setVideosUploading] = useState(false);
-  const [videosUploadProgress, setVideosUploadProgress] = useState(0);
-  const [videosUploadError, setVideosUploadError] = useState('');
-  const [videosUploadSuccess, setVideosUploadSuccess] = useState(false);
 
-  const addPhoto = useCallback((photo: SitePhoto, target: 'site' | 'runningHours') => {
-    if (target === 'site') {
-      setSitePhotos(prev => [...prev, photo]);
-      return;
-    }
-    setRunningHoursPhotos(prev => [...prev, photo]);
-  }, []);
+  // Both Step 2 (running-hours, images only) and Step 6 (site, photo/video/
+  // PDF) hit the same commissioning endpoints for the same taskId — only
+  // which local list a successful item lands in (onItemSucceeded) differs,
+  // which is exactly what lets one shared hook drive both.
+  const uploaders = useMemo(() => ({
+    uploadPhoto: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+      const token = await getToken();
+      if (!token || !taskId) throw new Error('Not authenticated.');
+      await uploadCommissioningPhotos(token, taskId, [file], onProgress, signal);
+    },
+    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+      const token = await getToken();
+      if (!token || !taskId) throw new Error('Not authenticated.');
+      await uploadOneCommissioningVideoOrPdf(token, taskId, file, onProgress, signal);
+    },
+  }), [taskId]);
+
+  const siteQueue = useMediaUploadQueue(
+    uploaders,
+    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), [])
+  );
+  const runningHoursQueue = useMediaUploadQueue(
+    uploaders,
+    useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), [])
+  );
 
   // Android's native camera intent can't mix photo and video capture in
   // one launch (ACTION_IMAGE_CAPTURE vs ACTION_VIDEO_CAPTURE are separate
@@ -74,7 +91,8 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
         }
         const isVideo = mediaType === 'videos';
         const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`;
-        addPhoto({ id: `${Date.now()}`, uri: asset.uri, fileName, mediaType: isVideo ? 'video' : 'image' }, target);
+        const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo' };
+        (target === 'site' ? siteQueue : runningHoursQueue).startBatch([picked]);
       }
     } catch (error) {
       // A native picker/camera failure (no camera, OS-level glitch) would
@@ -83,7 +101,7 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
       console.log('[Task Form Photos] Camera failed:', error);
       Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
     }
-  }, [addPhoto]);
+  }, [siteQueue, runningHoursQueue]);
 
   const handleTakeSitePhoto = useCallback(async () => {
     setPhotoOptionsVisible(false);
@@ -112,18 +130,19 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
 
       if (!result.canceled) {
         const { valid, skippedMessage } = partitionValidPhotos(result.assets);
-        valid.forEach((asset, index) => {
+        const picked: PickedAsset[] = valid.map((asset, index) => {
           const isVideo = asset.type === 'video';
           const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}_${index}.${isVideo ? 'mp4' : 'jpg'}`;
-          addPhoto({ id: `${Date.now()}_${index}`, uri: asset.uri, fileName, mediaType: isVideo ? 'video' : 'image' }, 'site');
+          return { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo' };
         });
+        if (picked.length > 0) siteQueue.startBatch(picked);
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
       }
     } catch (error) {
       console.log('[Task Form Photos] Gallery picker failed:', error);
       Alert.alert('Gallery unavailable', 'Could not open the photo gallery. Please try again.');
     }
-  }, [addPhoto]);
+  }, [siteQueue]);
 
   const handleRemoveSitePhoto = useCallback((id: string) => {
     setSitePhotos(prev => prev.filter(photo => photo.id !== id));
@@ -132,8 +151,8 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
   // Documents card's own picker (Step 6 only) — device storage only (no
   // camera option; a PDF can't be "captured"). No dedicated document
   // endpoint exists on the backend, so picked PDFs are tagged
-  // mediaType: 'pdf' and ride the same GCS video flow as recorded videos
-  // (handleSaveAllVideos below) — same as the SR form's own Documents card.
+  // mediaType: 'pdf' and ride the same GCS video flow as recorded videos —
+  // same as the SR form's own Documents card.
   const handlePickPdf = useCallback(async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -150,14 +169,13 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
         if (error) reasons.add(error);
         else valid.push(asset);
       }
-      const newPdfs = valid.map((asset, i) => ({
-        id: `${Date.now()}-${i}`,
+      const picked: PickedAsset[] = valid.map((asset, i) => ({
         uri: asset.uri,
         fileName: asset.name || `document_${i + 1}.pdf`,
-        mediaType: 'pdf' as const,
         fileSize: asset.size,
+        kind: 'pdf',
       }));
-      setSitePhotos(prev => [...prev, ...newPdfs]);
+      if (picked.length > 0) siteQueue.startBatch(picked);
 
       const skippedCount = result.assets.length - valid.length;
       if (skippedCount > 0) {
@@ -167,7 +185,7 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
       console.log('[Task Form Photos] PDF picker failed:', error);
       Alert.alert('Storage unavailable', 'Could not open device storage. Please try again.');
     }
-  }, []);
+  }, [siteQueue]);
 
   const handleTakeRunningHoursPhoto = useCallback(async () => {
     setStep2PhotoOptionsVisible(false);
@@ -193,90 +211,61 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
 
       if (!result.canceled) {
         const { valid, skippedMessage } = partitionValidPhotos(result.assets);
-        valid.forEach((asset, index) => {
-          const fileName = asset.uri.split('/').pop() || `photo_${Date.now()}_${index}.jpg`;
-          addPhoto({ id: `${Date.now()}_${index}`, uri: asset.uri, fileName, mediaType: 'image' }, 'runningHours');
-        });
+        const picked: PickedAsset[] = valid.map((asset, index) => ({
+          uri: asset.uri,
+          fileName: asset.uri.split('/').pop() || `photo_${Date.now()}_${index}.jpg`,
+          fileSize: asset.fileSize,
+          kind: 'photo',
+        }));
+        if (picked.length > 0) runningHoursQueue.startBatch(picked);
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
       }
     } catch (error) {
       console.log('[Task Form Photos] Gallery picker failed:', error);
       Alert.alert('Gallery unavailable', 'Could not open the photo gallery. Please try again.');
     }
-  }, [addPhoto]);
+  }, [runningHoursQueue]);
 
   const handleRemoveRunningHoursPhoto = useCallback((id: string) => {
     setRunningHoursPhotos(prev => prev.filter(photo => photo.id !== id));
   }, []);
 
-  // Returns whether the upload succeeded so callers (e.g. the step 6
-  // "Complete" action) can decide whether it's safe to move on.
-  const handleSaveAllPhotos = useCallback(async (): Promise<boolean> => {
-    setPhotosUploading(true);
-    setPhotosUploadProgress(0);
-    setPhotosUploadError('');
-    setPhotosUploadSuccess(false);
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return false;
+  // Shows whatever was already uploaded in an earlier session — called once
+  // when the task detail first loads (see useTaskForm.ts), so reopening a
+  // task you'd already added photos/videos/PDFs to doesn't look empty just
+  // because this session's own sitePhotos/runningHoursPhotos state starts
+  // fresh. Commissioning's task.photos is one flat array with no per-item
+  // record of which step (2 or 6) an item was originally added from — the
+  // backend genuinely can't tell them apart (both hit the same endpoint) —
+  // so everything hydrates into sitePhotos (Step 6's "everything" list)
+  // rather than guessing a split. Photos need a signed URL to actually
+  // render as a thumbnail (private GCS bucket, same as the report screens);
+  // video/PDF rows only ever show a filename/icon, never the file itself,
+  // so the raw URL is fine as-is for those.
+  const hydrateSitePhotos = useCallback(async (urls: string[]) => {
+    if (!urls || urls.length === 0) return;
+    const { photos: photoUrls, videos: videoUrls, documents: pdfUrls } = splitMediaByExtension(urls);
 
-      // Videos and PDFs go through their own handleSaveAllVideos (GCS
-      // upload+confirm flow, no multipart endpoint for either) — excluded
-      // here so they aren't sent to this image-only upload call. See
-      // SitePhoto.mediaType.
-      const allPhotos = [...runningHoursPhotos, ...sitePhotos].filter(p => p.mediaType !== 'video' && p.mediaType !== 'pdf');
-      if (allPhotos.length === 0) {
-        setPhotosUploadError('Please add at least one photo before saving.');
-        return false;
+    let signedPhotoUrls: Record<string, string> = {};
+    if (photoUrls.length > 0) {
+      try {
+        const token = await getToken();
+        if (token) signedPhotoUrls = await getGcsSignedUrls(token, photoUrls);
+      } catch (error) {
+        console.log('[Task Form Photos] Failed to sign previously-uploaded photo URLs:', error);
       }
-
-      const data = await uploadCommissioningPhotos(token, taskId, allPhotos, setPhotosUploadProgress);
-      const urls = data.photos || [];
-      setUploadedPhotoUrls(urls);
-      setPhotosUploadSuccess(true);
-      showToast('Photos uploaded successfully!', 'success');
-      return true;
-    } catch (error: any) {
-      const msg = parseApiError(error, 'Failed to upload photos. Please try again.').message;
-      setPhotosUploadError(msg);
-      showToast(msg, 'error');
-      return false;
-    } finally {
-      setPhotosUploading(false);
     }
-  }, [showToast, sitePhotos, runningHoursPhotos, taskId]);
 
-  // Videos (and PDFs — see handlePickPdf above) are optional (unlike
-  // photos, which are required before saving) — none added is just a
-  // no-op success, not an error. Each file uploads to GCS and confirms
-  // individually inside uploadCommissioningVideos, so a failure partway
-  // through still keeps whatever confirmed successfully; the remaining
-  // (still-local) items stay in sitePhotos for the user to retry via the
-  // same Complete tap. Only sitePhotos (Step 6) can hold pdf/video items —
-  // runningHoursPhotos (Step 2) never does, so this doesn't need to
-  // consider that list at all.
-  const handleSaveAllVideos = useCallback(async (): Promise<boolean> => {
-    const videosOnly = sitePhotos.filter(p => p.mediaType === 'video' || p.mediaType === 'pdf');
-    if (videosOnly.length === 0) return true;
-    setVideosUploading(true);
-    setVideosUploadProgress(0);
-    setVideosUploadError('');
-    setVideosUploadSuccess(false);
-    try {
-      const token = await getToken();
-      if (!token || !taskId) return false;
-      await uploadCommissioningVideos(token, taskId, videosOnly.map(v => ({ uri: v.uri, fileName: v.fileName })), setVideosUploadProgress);
-      setVideosUploadSuccess(true);
-      return true;
-    } catch (error: any) {
-      const msg = parseApiError(error, 'Failed to upload video. Please try again.').message;
-      setVideosUploadError(msg);
-      showToast(msg, 'error');
-      return false;
-    } finally {
-      setVideosUploading(false);
-    }
-  }, [showToast, sitePhotos, taskId]);
+    const hydrated: SitePhoto[] = [
+      ...photoUrls.map((url) => ({ id: url, uri: signedPhotoUrls[url] || url, fileName: videoFileName(url), mediaType: 'image' as const })),
+      ...videoUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'video' as const })),
+      ...pdfUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'pdf' as const })),
+    ];
+    setSitePhotos((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id));
+      return [...prev, ...hydrated.filter((p) => !existingIds.has(p.id))];
+    });
+  }, []);
 
   return {
     sitePhotos,
@@ -287,15 +276,8 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
     setRunningHoursPhotos,
     step2PhotoOptionsVisible,
     setStep2PhotoOptionsVisible,
-    photosUploading,
-    photosUploadProgress,
-    photosUploadError,
-    photosUploadSuccess,
-    uploadedPhotoUrls,
-    videosUploading,
-    videosUploadProgress,
-    videosUploadError,
-    videosUploadSuccess,
+    siteQueue,
+    runningHoursQueue,
     handleTakeSitePhoto,
     handleRecordSiteVideo,
     handleChooseSitePhotos,
@@ -304,7 +286,6 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
     handleTakeRunningHoursPhoto,
     handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto,
-    handleSaveAllPhotos,
-    handleSaveAllVideos,
+    hydrateSitePhotos,
   };
 }

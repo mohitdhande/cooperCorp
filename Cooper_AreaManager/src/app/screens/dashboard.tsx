@@ -3,7 +3,7 @@ import { View, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, useWind
 import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { Bell, CheckCircle2, Clock, CloudOff, Cog, FileText, Handshake, Settings, AlertTriangle, XCircle } from 'lucide-react-native';
+import { Bell, CheckCircle2, Clock, CloudOff, Cog, FileText, Handshake, Settings, XCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useDashboardHomeController } from '../../controllers/dashboardHomeController';
 import { formatTimeAgoLabel, getTaskPeople, resolveApprovalStatusPills } from '../../utils/reportFormatters';
@@ -106,16 +106,20 @@ function getWeekdayIndexInCurrentWeek(dateStr?: string): number | null {
 // reaches full height; a day with fewer tasks than the week's peak shows a
 // visibly shorter fill, not a full bar). Pinned to the bottom via
 // justifyContent so the empty portion reads as headroom above the fill.
-function WeekBar({ activeCount, completedCount, fillHeightPx }: { activeCount: number; completedCount: number; fillHeightPx: number }) {
-  const total = activeCount + completedCount;
+// Three stacked segments now (Active/Completed/Closed), not two — order
+// top-to-bottom matches the legend row above the chart.
+function WeekBar({ activeCount, completedCount, closedCount, fillHeightPx }: { activeCount: number; completedCount: number; closedCount: number; fillHeightPx: number }) {
+  const total = activeCount + completedCount + closedCount;
   const completedHeight = total > 0 ? Math.round((fillHeightPx * completedCount) / total) : 0;
-  const activeHeight = fillHeightPx - completedHeight;
+  const closedHeight = total > 0 ? Math.round((fillHeightPx * closedCount) / total) : 0;
+  const activeHeight = fillHeightPx - completedHeight - closedHeight;
   return (
     <View style={[styles.weekBar, { height: WEEK_BAR_HEIGHT, backgroundColor: '#E5E7EB', justifyContent: 'flex-end', overflow: 'hidden' }]}>
       {total > 0 && (
         <View style={{ height: fillHeightPx }}>
           <View style={{ height: activeHeight, backgroundColor: '#7C5CFC' }} />
           <View style={{ height: completedHeight, backgroundColor: '#16A34A' }} />
+          <View style={{ height: closedHeight, backgroundColor: '#3B82F6' }} />
         </View>
       )}
     </View>
@@ -139,7 +143,7 @@ export default function DashboardScreen() {
     refreshing, onRefresh,
     selectedMemberChoice, selectMember,
     activeTasks, totalActiveCount, activeTasksLoading, activeTasksError, showingCachedDashboard,
-    rawActiveTasks, rawRecentCompletedTasks,
+    rawActiveTasks, rawRecentCompletedTasks, rawClosedTasks,
     carouselIndex, setCarouselIndex, goToPrevTask, goToNextTask,
     recentCompletedTasks, completedCarouselIndex, setCompletedCarouselIndex, goToPrevCompleted, goToNextCompleted,
     approvalList, approvalIndex, setApprovalIndex, goToPrevApproval, goToNextApproval,
@@ -171,26 +175,28 @@ export default function DashboardScreen() {
 
   const [insightsTab, setInsightsTab] = React.useState<'Weekly' | 'Overview'>('Weekly');
 
-  // Weekly tab's three stat pills — commissioning + service added together
+  // Weekly tab's four stat pills — commissioning + service added together
   // from the same `counts` block, current snapshot totals, not date-bucketed.
   const commissioningCounts = summary?.counts.commissioning;
   const serviceCounts = summary?.counts.service;
   const summaryCounts = summary?.summaryCounts;
   const insightsActive = (commissioningCounts?.active || 0) + (serviceCounts?.active || 0);
   const insightsCompleted = (commissioningCounts?.completed || 0) + (serviceCounts?.completed || 0);
-  // Derived from the two boxes beside it, not the API's own counts.*.total
-  // field — that field can include statuses (e.g. cancelled) neither Active
-  // nor Completed counts, which made Total not visually add up to them.
-  const insightsTotal = insightsActive + insightsCompleted;
+  const insightsClosed = (commissioningCounts?.closed || 0) + (serviceCounts?.closed || 0);
+  // Derived from the three boxes beside it, not the API's own counts.*.total
+  // field — that field can include statuses (e.g. cancelled) none of
+  // Active/Completed/Closed count, which made Total not visually add up to
+  // them.
+  const insightsTotal = insightsActive + insightsCompleted + insightsClosed;
   const todayIndex = (new Date().getDay() + 6) % 7; // Mon=0 ... Sun=6
 
-  // Per-day active/completed split for the chart bars — both buckets keyed
-  // off each task's own createdAt (not assignedAt/completedAt), matching
-  // the reference web dashboard's WeeklyInsights logic exactly, so a task
-  // created yesterday stays on yesterday's column instead of everything
-  // piling onto today.
+  // Per-day active/completed/closed split for the chart bars — all three
+  // buckets keyed off each task's own createdAt (not assignedAt/
+  // completedAt/closedAt), matching the reference web dashboard's
+  // WeeklyInsights logic exactly, so a task created yesterday stays on
+  // yesterday's column instead of everything piling onto today.
   const weeklyBreakdown = React.useMemo(() => {
-    const days = Array.from({ length: 7 }, () => ({ active: 0, completed: 0 }));
+    const days = Array.from({ length: 7 }, () => ({ active: 0, completed: 0, closed: 0 }));
     rawActiveTasks.forEach((t: any) => {
       const idx = getWeekdayIndexInCurrentWeek(t.createdAt || t.date);
       if (idx !== null) days[idx].active += 1;
@@ -199,13 +205,17 @@ export default function DashboardScreen() {
       const idx = getWeekdayIndexInCurrentWeek(t.createdAt || t.date);
       if (idx !== null) days[idx].completed += 1;
     });
+    rawClosedTasks.forEach((t: any) => {
+      const idx = getWeekdayIndexInCurrentWeek(t.createdAt || t.date);
+      if (idx !== null) days[idx].closed += 1;
+    });
     return days;
-  }, [rawActiveTasks, rawRecentCompletedTasks]);
+  }, [rawActiveTasks, rawRecentCompletedTasks, rawClosedTasks]);
 
-  // The busiest day's total (active+completed) — every other day's bar
-  // fill scales relative to this, so only the week's peak day ever reaches
-  // the track's full height.
-  const weeklyMaxTotal = Math.max(...weeklyBreakdown.map((d) => d.active + d.completed), 1);
+  // The busiest day's total (active+completed+closed) — every other day's
+  // bar fill scales relative to this, so only the week's peak day ever
+  // reaches the track's full height.
+  const weeklyMaxTotal = Math.max(...weeklyBreakdown.map((d) => d.active + d.completed + d.closed), 1);
 
   if (!profile || !permissions) {
     return (
@@ -396,7 +406,7 @@ export default function DashboardScreen() {
                       {/* SR approvals are always service work, so isService
                           is hardcoded true here (this card has no
                           commissioning equivalent). */}
-                      <AssetIdentityHeader task={item} isService taskPeople={approvalPeople} />
+                      <AssetIdentityHeader task={item} isService taskPeople={approvalPeople} hideGensetModel />
 
                       {!!item.category && (
                         <View style={styles.approvalCategoryPill}>
@@ -575,24 +585,44 @@ export default function DashboardScreen() {
                 </View>
                 <Text style={styles.insightStatLabel}>Completed</Text>
               </View>
+              <View style={styles.insightStatCard}>
+                <View style={[styles.insightBadge, { backgroundColor: '#3B82F6' }]}>
+                  <Text style={styles.insightBadgeText}>{String(insightsClosed).padStart(2, '0')}</Text>
+                </View>
+                <Text style={styles.insightStatLabel}>Closed</Text>
+              </View>
             </View>
 
             <View style={[styles.weekChartCard, { marginHorizontal: hPad }]}>
+              <View style={styles.weekChartLegendRow}>
+                <View style={styles.weekChartLegendItem}>
+                  <View style={[styles.weekChartLegendDot, { backgroundColor: '#7C5CFC' }]} />
+                  <Text style={styles.weekChartLegendText}>Active</Text>
+                </View>
+                <View style={styles.weekChartLegendItem}>
+                  <View style={[styles.weekChartLegendDot, { backgroundColor: '#16A34A' }]} />
+                  <Text style={styles.weekChartLegendText}>Completed</Text>
+                </View>
+                <View style={styles.weekChartLegendItem}>
+                  <View style={[styles.weekChartLegendDot, { backgroundColor: '#3B82F6' }]} />
+                  <Text style={styles.weekChartLegendText}>Closed</Text>
+                </View>
+              </View>
+
               <View style={styles.weekChartRow}>
                 {WEEK_DAY_LABELS.map((label, idx) => {
                   const day = weeklyBreakdown[idx];
-                  const dayTotal = day.active + day.completed;
+                  const dayTotal = day.active + day.completed + day.closed;
                   // At least 14px so a day with just 1-2 tasks still reads
                   // as a visible sliver rather than vanishing next to the
                   // week's peak day.
                   const fillHeightPx = dayTotal > 0 ? Math.max(14, Math.round((dayTotal / weeklyMaxTotal) * WEEK_BAR_HEIGHT)) : 0;
                   return (
                     <View key={label} style={styles.weekChartCol}>
-                      {/* total/completed, not active/completed — the left
-                          number already includes the right one (matches
-                          the reference web dashboard's own label). */}
-                      <Text style={styles.weekChartValue}>{dayTotal}/{day.completed}</Text>
-                      <WeekBar activeCount={day.active} completedCount={day.completed} fillHeightPx={fillHeightPx} />
+                      {/* Plain day total (or a dot when there's nothing
+                          that day) — not the old total/completed ratio. */}
+                      <Text style={styles.weekChartValue}>{dayTotal > 0 ? dayTotal : '·'}</Text>
+                      <WeekBar activeCount={day.active} completedCount={day.completed} closedCount={day.closed} fillHeightPx={fillHeightPx} />
                       <Text style={[styles.weekChartDayLabel, idx === todayIndex && styles.weekChartDayLabelToday]}>{label}</Text>
                     </View>
                   );
@@ -601,34 +631,38 @@ export default function DashboardScreen() {
             </View>
           </>
         ) : (
-          <View style={[styles.overviewRow, { paddingHorizontal: hPad }]}>
-            <View style={styles.overviewCard}>
-              <View style={[styles.overviewIconCircle, { backgroundColor: '#F97316' }]}>
-                <FileText size={18} color="#FFFFFF" />
-              </View>
-              <Text style={styles.overviewValue}>{commissioningCounts?.active || 0}</Text>
-              <Text style={styles.overviewLabel}>Comm Active</Text>
+          <View style={[styles.overviewTableCard, { marginHorizontal: hPad }]}>
+            <View style={styles.overviewHeaderRow}>
+              <View style={styles.overviewLabelCol} />
+              <Text style={styles.overviewHeaderCell}>Active</Text>
+              <Text style={styles.overviewHeaderCell}>Completed</Text>
+              <Text style={styles.overviewHeaderCell}>Closed</Text>
             </View>
-            <View style={styles.overviewCard}>
-              <View style={[styles.overviewIconCircle, { backgroundColor: '#1E1951' }]}>
-                <Settings size={18} color="#FFFFFF" />
+
+            <View style={styles.overviewDataRow}>
+              <View style={styles.overviewLabelCol}>
+                <View style={[styles.overviewRowIconCircle, { backgroundColor: '#F97316' }]}>
+                  <FileText size={16} color="#FFFFFF" />
+                </View>
+                <Text style={styles.overviewRowLabel}>Comm</Text>
               </View>
-              <Text style={styles.overviewValue}>{serviceCounts?.active || 0}</Text>
-              <Text style={styles.overviewLabel}>SR Active</Text>
+              <Text style={[styles.overviewDataCell, { color: '#000000' }]}>{commissioningCounts?.active || 0}</Text>
+              <Text style={[styles.overviewDataCell, { color: '#F97316' }]}>{commissioningCounts?.completed || 0}</Text>
+              <Text style={[styles.overviewDataCell, { color: '#7C2D12' }]}>{commissioningCounts?.closed || 0}</Text>
             </View>
-            <View style={styles.overviewCard}>
-              <View style={[styles.overviewIconCircle, { backgroundColor: '#DC2626' }]}>
-                <AlertTriangle size={18} color="#FFFFFF" />
+
+            <View style={styles.overviewRowDivider} />
+
+            <View style={styles.overviewDataRow}>
+              <View style={styles.overviewLabelCol}>
+                <View style={[styles.overviewRowIconCircle, { backgroundColor: '#1E1951' }]}>
+                  <Settings size={16} color="#FFFFFF" />
+                </View>
+                <Text style={styles.overviewRowLabel}>Service</Text>
               </View>
-              <Text style={styles.overviewValue}>{summaryCounts?.overdue || 0}</Text>
-              <Text style={styles.overviewLabel}>Overdue</Text>
-            </View>
-            <View style={styles.overviewCard}>
-              <View style={[styles.overviewIconCircle, { backgroundColor: '#16A34A' }]}>
-                <CheckCircle2 size={18} color="#FFFFFF" />
-              </View>
-              <Text style={styles.overviewValue}>{(commissioningCounts?.completed || 0) + (serviceCounts?.completed || 0)}</Text>
-              <Text style={styles.overviewLabel}>Completed</Text>
+              <Text style={[styles.overviewDataCell, { color: '#000000' }]}>{serviceCounts?.active || 0}</Text>
+              <Text style={[styles.overviewDataCell, { color: '#6D28D9' }]}>{serviceCounts?.completed || 0}</Text>
+              <Text style={[styles.overviewDataCell, { color: '#5B21B6' }]}>{serviceCounts?.closed || 0}</Text>
             </View>
           </View>
         )}
@@ -821,6 +855,10 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     paddingVertical: 16, paddingHorizontal: 16,
   },
+  weekChartLegendRow: { flexDirection: 'row', justifyContent: 'flex-start', gap: 18, marginBottom: 16 },
+  weekChartLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  weekChartLegendDot: { width: 8, height: 8, borderRadius: 4 },
+  weekChartLegendText: { fontSize: 12, fontWeight: '600', color: '#4B5563' },
   weekChartRow: { flexDirection: 'row' },
   weekChartCol: { flex: 1, alignItems: 'center', gap: 10 },
   weekChartValue: { fontSize: 12, fontWeight: '600', color: '#9CA3AF' },
@@ -828,19 +866,28 @@ const styles = StyleSheet.create({
   weekChartDayLabel: { fontSize: 12, fontWeight: '500', color: '#9CA3AF' },
   weekChartDayLabelToday: { color: '#000000', fontWeight: '700' },
 
-  overviewRow: { flexDirection: 'row', gap: 10 },
-  overviewCard: {
-    flex: 1,
+  overviewTableCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 28,
     paddingVertical: 18,
+    paddingHorizontal: 16,
+  },
+  overviewHeaderRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
   },
-  overviewIconCircle: {
-    width: 40, height: 40, borderRadius: 20,
+  overviewHeaderCell: { flex: 1, fontSize: 13, fontWeight: '600', color: '#9CA3AF', textAlign: 'center' },
+  overviewDataRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  overviewLabelCol: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  overviewRowIconCircle: {
+    width: 32, height: 32, borderRadius: 16,
     justifyContent: 'center', alignItems: 'center',
-    marginBottom: 10,
   },
-  overviewValue: { fontSize: 22, fontWeight: '700', color: '#1F2937' },
-  overviewLabel: { fontSize: 11, fontWeight: '500', color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
+  overviewRowLabel: { fontSize: 14, fontWeight: '600', color: '#000000' },
+  overviewDataCell: { flex: 1, fontSize: 20, fontWeight: '700', textAlign: 'center' },
+  overviewRowDivider: { height: 1, backgroundColor: '#F3F4F6' },
 });

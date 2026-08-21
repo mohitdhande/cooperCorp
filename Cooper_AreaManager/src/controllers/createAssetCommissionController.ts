@@ -6,7 +6,7 @@ import { GensetSapAsset } from '../models/commissioningRecords.types';
 import { getLocationMaster, createAsset } from '../viewModel/commisionAPi';
 import { parseApiError } from '../utils/apiError';
 
-function formatMMDDYYYY(iso?: string): string {
+function formatDDMMYYYY(iso?: string): string {
   if (!iso) return '';
   // Reads the calendar date straight out of the string's own leading
   // "YYYY-MM-DD" digits instead of constructing a `Date` from it — SAP
@@ -19,29 +19,29 @@ function formatMMDDYYYY(iso?: string): string {
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (isoMatch) {
     const [, y, m, d] = isoMatch;
-    return `${m}/${d}/${y}`;
+    return `${d}/${m}/${y}`;
   }
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(d.getUTCDate()).padStart(2, '0');
-  return `${mm}/${dd}/${d.getUTCFullYear()}`;
+  return `${dd}/${mm}/${d.getUTCFullYear()}`;
 }
 
-function todayMMDDYYYY(): string {
+function todayDDMMYYYY(): string {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
-  return `${mm}/${dd}/${d.getFullYear()}`;
+  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
-// mm/dd/yyyy -> ISO date (yyyy-mm-dd) for the request body. Returns null for
+// dd/mm/yyyy -> ISO date (yyyy-mm-dd) for the request body. Returns null for
 // an incomplete/invalid string rather than sending garbage.
-function parseMMDDYYYYToISODate(value: string): string | null {
+function parseDDMMYYYYToISODate(value: string): string | null {
   const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (!match) return null;
-  const month = Number(match[1]);
-  const day = Number(match[2]);
+  const day = Number(match[1]);
+  const month = Number(match[2]);
   const year = Number(match[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -94,7 +94,7 @@ export function useCreateAssetCommissionController() {
   const [primaryContactNumber, setPrimaryContactNumber] = useState('');
   const [alternateContactName, setAlternateContactName] = useState('');
   const [alternateContactNumber, setAlternateContactNumber] = useState('');
-  const [dispatchDate, setDispatchDate] = useState(formatMMDDYYYY(sapAsset?.billingDate));
+  const [dispatchDate, setDispatchDate] = useState(formatDDMMYYYY(sapAsset?.billingDate));
 
   const [addressLine1, setAddressLine1] = useState(sapAsset?.endCustomerDetails || '');
   const [addressLine2, setAddressLine2] = useState('');
@@ -138,7 +138,7 @@ export function useCreateAssetCommissionController() {
   }, [pinCode]);
 
   const [entryType, setEntryType] = useState('COMMISSIONING');
-  const [entryDate, setEntryDate] = useState(formatMMDDYYYY(sapAsset?.commissioningDate) || todayMMDDYYYY());
+  const [entryDate, setEntryDate] = useState(formatDDMMYYYY(sapAsset?.commissioningDate) || todayDDMMYYYY());
   const [notes, setNotes] = useState('');
 
   const [creating, setCreating] = useState(false);
@@ -146,14 +146,45 @@ export function useCreateAssetCommissionController() {
 
   const handleCancel = () => router.back();
 
+  // Every field is required except Alternate Contact Name/No. and Address
+  // Line 1/2 (per explicit instruction — those four stay optional).
+  const validateRequiredFields = useCallback((): string | null => {
+    const missing: string[] = [];
+    if (!gensetSn.trim()) missing.push('Genset S/N');
+    if (!engineSn.trim()) missing.push('Engine S/N');
+    if (!clientName.trim()) missing.push('Client Name');
+    if (!clientCode.trim()) missing.push('Client Code');
+    if (!clientEmail.trim()) missing.push('Client Email');
+    if (!primaryContactName.trim()) missing.push('Primary Contact Name');
+    if (!primaryContactNumber.trim()) missing.push('Primary Contact No.');
+    if (!dispatchDate.trim()) missing.push('Dispatch Date');
+    if (!pinCode.trim()) missing.push('PIN Code');
+    if (!state.trim()) missing.push('State');
+    if (!district.trim()) missing.push('District');
+    if (!taluk.trim()) missing.push('Taluk');
+    if (!city.trim()) missing.push('City');
+    if (!locality.trim()) missing.push('Locality / Area / Village');
+    if (missing.length === 0) return null;
+    return `Please fill in: ${missing.join(', ')}.`;
+  }, [
+    gensetSn, engineSn, clientName, clientCode, clientEmail,
+    primaryContactName, primaryContactNumber, dispatchDate,
+    pinCode, state, district, taluk, city, locality,
+  ]);
+
   const handleConfirmCreate = useCallback(async () => {
+    const validationError = validateRequiredFields();
+    if (validationError) {
+      setCreateError(validationError);
+      return;
+    }
     setCreating(true);
     setCreateError('');
     try {
       const token = await getToken();
       if (!token) return;
 
-      const dispatchDateIso = parseMMDDYYYYToISODate(dispatchDate);
+      const dispatchDateIso = parseDDMMYYYYToISODate(dispatchDate);
       const body: Record<string, any> = {
         gensetNumber: gensetSn.trim(),
         engineNumber: engineSn.trim(),
@@ -185,7 +216,7 @@ export function useCreateAssetCommissionController() {
       // either way. Both proceed through the normal New Job flow
       // afterward to create their real entry.
       if (dispatchType === 'auto' && sapAsset?.commissioningDate) {
-        const entryDateIso = parseMMDDYYYYToISODate(entryDate);
+        const entryDateIso = parseDDMMYYYYToISODate(entryDate);
         body.sapCommissioningDate = sapAsset.commissioningDate;
         body.commissioningType = entryType;
         if (entryDateIso) body.commissioningEntryDate = entryDateIso;
@@ -210,6 +241,7 @@ export function useCreateAssetCommissionController() {
       setCreating(false);
     }
   }, [
+    validateRequiredFields,
     gensetSn, engineSn, clientName, clientCode, clientEmail,
     primaryContactName, primaryContactNumber, alternateContactName, alternateContactNumber, dispatchDate,
     addressLine1, addressLine2, locality, taluk, district, city, state, pinCode,

@@ -49,11 +49,11 @@ export type FreeServiceItem = {
 // is a DISPLAY string only. Every other date field this API returns
 // elsewhere (task.date, task.dueDate, ...) is ISO, so the actual request
 // body converts back to ISO rather than sending this literal string.
-function formatTodayMMDDYYYY() {
+function formatTodayDDMMYYYY() {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
-  return `${mm}/${dd}/${d.getFullYear()}`;
+  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 // POST /api/service wants `date`/`dueDate` as plain "YYYY-MM-DD" (no time
@@ -64,14 +64,14 @@ function toDateOnly(d: Date): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// Due Date is free-typed as mm/dd/yyyy (no picker/mask yet) — parsed back
+// Due Date is free-typed as dd/mm/yyyy (no picker/mask yet) — parsed back
 // to plain "YYYY-MM-DD" for the request body; returns null (silently
 // omitted, rather than sending garbage) if it isn't a complete, valid date.
-function parseMMDDYYYYToDateOnly(value: string): string | null {
+function parseDDMMYYYYToDateOnly(value: string): string | null {
   const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (!match) return null;
-  const month = Number(match[1]);
-  const day = Number(match[2]);
+  const day = Number(match[1]);
+  const month = Number(match[2]);
   const year = Number(match[3]);
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -150,9 +150,12 @@ export function useNewServiceJobController() {
   // commissioned asset is found (no separate "tap an action" step anymore;
   // reset happens in handleSearch whenever a fresh asset match comes in).
   const [jobTitle, setJobTitle] = useState('');
-  const [jobDate, setJobDate] = useState(formatTodayMMDDYYYY());
+  const [jobDate, setJobDate] = useState(formatTodayDDMMYYYY());
   const [category, setCategory] = useState<ServiceCategory | null>(null);
   const [subCategory, setSubCategory] = useState('');
+  // Only asked for Cooper AMC/CAMC (letters D/E) — those are the two
+  // categories financed through a bank tie-up.
+  const [financingBank, setFinancingBank] = useState('');
   const [freeServiceItems, setFreeServiceItems] = useState<FreeServiceItem[]>([]);
   const [freeServiceLoading, setFreeServiceLoading] = useState(false);
   const [freeServiceError, setFreeServiceError] = useState('');
@@ -221,9 +224,10 @@ export function useNewServiceJobController() {
         // commissioned), so this is the one place left to reset it rather
         // than carrying over whatever was left from a previous search.
         setJobTitle('');
-        setJobDate(formatTodayMMDDYYYY());
+        setJobDate(formatTodayDDMMYYYY());
         setCategory(null);
         setSubCategory('');
+        setFinancingBank('');
         setFreeServiceItems([]);
         setFreeServiceError('');
         setSelectedAssignee(null);
@@ -273,6 +277,7 @@ export function useNewServiceJobController() {
   const handleSelectCategory = useCallback((cat: ServiceCategory) => {
     setCategory(cat);
     setSubCategory('');
+    if (cat.letter !== 'D' && cat.letter !== 'E') setFinancingBank('');
   }, []);
 
   const handleSelectSubCategory = useCallback((sub: string) => {
@@ -312,7 +317,7 @@ export function useNewServiceJobController() {
     try {
       const token = await getToken();
       if (!token) return;
-      const dueDateOnly = dueDate.trim() ? parseMMDDYYYYToDateOnly(dueDate) : null;
+      const dueDateOnly = dueDate.trim() ? parseDDMMYYYYToDateOnly(dueDate) : null;
       const created = await createServiceEntry(token, {
         assetId: asset._id,
         title: jobTitle.trim(),
@@ -322,6 +327,7 @@ export function useNewServiceJobController() {
         // display name — matches its documented request body exactly.
         category: category.letter,
         ...(subCategory ? { subCategory } : {}),
+        ...(financingBank ? { bankName: financingBank } : {}),
         ...(dueDateOnly ? { dueDate: dueDateOnly } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         ...(performedBy.trim() ? { performedBy: performedBy.trim() } : {}),
@@ -358,6 +364,7 @@ export function useNewServiceJobController() {
     category, handleSelectCategory,
     categoryConfig, categoryConfigLoading, categoryConfigError,
     subCategory, handleSelectSubCategory, needsSubCategoryNow,
+    financingBank, setFinancingBank,
     freeServiceItems, freeServiceLoading, freeServiceError,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,

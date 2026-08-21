@@ -1,19 +1,22 @@
 // Shared by every camera/gallery photo/video picker across the task forms
-// (commissioning + SR) — enforced client-side before an item ever gets
-// added to the form's local state, so an oversized/unsupported file is
-// caught immediately instead of failing later at upload time.
-export const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+// (commissioning + SR) — format is checked immediately at pick time (a
+// PDF-shaped item, wrong extension, etc. is never worth queuing). Size is
+// deliberately NOT checked here anymore — it's checked per-item, right
+// before that item's own turn to upload (see validateItemSize below and
+// useMediaUploadQueue.ts), so a batch of several files uploads whatever it
+// can one by one instead of the whole pick being blocked/filtered upfront
+// just because one of several files is oversized.
+export const MAX_PHOTO_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg'];
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg'];
 
-// No size cap on videos — only format is validated (per explicit
-// instruction not to restrict video size at all).
+export const MAX_VIDEO_SIZE_BYTES = 300 * 1024 * 1024; // 300 MB
 const ALLOWED_VIDEO_EXTENSIONS = ['mp4', 'mov'];
 const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime'];
 
 // PDFs share the photos upload call (no dedicated document endpoint), but
-// get their own, more generous cap — a scanned multi-page document is
-// routinely bigger than a single compressed photo.
+// get their own cap — a scanned multi-page document is routinely bigger
+// than a single compressed photo.
 export const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // expo-document-picker's result shape, not ImagePicker's — kept separate
@@ -24,9 +27,6 @@ export function getPdfValidationError(asset: { name?: string; size?: number; mim
   const ext = asset.name?.split('.').pop()?.toLowerCase();
   const formatOk = mime ? mime === 'application/pdf' : ext === 'pdf';
   if (!formatOk) return 'Only PDF files are allowed.';
-  if (typeof asset.size === 'number' && asset.size > MAX_PDF_SIZE_BYTES) {
-    return 'PDFs must be 10 MB or smaller.';
-  }
   return null;
 }
 
@@ -49,10 +49,20 @@ export function getPhotoValidationError(asset: PickedAsset): string | null {
 
   const formatOk = mime ? ALLOWED_MIME_TYPES.includes(mime) : !!ext && ALLOWED_EXTENSIONS.includes(ext);
   if (!formatOk) return 'Only PNG and JPEG photos are allowed.';
-  if (typeof asset.fileSize === 'number' && asset.fileSize > MAX_PHOTO_SIZE_BYTES) {
-    return 'Photos must be 5 MB or smaller.';
-  }
   return null;
+}
+
+// Checked right before each item's own turn to upload (see
+// useMediaUploadQueue.ts's startBatch loop) — not at pick time. Returns
+// null when the size is fine (or unknown — some pickers/platforms don't
+// always report fileSize, in which case there's nothing to check against).
+export function validateItemSize(kind: 'photo' | 'video' | 'pdf', fileSize?: number): string | null {
+  if (typeof fileSize !== 'number') return null;
+  const limit = kind === 'photo' ? MAX_PHOTO_SIZE_BYTES : kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_PDF_SIZE_BYTES;
+  if (fileSize <= limit) return null;
+  const limitMb = Math.round(limit / (1024 * 1024));
+  const kindLabel = kind === 'photo' ? 'Photos' : kind === 'video' ? 'Videos' : 'PDFs';
+  return `${kindLabel} must be ${limitMb} MB or smaller.`;
 }
 
 // Splits a multi-select gallery result into accepted assets + a summary of

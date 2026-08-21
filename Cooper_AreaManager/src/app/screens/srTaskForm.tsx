@@ -28,6 +28,7 @@ import { StepperRow } from '../../_components/shared/StepperRow';
 import { useSrTaskForm, SR_STEP_SEQUENCE } from '../../controllers/srTaskForm/useSrTaskForm';
 import { TaskSummaryHeader } from '../../_components/shared/TaskSummaryHeader';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { MediaUploadOverlay } from '../../_components/shared/MediaUploadOverlay';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
 import { useFieldFocusChain } from '../../utils/useFieldFocusChain';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
@@ -131,50 +132,22 @@ export default function SrTaskFormScreen() {
   // elsewhere in this form for the same reason as taskForm.tsx.
   const { register, focusNext } = useFieldFocusChain();
 
-  // Photos/videos now upload on leaving the Photos & Video step (Next), not
-  // deferred all the way to Step 5's Complete Task tap — the % progress is
-  // visible right here on the step that actually added them, and Step 5 no
-  // longer has to do this work (its own handlers still gate on
-  // photosUploadSuccess/videosUploadSuccess as a safety net, so nothing
-  // double-uploads if this already succeeded, or if a user reaches Step 5
-  // some other way, e.g. tapping the stepper directly instead of Next).
-  const handleNextFromMediaStep = async () => {
-    const hasPhotos = vm.sitePhotos.some((p) => p.mediaType !== 'video' && p.mediaType !== 'pdf');
-    // PDFs ride the same GCS flow as videos (handleSaveAllVideos), not the
-    // photos multipart call — see SitePhoto.mediaType.
-    const hasVideos = vm.sitePhotos.some((p) => p.mediaType === 'video' || p.mediaType === 'pdf');
-    if (hasPhotos && !vm.photosUploadSuccess) {
-      const ok = await vm.handleSaveAllPhotos();
-      if (!ok) return;
-    }
-    if (hasVideos && !vm.videosUploadSuccess) {
-      const ok = await vm.handleSaveAllVideos();
-      if (!ok) return;
-    }
-    vm.handleNext();
-  };
-
   // Every real API call this screen can trigger fades the whole screen
   // with the loading video rather than just the one button's own small
   // spinner — same treatment as the commissioning form. Complaint codes
   // (step2Saving) and parts (step3Saving) are the deliberate exception:
   // each card already has its own save button with its own spinner
   // (isSaving), so saving one card shouldn't lock the whole screen and
-  // make it look like every code/part is being saved together.
+  // make it look like every code/part is being saved together. Photo/
+  // video/PDF upload no longer blocks this generic overlay either — it has
+  // its own dedicated MediaUploadOverlay (see below) with real progress and
+  // a Cancel button, mounted whenever vm.mediaUploadQueue is active.
   const isBusy = (
     vm.initialDataLoading ||
-    vm.photosUploading || vm.videosUploading || vm.step5Saving || vm.step6Saving ||
+    vm.step5Saving || vm.step6Saving ||
     vm.faultCodesLoading || vm.partsLoading || vm.finishing ||
     Object.values(vm.sectionSaving).some(Boolean)
   );
-  // Photo/video upload is the one loading state worth a live % instead of
-  // the generic "Loading..." — it's the only one that can meaningfully
-  // take several seconds with real incremental progress to report.
-  const loadingMessage = vm.photosUploading
-    ? `Uploading photos... ${vm.photosUploadProgress}%`
-    : vm.videosUploading
-    ? `Uploading video... ${vm.videosUploadProgress}%`
-    : undefined;
 
   // The complaint-code and part pickers open as full bottom sheets, not
   // anchored to these buttons — just their own visibility toggles.
@@ -275,7 +248,14 @@ export default function SrTaskFormScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
-      {isBusy && <LoadingOverlay message={loadingMessage} />}
+      {isBusy && <LoadingOverlay />}
+      <MediaUploadOverlay
+        visible={vm.mediaUploadQueue.state.visible}
+        items={vm.mediaUploadQueue.state.items}
+        onCancelItem={vm.mediaUploadQueue.cancelItem}
+        onCancelAll={vm.mediaUploadQueue.cancel}
+        onDismiss={vm.mediaUploadQueue.dismiss}
+      />
 
       {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
           OS already shifts the whole screen up to keep the focused input
@@ -334,7 +314,7 @@ export default function SrTaskFormScreen() {
               Approval view (Customer Sign-off/Approval Status) needs the
               same task-identity context Step 1 has. */}
           {(vm.currentStep === 1 || vm.currentStep === 5) && (
-            <TaskSummaryHeader task={vm.task} gensetNumber={vm.gensetSrNumber} engineNumber={vm.engineNumber} />
+            <TaskSummaryHeader task={vm.task} asset={vm.assetDetail} />
           )}
 
           <PendingSyncBanner />
@@ -772,31 +752,25 @@ export default function SrTaskFormScreen() {
           )}
 
           {/* ══════════════ STEP 3 — PHOTOS & VIDEO ══════════════
-              Two separate cards now, not one combined grid — Photos keeps
-              its existing tap-to-open-camera-or-gallery box and multipart
-              upload; Video gets its own Record/Upload actions and its own
-              GCS-based upload (handleSaveAllVideos — no multipart endpoint
-              for video, per the backend dev guide). Both upload at the same
-              point, right before Complete at Step 5. */}
+              Each photo/video/PDF uploads immediately when picked (see
+              vm.mediaUploadQueue / MediaUploadOverlay) — photos go through
+              a multipart call, video/PDF through their own GCS-based
+              upload (no multipart endpoint for either, per the backend dev
+              guide). Nothing is deferred to Complete at Step 5 anymore. */}
           {vm.currentStep === 3 && (
             <>
               <Text style={styles.stepSectionLabel}>STEP 3 — PHOTOS & VIDEO</Text>
 
               {/* Photos & Video card — shared with the Commissioning form
                   (same grid + video-list + upload behavior), not a
-                  duplicated copy of it. */}
+                  duplicated copy of it. Each item uploads immediately on
+                  pick via vm.mediaUploadQueue (see MediaUploadOverlay
+                  above), not a batch call. */}
               <View style={{ marginBottom: 16 }}>
                 <PhotosVideoCard
                   sitePhotos={vm.sitePhotos}
                   onRemove={vm.handleRemovePhoto}
                   onAddPress={() => vm.setPhotoOptionsVisible(true)}
-                  photosUploading={vm.photosUploading}
-                  photosUploadProgress={vm.photosUploadProgress}
-                  photosUploadSuccess={vm.photosUploadSuccess}
-                  photosUploadError={vm.photosUploadError}
-                  videosUploading={vm.videosUploading}
-                  videosUploadProgress={vm.videosUploadProgress}
-                  videosUploadSuccess={vm.videosUploadSuccess}
                 />
               </View>
 
@@ -805,10 +779,6 @@ export default function SrTaskFormScreen() {
                   duplicated copy of it. */}
               <DocumentsCard
                 pdfs={vm.sitePhotos.filter((p) => p.mediaType === 'pdf')}
-                uploading={vm.videosUploading}
-                uploadProgress={vm.videosUploadProgress}
-                uploadSuccess={vm.videosUploadSuccess}
-                uploadError={vm.videosUploadError}
                 onPickPdf={vm.handlePickPdf}
                 onRemove={vm.handleRemovePhoto}
               />
@@ -971,21 +941,6 @@ export default function SrTaskFormScreen() {
                       </View>
                     )}
 
-                    <Text style={styles.subTypeCommentLabel}>COMMENT (OPTIONAL)</Text>
-                    <TextInput
-                      style={styles.subTypeCommentInput}
-                      placeholder="Add a note about this service..."
-                      placeholderTextColor="#9CA3AF"
-                      value={vm.completionComment}
-                      onChangeText={vm.setCompletionComment}
-                      // Content height varies with how many notice banners
-                      // are showing above (workApproval/parts) — scrolling
-                      // to the very end on focus, rather than relying on
-                      // the KeyboardAvoidingView's fixed offset, is what
-                      // keeps this field just above the keyboard regardless
-                      // of how tall the card is that day.
-                      onFocus={() => setTimeout(() => vm.scrollViewRef.current?.scrollToEnd({ animated: true }), 100)}
-                    />
                   </>
                 ) : vm.categoryConfigLoading ? (
                   <ActivityIndicator color="#F26722" style={{ marginVertical: 20 }} />
@@ -1147,14 +1102,6 @@ export default function SrTaskFormScreen() {
                           </View>
                         )}
 
-                        <Text style={styles.subTypeCommentLabel}>COMMENT (OPTIONAL)</Text>
-                        <TextInput
-                          style={styles.subTypeCommentInput}
-                          placeholder="Add a note about this service..."
-                          placeholderTextColor="#9CA3AF"
-                          value={vm.completionComment}
-                          onChangeText={vm.setCompletionComment}
-                        />
                       </>
                     ) : (
                       <>
@@ -1266,16 +1213,12 @@ export default function SrTaskFormScreen() {
             >
               <ChevronLeft size={24} color="#4B5563" />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.nextButton, vm.currentStep === 3 && (vm.photosUploading || vm.videosUploading) && styles.buttonDisabled]}
-              onPress={vm.currentStep === 3 ? handleNextFromMediaStep : vm.handleNext}
-              disabled={vm.currentStep === 3 && (vm.photosUploading || vm.videosUploading)}
-            >
-              {vm.currentStep === 3 && (vm.photosUploading || vm.videosUploading) ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <ChevronRight size={24} color="#FFFFFF" />
-              )}
+            {/* Photos/videos/PDFs already upload immediately when picked
+                (MediaUploadOverlay blocks the screen while that's
+                happening), so Next has nothing left to wait on here —
+                same plain handleNext as every other step. */}
+            <TouchableOpacity style={styles.nextButton} onPress={vm.handleNext}>
+              <ChevronRight size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         )}
@@ -1319,7 +1262,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 20, fontWeight: '400', color: '#000000', textTransform: 'uppercase' },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   loadingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
@@ -1480,11 +1423,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12, paddingHorizontal: 14, marginTop: 16,
   },
   partsApprovalNoticeText: { fontSize: 13, fontWeight: '600', color: '#2563EB', flexShrink: 1 },
-  subTypeCommentLabel: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.3, marginTop: 18, marginBottom: 8 },
-  subTypeCommentInput: {
-    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 13, fontSize: 14, color: '#1F2937', backgroundColor: '#fff',
-  },
   finishActionsRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
   finishCompleteButton: {
     flex: 1.4,
@@ -1501,7 +1439,7 @@ const styles = StyleSheet.create({
     height: 56, justifyContent: 'center', alignItems: 'center',
     marginTop: 20,
   },
-  completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18, textTransform: 'uppercase' },
+  completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18},
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   optionsSheet: {

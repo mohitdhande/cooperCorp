@@ -21,6 +21,7 @@ import { StepperRow } from '../../_components/shared/StepperRow';
 import { CheckCheck, ChevronLeft, ChevronRight, Plus, Info } from 'lucide-react-native';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
+import { MediaUploadOverlay } from '../../_components/shared/MediaUploadOverlay';
 
 // Same peach->light radial gradient backdrop as the Dashboard/Commissioning
 // screens (duplicated, not extracted — a small, screen-specific visual).
@@ -73,17 +74,17 @@ export default function TaskFormScreen() {
   // button with its own spinner (isSaving), so saving one card shouldn't
   // lock the whole screen and make it look like every code/part is being
   // saved together.
+  // Photo/video/PDF upload no longer blocks this generic overlay — it has
+  // its own dedicated MediaUploadOverlay (see below) with real progress and
+  // a Cancel button, mounted whenever either photos.siteQueue or
+  // photos.runningHoursQueue is active.
   const isBusy = (
     vm.assetLoading || vm.checksLoading ||
-    vm.readingsSaving || vm.photosUploading ||
+    vm.readingsSaving ||
     vm.markCompleteLoading ||
     vm.faultCodesLoading || vm.partsLoading ||
     Object.values(vm.sectionSaving).some(Boolean)
   );
-  // Photo upload is the one loading state worth a live % instead of the
-  // generic "Loading..." — it's the only one that can meaningfully take
-  // several seconds with real incremental progress to report.
-  const loadingMessage = vm.photosUploading ? `Uploading photos... ${vm.photosUploadProgress}%` : undefined;
 
   // The complaint-code and part pickers open as full bottom sheets, not
   // anchored to these buttons — just their own visibility toggles.
@@ -110,7 +111,24 @@ export default function TaskFormScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
-      {isBusy && <LoadingOverlay message={loadingMessage} />}
+      {isBusy && <LoadingOverlay />}
+      {/* Only one of these two queues is ever active at once — Step 2 and
+          Step 6 aren't shown at the same time — but both are mounted here
+          so whichever one is running shows its own overlay. */}
+      <MediaUploadOverlay
+        visible={vm.siteUploadQueue.state.visible}
+        items={vm.siteUploadQueue.state.items}
+        onCancelItem={vm.siteUploadQueue.cancelItem}
+        onCancelAll={vm.siteUploadQueue.cancel}
+        onDismiss={vm.siteUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
+        visible={vm.runningHoursUploadQueue.state.visible}
+        items={vm.runningHoursUploadQueue.state.items}
+        onCancelItem={vm.runningHoursUploadQueue.cancelItem}
+        onCancelAll={vm.runningHoursUploadQueue.cancel}
+        onDismiss={vm.runningHoursUploadQueue.dismiss}
+      />
       {vm.toastVisible && (
         <View style={[styles.toastContainer, vm.toastType === 'success' ? styles.toastSuccess : styles.toastError]}>
           <Text style={styles.toastText}>{vm.toastMessage}</Text>
@@ -158,7 +176,7 @@ export default function TaskFormScreen() {
         {/* Shown on every step now, not just step 1 — gives constant
             context (task type, assignees, genset/engine ID) while paging
             through the form, not only when first landing on it. */}
-        <TaskSummaryHeader task={vm.task} gensetNumber={vm.gensetSrNumber} engineNumber={vm.engineNumber} />
+        <TaskSummaryHeader task={vm.task} asset={vm.assetDetail} />
 
         <PendingSyncBanner />
 
@@ -438,6 +456,12 @@ export default function TaskFormScreen() {
                   <CheckToggleRow index={10} question="Visually check all connectors and actuators on engine" value={vm.commissioningChecks.A10 || ''} comment={vm.commissioningChecks.A10_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A10', v)} onSetComment={(v) => vm.updateCommissioningCheck('A10_comment', v)} />
 
                   <Text style={styles.checkGroupHeading}>11. Electricity Board (Mains)</Text>
+
+                  <Text style={[styles.checkSubGroupHeading, { marginTop: 14 }]}>Load (A)</Text>
+                  <CheckToggleRow index={null} question="R Phase" value={vm.commissioningChecks.A11 || ''} comment={vm.commissioningChecks.A11_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A11', v)} onSetComment={(v) => vm.updateCommissioningCheck('A11_comment', v)} />
+                  <CheckToggleRow index={null} question="Y Phase" value={vm.commissioningChecks.A12 || ''} comment={vm.commissioningChecks.A12_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A12', v)} onSetComment={(v) => vm.updateCommissioningCheck('A12_comment', v)} />
+                  <CheckToggleRow index={null} question="B Phase" value={vm.commissioningChecks.A13 || ''} comment={vm.commissioningChecks.A13_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A13', v)} onSetComment={(v) => vm.updateCommissioningCheck('A13_comment', v)} />
+
                   <Text style={styles.checkSubGroupHeading}>Voltage (V) — Phase to Phase</Text>
                   <CheckToggleRow index={null} question="R-Y Phase" value={vm.commissioningChecks.A14 || ''} comment={vm.commissioningChecks.A14_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A14', v)} onSetComment={(v) => vm.updateCommissioningCheck('A14_comment', v)} />
                   <CheckToggleRow index={null} question="Y-B Phase" value={vm.commissioningChecks.A15 || ''} comment={vm.commissioningChecks.A15_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A15', v)} onSetComment={(v) => vm.updateCommissioningCheck('A15_comment', v)} />
@@ -447,11 +471,6 @@ export default function TaskFormScreen() {
                   <CheckToggleRow index={null} question="R-N Phase" value={vm.commissioningChecks.A17 || ''} comment={vm.commissioningChecks.A17_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A17', v)} onSetComment={(v) => vm.updateCommissioningCheck('A17_comment', v)} />
                   <CheckToggleRow index={null} question="Y-N Phase" value={vm.commissioningChecks.A18 || ''} comment={vm.commissioningChecks.A18_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A18', v)} onSetComment={(v) => vm.updateCommissioningCheck('A18_comment', v)} />
                   <CheckToggleRow index={null} question="B-N Phase" value={vm.commissioningChecks.A19 || ''} comment={vm.commissioningChecks.A19_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A19', v)} onSetComment={(v) => vm.updateCommissioningCheck('A19_comment', v)} />
-
-                  <Text style={[styles.checkSubGroupHeading, { marginTop: 14 }]}>Load (A)</Text>
-                  <CheckToggleRow index={null} question="R Phase" value={vm.commissioningChecks.A11 || ''} comment={vm.commissioningChecks.A11_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A11', v)} onSetComment={(v) => vm.updateCommissioningCheck('A11_comment', v)} />
-                  <CheckToggleRow index={null} question="Y Phase" value={vm.commissioningChecks.A12 || ''} comment={vm.commissioningChecks.A12_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A12', v)} onSetComment={(v) => vm.updateCommissioningCheck('A12_comment', v)} />
-                  <CheckToggleRow index={null} question="B Phase" value={vm.commissioningChecks.A13 || ''} comment={vm.commissioningChecks.A13_comment || ''} onSetValue={(v) => vm.updateCommissioningCheck('A13', v)} onSetComment={(v) => vm.updateCommissioningCheck('A13_comment', v)} />
 
                   {vm.sectionError['groupA'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['groupA']}</Text> : null}
                   <TouchableOpacity
@@ -657,25 +676,17 @@ export default function TaskFormScreen() {
               <View style={[styles.groupDivider, { marginVertical: 12 }]} />
 
               {/* Running-hours photo upload — same PhotosVideoCard Step 6
-                  uses, since this uploads together with Step 6's site
-                  photos through that exact same handleSaveAllPhotos call
-                  (see useTaskFormPhotos.ts) rather than its own separate
-                  upload. imagesOnly since this step never takes video or
-                  PDF (the step2 picker below only offers Take Photo/Choose
-                  from Gallery, both images-only) — video-status props stay
-                  inert (false/0) to match. */}
+                  uses. Each photo uploads immediately on pick via its own
+                  queue (vm.runningHoursUploadQueue, see MediaUploadOverlay
+                  above) rather than a batch call — imagesOnly since this
+                  step never takes video or PDF (the step2 picker below
+                  only offers Take Photo/Choose from Gallery, both
+                  images-only). */}
               <PhotosVideoCard
                 sitePhotos={vm.runningHoursPhotos}
                 onRemove={vm.handleRemoveRunningHoursPhoto}
                 onAddPress={() => vm.setStep2PhotoOptionsVisible(true)}
-                photosUploading={vm.photosUploading}
-                photosUploadProgress={vm.photosUploadProgress}
-                photosUploadSuccess={vm.photosUploadSuccess}
-                photosUploadError={vm.photosUploadError}
                 imagesOnly
-                videosUploading={false}
-                videosUploadProgress={0}
-                videosUploadSuccess={false}
               />
               </>
               )}
@@ -955,18 +966,13 @@ export default function TaskFormScreen() {
           <>
             {/* Photos & Video card — shared with the Service form (same
                 grid + video-list + upload behavior), not a duplicated copy
-                of it. */}
+                of it. Each item uploads immediately on pick via
+                vm.siteUploadQueue (see MediaUploadOverlay above), not a
+                batch call. */}
             <PhotosVideoCard
               sitePhotos={vm.sitePhotos}
               onRemove={vm.handleRemoveSitePhoto}
               onAddPress={() => vm.setPhotoOptionsVisible(true)}
-              photosUploading={vm.photosUploading}
-              photosUploadProgress={vm.photosUploadProgress}
-              photosUploadSuccess={vm.photosUploadSuccess}
-              photosUploadError={vm.photosUploadError}
-              videosUploading={vm.videosUploading}
-              videosUploadProgress={vm.videosUploadProgress}
-              videosUploadSuccess={vm.videosUploadSuccess}
             />
 
             {/* Documents card — shared with the Service form (same PDF
@@ -975,10 +981,6 @@ export default function TaskFormScreen() {
             <View style={{ marginTop: 16 }}>
               <DocumentsCard
                 pdfs={vm.sitePhotos.filter((p) => p.mediaType === 'pdf')}
-                uploading={vm.videosUploading}
-                uploadProgress={vm.videosUploadProgress}
-                uploadSuccess={vm.videosUploadSuccess}
-                uploadError={vm.videosUploadError}
                 onPickPdf={vm.handlePickPdf}
                 onRemove={vm.handleRemoveSitePhoto}
               />
@@ -1010,9 +1012,8 @@ export default function TaskFormScreen() {
         {/* Camera / Gallery picker — Step 6 site photos. Photo and video
             capture are separate rows (Android's camera intent can't mix
             them in one launch — see captureFromCamera in
-            useTaskFormPhotos.ts). Videos are preview-only for now (no
-            backend endpoint to save them yet) — they're excluded from the
-            actual upload in handleSaveAllPhotos. */}
+            useTaskFormPhotos.ts). Each pick uploads immediately via
+            vm.siteUploadQueue (see MediaUploadOverlay). */}
         <Modal visible={vm.photoOptionsVisible} transparent animationType="none" onRequestClose={() => vm.setPhotoOptionsVisible(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => vm.setPhotoOptionsVisible(false)}>
             <View style={[styles.optionsSheet, { paddingBottom: sheetPaddingBottom }]}>

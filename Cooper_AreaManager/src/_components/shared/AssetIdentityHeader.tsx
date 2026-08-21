@@ -1,12 +1,24 @@
 import React from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Text } from '@/_components/AppText';
-import { Settings, Wrench } from 'lucide-react-native';
+import { Settings, Wrench, Truck } from 'lucide-react-native';
 import { useAvatarTooltip, AvatarTooltipBubble } from './AvatarTooltip';
 import { UserAvatar } from './UserAvatar';
 import { SrNumberText } from './SrNumberText';
+import { formatDate } from '../../utils/reportFormatters';
 
 type Person = { userId: string; name: string; profilePic?: string | null; role?: string };
+
+// Every field this header displays about the physical asset — deliberately
+// a superset of what any single caller has on hand, so adding a new field
+// here (e.g. dispatchDate) only ever means touching this type + the render
+// below, never every caller's own prop list too.
+type AssetIdentity = {
+  gensetNumber?: string | null;
+  engineNumber?: string | null;
+  gensetModel?: string | null;
+  dispatchDate?: string | null;
+};
 
 type Props = {
   task: any;
@@ -17,20 +29,28 @@ type Props = {
   taskPeople: Person[];
   // The task-detail endpoint (getCommissioningTaskDetail/getServiceTaskById)
   // has no embedded `asset` object — only an `assetId` string — so the Task
-  // Form screens fetch genset/engine numbers separately and pass them in
-  // here, overriding the task.asset?.X reads below (which work fine for
-  // callers that DO have a full embedded asset, e.g. TaskPreviewCard).
-  gensetNumberOverride?: string;
-  engineNumberOverride?: string;
+  // Form screens fetch the asset separately and pass the whole thing
+  // through here, overriding the task.asset?.X reads below field-by-field
+  // (which work fine for callers that DO have a full embedded asset, e.g.
+  // TaskPreviewCard). One object, not one override prop per field — a
+  // caller that fetches the asset can't "forget" to wire a new field
+  // through, since it's carried automatically.
+  assetOverride?: AssetIdentity | null;
+  // SR Approvals wants the plain S/N pair as the bold headline always, even
+  // when the API sends a gensetModel — that card is specifically about
+  // which physical unit needs a decision, not its model.
+  hideGensetModel?: boolean;
 };
 
 // The SR-ribbon + identity pill (icon, genset/engine number, assignment
 // avatars) shared by TaskPreviewCard's Active Task card and the Dashboard's
 // SR Approvals card — same visual language, same gensetModel-aware text
 // branching, same tap-to-reveal avatar tooltip, in exactly one place.
-export function AssetIdentityHeader({ task, isService, taskPeople, gensetNumberOverride, engineNumberOverride }: Props) {
-  const gensetNumber = gensetNumberOverride ?? task.asset?.gensetNumber;
-  const engineNumber = engineNumberOverride ?? task.asset?.engineNumber;
+export function AssetIdentityHeader({ task, isService, taskPeople, assetOverride, hideGensetModel }: Props) {
+  const gensetNumber = assetOverride?.gensetNumber ?? task.asset?.gensetNumber ?? task.gensetNumber;
+  const engineNumber = assetOverride?.engineNumber ?? task.asset?.engineNumber ?? task.engineNumber;
+  const gensetModel = assetOverride?.gensetModel ?? task.asset?.gensetModel;
+  const dispatchDate = assetOverride?.dispatchDate ?? task.asset?.dispatchDate;
   // Tapping an avatar in the cluster reveals who it is — the circles alone
   // (initials or a tiny photo) aren't enough to tell people apart at that
   // size. Toggles off on a second tap of the same avatar, and also
@@ -60,12 +80,10 @@ export function AssetIdentityHeader({ task, isService, taskPeople, gensetNumberO
         <View style={{ flex: 1 }}>
           {/* gensetModel, when the API sends one, takes the bold top line
               instead — genset/engine number then move down together as the
-              grey subtitle rather than genset number itself being bold.
-              Only ever comes from task.asset (no override prop for it —
-              Task Form callers don't have a model to pass, only S/N). */}
-          {task.asset?.gensetModel ? (
+              grey subtitle rather than genset number itself being bold. */}
+          {gensetModel && !hideGensetModel ? (
             <>
-              <Text style={styles.gensetNumber} numberOfLines={1}>{task.asset.gensetModel}</Text>
+              <Text style={styles.gensetNumber} numberOfLines={1}>{gensetModel}</Text>
               {!!(gensetNumber || engineNumber) && (
                 <Text style={styles.engineNumber} numberOfLines={1}>
                   {[gensetNumber, engineNumber].filter(Boolean).join(' · ')}
@@ -79,6 +97,12 @@ export function AssetIdentityHeader({ task, isService, taskPeople, gensetNumberO
                 <Text style={styles.engineNumber} numberOfLines={1}>{engineNumber}</Text>
               )}
             </>
+          )}
+          {!!dispatchDate && (
+            <View style={styles.dispatchDateRow}>
+              <Truck size={12} color="#8A8A8A" />
+              <Text style={styles.dispatchDateText} numberOfLines={1}>Dispatched {formatDate(dispatchDate)}</Text>
+            </View>
           )}
         </View>
         {taskPeople.length > 0 && (
@@ -134,6 +158,8 @@ const styles = StyleSheet.create({
   idIconChipService: { backgroundColor: '#1E1951' },
   gensetNumber: { fontSize: 18, fontWeight: '700', color: '#000000' },
   engineNumber: { fontSize: 14, fontWeight: '500', color: '#8A8A8A', marginTop: 2 },
+  dispatchDateRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  dispatchDateText: { fontSize: 12, fontWeight: '500', color: '#8A8A8A' },
 
   avatarCluster: { flexDirection: 'row' },
   clusterAvatarOverlap: { marginLeft: -12 },

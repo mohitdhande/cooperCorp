@@ -1,5 +1,12 @@
 import axiosClient from './axiosClient';
 
+// event.loaded can end up slightly ABOVE event.total near the end of a raw
+// file upload on Android — the native networking layer's own progress
+// reporting across the RN bridge isn't perfectly exact for this upload
+// shape, not a sign the byte counts are fake. Clamped everywhere progress
+// is computed so the UI never shows e.g. 145%.
+const clampPercent = (percent: number): number => Math.max(0, Math.min(100, percent));
+
 // Same backend/contract as Cooper's commisionAPi.ts — returns both
 // commissioning and service tasks (plus their counts) for the given status.
 export const getMyTasksByStatus = async (
@@ -802,7 +809,8 @@ export const uploadCommissioningPhotos = async (
   token: string,
   taskId: string,
   photos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal
 ) => {
   const formData = new FormData();
 
@@ -838,13 +846,19 @@ export const uploadCommissioningPhotos = async (
           'Content-Type': 'multipart/form-data',
         },
         onUploadProgress: onProgress
-          ? (event) => onProgress(event.total ? Math.round((event.loaded / event.total) * 100) : 0)
+          ? (event) => onProgress(event.total ? clampPercent(Math.round((event.loaded / event.total) * 100)) : 0)
           : undefined,
+        signal,
       }
     );
     return response.data; // { photos: ["https://storage..."] }
   } catch (error: any) {
-    console.log('Upload Photos Error:', error.response?.data || error.message);
+    // A user-initiated cancel (AbortSignal) isn't a real failure — don't log
+    // it as one. Callers distinguish this via error.code, same check used
+    // throughout the media-upload path (see useMediaUploadQueue.ts).
+    if (error.code !== 'ERR_CANCELED') {
+      console.log('Upload Photos Error:', error.response?.data || error.message);
+    }
     throw error;
   }
 };
@@ -959,7 +973,8 @@ export const uploadServicePhotos = async (
   token: string,
   taskId: string,
   photos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal
 ) => {
   const formData = new FormData();
 
@@ -992,13 +1007,16 @@ export const uploadServicePhotos = async (
           'Content-Type': 'multipart/form-data',
         },
         onUploadProgress: onProgress
-          ? (event) => onProgress(event.total ? Math.round((event.loaded / event.total) * 100) : 0)
+          ? (event) => onProgress(event.total ? clampPercent(Math.round((event.loaded / event.total) * 100)) : 0)
           : undefined,
+        signal,
       }
     );
     return response.data;
   } catch (error: any) {
-    console.log('Upload Service Photos Error:', error.response?.data || error.message);
+    if (error.code !== 'ERR_CANCELED') {
+      console.log('Upload Service Photos Error:', error.response?.data || error.message);
+    }
     throw error;
   }
 };
@@ -1013,17 +1031,20 @@ export const getGcsUploadUrl = async (
   token: string,
   folder: 'commissioning' | 'service' | 'service-videos' | 'profiles',
   filename: string,
-  contentType: string
+  contentType: string,
+  signal?: AbortSignal
 ) => {
   try {
     const response = await axiosClient.post(
       '/api/gcs/upload-url',
       { folder, filename, contentType },
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` }, signal }
     );
     return response.data as { uploadUrl: string; gcsUrl: string };
   } catch (error: any) {
-    console.log('Get GCS Upload URL Error:', error.response?.data || error.message);
+    if (error.code !== 'ERR_CANCELED') {
+      console.log('Get GCS Upload URL Error:', error.response?.data || error.message);
+    }
     throw error;
   }
 };
@@ -1045,21 +1066,54 @@ export const getGcsUploadUrl = async (
 // all, the same mechanism FormData.append(field, { uri, ... }) uses under
 // the hood for multipart uploads (see uploadServicePhotos above), just
 // applied to a raw (non-multipart) PUT body here instead.
-const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string, fileName: string, onProgress?: (percent: number) => void): Promise<void> => {
+// `signal` lets a caller abort the PUT mid-flight (see useMediaUploadQueue's
+// Cancel button) — XHR has no native AbortSignal support, so this wires
+// signal.abort straight to xhr.abort() itself. Per the XHR spec, calling
+// abort() suppresses onload/onerror and fires onabort instead; the local
+// `aborted` flag additionally guards against a same-tick race where an
+// already-queued onload/onerror event could still fire after abort() was
+// called. The rejected error is tagged name: 'AbortError' so callers can
+// tell "user canceled" apart from a real network/server failure (see the
+// same check in useMediaUploadQueue.ts and the other upload functions'
+// error.code === 'ERR_CANCELED' check above).
+const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string, fileName: string, onProgress?: (percent: number) => void, signal?: AbortSignal): Promise<void> => {
   return new Promise((resolve, reject) => {
+    const abortError = () => {
+      const err: any = new Error('Upload canceled');
+      err.name = 'AbortError';
+      return err;
+    };
+
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
     const xhr = new XMLHttpRequest();
+    let aborted = false;
     xhr.open('PUT', uploadUrl);
     xhr.setRequestHeader('Content-Type', contentType);
     if (onProgress) {
       xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+        if (event.lengthComputable) onProgress(clampPercent(Math.round((event.loaded / event.total) * 100)));
       };
     }
     xhr.onload = () => {
+      if (aborted) return;
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`GCS video upload failed with status ${xhr.status}`));
     };
-    xhr.onerror = () => reject(new Error('GCS video upload network error'));
+    xhr.onerror = () => {
+      if (aborted) return;
+      reject(new Error('GCS video upload network error'));
+    };
+    xhr.onabort = () => {
+      aborted = true;
+      reject(abortError());
+    };
+    if (signal) {
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
     xhr.send({ uri: fileUri, type: contentType, name: fileName } as any);
   });
 };
@@ -1074,23 +1128,17 @@ const videoMimeType = (fileName: string): string => {
   return ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : 'video/mp4';
 };
 
-// Uploads every video (and any PDF riding this same call — see
-// videoMimeType above) straight to GCS (folder: "service-videos") and
-// confirms each one immediately after its own upload finishes — not
-// batched at the end — per the dev guide's own pitfall warning: confirming
-// only on a final button tap loses URLs if the user exits mid-upload.
-// onProgress (0-100) covers the whole batch, not just one file — each
-// item is an equal fraction of the total, so a mid-file progress event
-// contributes (that file's own % / item count) on top of whatever
-// already-finished items contributed.
 // Uploads one file (video or PDF, either can ride this call — see
-// videoMimeType) to a given folder/confirm-endpoint pair, logging its own
-// outcome either way. Shared by uploadServiceVideos/uploadCommissioningVideos
-// below so both forms get identical, itemized console output — previously
-// only the aggregate call was logged (or not logged at all, for
-// commissioning), so a failure gave no way to tell WHICH file (a video? a
-// PDF? both?) or WHICH of the 3 steps (get signed URL / PUT to GCS /
-// confirm) actually failed.
+// videoMimeType) straight to GCS (folder: "service-videos"/"commissioning")
+// and confirms it immediately after its own upload finishes — per the dev
+// guide's own pitfall warning: confirming only on a final button tap loses
+// URLs if the user exits mid-upload. Called once per item, directly by
+// useMediaUploadQueue (each picked photo/video/PDF uploads immediately,
+// not batched) — see uploadOneServiceVideoOrPdf/
+// uploadOneCommissioningVideoOrPdf below, the thin per-kind wrappers around
+// this. onProgress (0-100) covers just this one file. Logs its own outcome
+// either way, so a failure shows WHICH file (a video? a PDF?) and WHICH of
+// the 3 steps (get signed URL / PUT to GCS / confirm) actually failed.
 async function uploadOneMediaFile(
   token: string,
   confirmUrl: string,
@@ -1100,92 +1148,51 @@ async function uploadOneMediaFile(
   total: number,
   logLabel: string,
   onFileProgress?: (percent: number) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const contentType = videoMimeType(file.fileName);
   const kind = file.fileName.toLowerCase().endsWith('.pdf') ? 'PDF' : 'video';
   console.log(`[${logLabel}] ${index + 1}/${total} starting (${kind}):`, file.fileName);
   try {
-    const { uploadUrl, gcsUrl } = await getGcsUploadUrl(token, folder, file.fileName, contentType);
-    await putFileToGcsUrl(uploadUrl, file.uri, contentType, file.fileName, onFileProgress);
-    await axiosClient.post(confirmUrl, { gcsUrls: [gcsUrl] }, { headers: { Authorization: `Bearer ${token}` } });
+    const { uploadUrl, gcsUrl } = await getGcsUploadUrl(token, folder, file.fileName, contentType, signal);
+    await putFileToGcsUrl(uploadUrl, file.uri, contentType, file.fileName, onFileProgress, signal);
+    // Don't confirm a GCS upload that was actually meant to be canceled —
+    // the PUT above can resolve successfully in the brief window between
+    // its own completion and the abort signal propagating.
+    if (signal?.aborted) {
+      const err: any = new Error('Upload canceled');
+      err.name = 'AbortError';
+      throw err;
+    }
+    await axiosClient.post(confirmUrl, { gcsUrls: [gcsUrl] }, { headers: { Authorization: `Bearer ${token}` }, signal });
     console.log(`[${logLabel}] ${index + 1}/${total} succeeded (${kind}):`, file.fileName);
     return gcsUrl;
   } catch (error: any) {
-    console.log(`[${logLabel}] ${index + 1}/${total} FAILED (${kind}):`, file.fileName, '— status:', error.response?.status, '— data:', error.response?.data || error.message);
+    if (error.name !== 'AbortError' && error.code !== 'ERR_CANCELED') {
+      console.log(`[${logLabel}] ${index + 1}/${total} FAILED (${kind}):`, file.fileName, '— status:', error.response?.status, '— data:', error.response?.data || error.message);
+    }
     throw error;
   }
 }
 
-// Confirms each file immediately after its own upload finishes — not
-// batched at the end — per the dev guide's own pitfall warning: confirming
-// only on a final button tap loses URLs if the user exits mid-upload. Every
-// file is attempted even if an earlier one fails (previously the whole
-// batch stopped at the first failure, so a failing video meant a PDF right
-// after it in the same list never even got tried) — the console log above
-// shows every file's own outcome regardless of the others', and the
-// returned error (if any) lists exactly which ones failed. onProgress
-// (0-100) covers the whole batch, not just one file.
-export const uploadServiceVideos = async (
-  token: string,
-  taskId: string,
-  videos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void
-) => {
-  const confirmedUrls: string[] = [];
-  const failedFileNames: string[] = [];
-  for (let i = 0; i < videos.length; i++) {
-    try {
-      const gcsUrl = await uploadOneMediaFile(
-        token, `/api/service/${taskId}/videos/confirm`, 'service-videos', videos[i], i, videos.length,
-        'Service Media Upload',
-        onProgress ? (filePercent) => onProgress(Math.round(((i * 100) + filePercent) / videos.length)) : undefined,
-      );
-      confirmedUrls.push(gcsUrl);
-    } catch {
-      failedFileNames.push(videos[i].fileName);
-    }
-  }
-  if (failedFileNames.length > 0) {
-    throw new Error(`Failed to upload ${failedFileNames.length} of ${videos.length} file(s): ${failedFileNames.join(', ')}`);
-  }
-  return { videos: confirmedUrls };
-};
+// Single-item wrappers — used by useMediaUploadQueue.ts, which uploads one
+// picked file at a time (not a batch) so real per-item progress and
+// mid-batch cancellation both work. Replaces the old uploadServiceVideos/
+// uploadCommissioningVideos batch-loop functions (which buried per-file
+// failures inside an aggregate failedFileNames array — the queue hook needs
+// to react between items, not after the whole batch finishes).
+export const uploadOneServiceVideoOrPdf = (
+  token: string, taskId: string, file: { uri: string; fileName: string },
+  onProgress?: (percent: number) => void, signal?: AbortSignal
+) => uploadOneMediaFile(token, `/api/service/${taskId}/videos/confirm`, 'service-videos', file, 0, 1, 'Service Media Upload', onProgress, signal);
 
-// Commissioning's own equivalent of uploadServiceVideos above — same
-// per-file GCS-sign-then-confirm flow, since commissioning has no
-// multipart video endpoint either. Uses the shared "commissioning" GCS
-// folder (photos and videos both land there) rather than a dedicated
-// "commissioning-videos" folder. Confirmed via a live 404
-// ("Cannot POST /api/commissioning/:id/videos/confirm") that commissioning
-// has no dedicated videos/confirm route the way service does — it only
-// ever had the one /photos/confirm endpoint, which is what actually
-// accepts both photo AND video/PDF gcsUrls for this entity. PDFs from the
-// commissioning form's own Documents card ride this same call as videos.
-export const uploadCommissioningVideos = async (
-  token: string,
-  taskId: string,
-  videos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void
-) => {
-  const confirmedUrls: string[] = [];
-  const failedFileNames: string[] = [];
-  for (let i = 0; i < videos.length; i++) {
-    try {
-      const gcsUrl = await uploadOneMediaFile(
-        token, `/api/commissioning/${taskId}/photos/confirm`, 'commissioning', videos[i], i, videos.length,
-        'Commissioning Media Upload',
-        onProgress ? (filePercent) => onProgress(Math.round(((i * 100) + filePercent) / videos.length)) : undefined,
-      );
-      confirmedUrls.push(gcsUrl);
-    } catch {
-      failedFileNames.push(videos[i].fileName);
-    }
-  }
-  if (failedFileNames.length > 0) {
-    throw new Error(`Failed to upload ${failedFileNames.length} of ${videos.length} file(s): ${failedFileNames.join(', ')}`);
-  }
-  return { videos: confirmedUrls };
-};
+// Commissioning has no dedicated videos/confirm route (confirmed via a live
+// 404) — its one /photos/confirm endpoint accepts photo AND video/PDF
+// gcsUrls both, which is why this still targets that URL despite the name.
+export const uploadOneCommissioningVideoOrPdf = (
+  token: string, taskId: string, file: { uri: string; fileName: string },
+  onProgress?: (percent: number) => void, signal?: AbortSignal
+) => uploadOneMediaFile(token, `/api/commissioning/${taskId}/photos/confirm`, 'commissioning', file, 0, 1, 'Commissioning Media Upload', onProgress, signal);
 
 const photoMimeType = (fileName: string): string => {
   const ext = (fileName.match(/\.(\w+)$/)?.[1] || 'jpg').toLowerCase();

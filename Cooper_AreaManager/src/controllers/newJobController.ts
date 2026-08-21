@@ -17,11 +17,11 @@ import { useTeam } from '../context/TeamContext';
 // is a DISPLAY string only. Every other date field this API returns
 // elsewhere (task.date, task.dueDate, ...) is ISO, so the actual request
 // body converts back to ISO rather than sending this literal string.
-function formatTodayMMDDYYYY() {
+function formatTodayDDMMYYYY() {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
-  return `${mm}/${dd}/${d.getFullYear()}`;
+  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 // COMMISSIONING inherits Pre-Commissioning's own checks; RE_COMMISSIONING
@@ -104,7 +104,7 @@ export function useNewJobController() {
   // The "Create Job Card" step's own fields — only meaningful while
   // assignPickerActionType is set (i.e. an action was tapped).
   const [assignPickerActionType, setAssignPickerActionType] = useState<string | null>(null);
-  const [jobDate, setJobDate] = useState(formatTodayMMDDYYYY());
+  const [jobDate, setJobDate] = useState(formatTodayDDMMYYYY());
   const [selectedAssignee, setSelectedAssignee] = useState<TeamMember | null>(null);
   // Assign To opens this as its own bottom-sheet-style picker instead of an
   // inline search+list, matching the reference design's compact form.
@@ -202,7 +202,7 @@ export function useNewJobController() {
   // attempt at a different action type.
   const openAssignPicker = useCallback((actionType: string) => {
     setAssignPickerActionType(actionType);
-    setJobDate(formatTodayMMDDYYYY());
+    setJobDate(formatTodayDDMMYYYY());
     setSelectedAssignee(null);
     setAssigneePickerVisible(false);
     setNotes('');
@@ -324,9 +324,20 @@ export function useNewJobController() {
   // the check to revisit.
   const assetHasBeenServiced = !!asset?.history?.some((h: any) => !!h.srNumber);
 
+  // An asset already has an open commissioning task somewhere (assigned to
+  // someone, in progress, etc.) — creating another one here would be a
+  // duplicate. history entries without an srNumber are commissioning-type
+  // (see assetHasBeenServiced's own comment above for that split); "still
+  // open" is anything not COMPLETED/CLOSED, same terminal-status pairing
+  // reportFormatters.ts's bucketTaskStatus uses for commissioning tasks
+  // elsewhere in the app.
+  const assetHasActiveCommissioningTask = !!asset?.history?.some(
+    (h: any) => !h.srNumber && h.status !== 'COMPLETED' && h.status !== 'CLOSED'
+  );
+
   return {
     searchText, setSearchText, handleSearch, handleClearSearch, searched, isSearching, searchError,
-    asset, assetLoading, availableActions, assetHasBeenServiced,
+    asset, assetLoading, availableActions, assetHasBeenServiced, assetHasActiveCommissioningTask,
     sapAsset,
     engineers, engineersLoading,
     assignPickerActionType, openAssignPicker, handleCancelAssign,

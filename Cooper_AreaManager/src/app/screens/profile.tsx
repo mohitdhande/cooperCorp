@@ -144,7 +144,7 @@ export default function ProfileScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: 130 }}
       >
         <View style={styles.avatarSection}>
           <TouchableOpacity onPress={() => setOptionsVisible(true)} activeOpacity={0.8}>
@@ -171,7 +171,15 @@ export default function ProfileScreen() {
           <View style={[styles.rolePill, { backgroundColor: roleBadge.bg }]}>
             <Text style={[styles.rolePillText, { color: roleBadge.text }]}>{formatRole(displayRole)}</Text>
           </View>
-          {!dealerName && areaNames.length > 0 && <Text style={styles.regionText}>{areaNames.join(', ')}</Text>}
+          {!dealerName && areaNames.length > 0 && (
+            <View style={styles.regionPillsRow}>
+              {areaNames.map((area) => (
+                <View key={area} style={styles.regionPill}>
+                  <Text style={styles.regionPillText}>{area}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
 
         <View style={styles.card}>
@@ -303,13 +311,20 @@ export default function ProfileScreen() {
         </Pressable>
       </Modal>
 
-      <BottomNavBar active="profile" />
+      {/* Floats over the ScrollView (instead of sitting below it as a
+          normal flex sibling) so cards keep visibly scrolling behind this
+          bar rather than the scroll area stopping flush above it. */}
+      <View style={styles.floatingFooter} pointerEvents="box-none">
+        <BottomNavBar active="profile" />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6F6F6' },
+
+  floatingFooter: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   header: {
     flexDirection: 'row',
@@ -323,7 +338,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 22, fontWeight: '700', color: '#000000', letterSpacing: 1 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   avatarSection: { alignItems: 'center', marginTop: 12, marginBottom: 24 },
   avatarCircle: {
@@ -349,7 +364,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   rolePillText: { fontSize: 14, fontWeight: '700' },
-  regionText: { fontSize: 13, fontWeight: '600', color: '#7C6FE8', marginTop: 8 },
+  regionPillsRow: {
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    gap: 8, marginTop: 10, paddingHorizontal: 16,
+  },
+  regionPill: {
+    backgroundColor: '#EDE9FE',
+    borderRadius: 100,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  regionPillText: { fontSize: 13, fontWeight: '600', color: '#7C3AED' },
 
   card: {
     backgroundColor: '#FFFFFF',

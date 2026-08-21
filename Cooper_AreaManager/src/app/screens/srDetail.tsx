@@ -317,8 +317,12 @@ export default function SrDetailScreen() {
             task={task}
             isService
             taskPeople={taskPeople}
-            gensetNumberOverride={asset?.gensetNumber || task.asset?.gensetNumber || task.assetId?.gensetNumber}
-            engineNumberOverride={asset?.engineNumber || task.asset?.engineNumber || task.assetId?.engineNumber}
+            assetOverride={{
+              gensetNumber: asset?.gensetNumber || task.asset?.gensetNumber || task.assetId?.gensetNumber,
+              engineNumber: asset?.engineNumber || task.asset?.engineNumber || task.assetId?.engineNumber,
+              gensetModel: asset?.gensetModel,
+              dispatchDate: asset?.dispatchDate,
+            }}
           />
 
           {/* Location + site contact — same card as the SR pill/identity
@@ -1256,7 +1260,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { fontSize: 20, fontWeight: '800', color: '#000000', letterSpacing: 0.5 },
+  headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   card: {
     backgroundColor: '#FFFFFF',

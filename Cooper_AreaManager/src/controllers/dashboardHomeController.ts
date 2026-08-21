@@ -58,6 +58,12 @@ export function useDashboardHomeController() {
   const [rawRecentCompletedTasks, setRawRecentCompletedTasks] = useState<any[]>([]);
   const [completedCarouselIndex, setCompletedCarouselIndex] = useState(0);
 
+  // Powers the Insights weekly bar chart's closed segment — same
+  // team-wide, dated raw list shape as rawActiveTasks/rawRecentCompletedTasks
+  // above (GET /me/dashboard's own recentClosed.commissioning/service),
+  // not shown in its own carousel anywhere on this screen.
+  const [rawClosedTasks, setRawClosedTasks] = useState<any[]>([]);
+
   const [approvalIndex, setApprovalIndex] = useState(0);
 
   // Which avatar in the team strip is "active" — null is the default
@@ -109,6 +115,8 @@ export function useDashboardHomeController() {
     const service = (data.activeTasks?.service || []).map((task: any) => ({ ...task, __kind: 'service' }));
     const completedCommissioning = (data.recentCompleted?.commissioning || []).map((task: any) => ({ ...task, __kind: 'commissioning' }));
     const completedService = (data.recentCompleted?.service || []).map((task: any) => ({ ...task, __kind: 'service' }));
+    const closedCommissioning = (data.recentClosed?.commissioning || []).map((task: any) => ({ ...task, __kind: 'commissioning' }));
+    const closedService = (data.recentClosed?.service || []).map((task: any) => ({ ...task, __kind: 'service' }));
     // summaryCounts (and its individual fields) can be missing from the
     // response entirely — normalized to 0 here, once, so every consumer
     // (Insights' Weekly/Overview cards, the "You have N active" banner)
@@ -125,6 +133,7 @@ export function useDashboardHomeController() {
     setCarouselIndex(0);
     setRawRecentCompletedTasks([...completedCommissioning, ...completedService]);
     setCompletedCarouselIndex(0);
+    setRawClosedTasks([...closedCommissioning, ...closedService]);
     setApprovalIndex(0);
   }, []);
 
@@ -399,7 +408,7 @@ export function useDashboardHomeController() {
     // Unfiltered — for the Insights weekly chart, which stays whole-team
     // regardless of avatar selection (only the Active Task/SR Approvals
     // cards above it are meant to filter).
-    rawActiveTasks, rawRecentCompletedTasks,
+    rawActiveTasks, rawRecentCompletedTasks, rawClosedTasks,
     carouselIndex, setCarouselIndex, goToPrevTask, goToNextTask,
     recentCompletedTasks, completedCarouselIndex, setCompletedCarouselIndex, goToPrevCompleted, goToNextCompleted,
     approvalList, approvalIndex, setApprovalIndex, goToPrevApproval, goToNextApproval,
