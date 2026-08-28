@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
-import { View, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Text } from '@/_components/AppText';
-import { AnchoredPanel, Anchor } from '../shared/AnchoredPanel';
+import { AnchoredPanel } from '../shared/AnchoredPanel';
 
 type Props = {
   label: string;
@@ -26,49 +26,61 @@ type Props = {
 };
 
 // A tap-to-open dropdown field used across the task form's asset sections.
-// Opens as a small panel anchored right under the field, not a full sheet.
+// Opens as a small panel anchored right under the field (see
+// AnchoredPanel's own comment for why it's not a full-screen sheet/Modal —
+// in short, so the rest of the screen keeps scrolling normally while
+// it's open, instead of needing an explicit tap to close it first).
 export function DropdownField({ label, value, options, onSelect, required = true, plainLabel = false, placeholder = '', requiredAsterisk = false }: Props) {
   const [visible, setVisible] = useState(false);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const triggerRef = useRef<View>(null);
-
-  const openDropdown = () => {
-    triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setVisible(true);
-    });
-  };
 
   return (
-    <View>
+    <View style={styles.container}>
       <Text style={plainLabel ? styles.fieldLabelPlain : styles.fieldLabel}>
         {plainLabel ? label : `${required ? '● ' : ''}${label}`}
         {requiredAsterisk && <Text style={styles.requiredAsterisk}> *</Text>}
       </Text>
-      <TouchableOpacity ref={triggerRef} style={[styles.dropdownInput, visible && styles.dropdownInputActive]} onPress={openDropdown}>
+      <TouchableOpacity style={[styles.dropdownInput, visible && styles.dropdownInputActive]} onPress={() => setVisible((v) => !v)}>
         <Text style={styles.dropdownText}>{value || placeholder}</Text>
         <Text style={styles.dropdownArrow}>▾</Text>
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} anchor={anchor} onRequestClose={() => setVisible(false)} maxHeight={260}>
-        <FlatList
-          data={['—', ...options]}
-          keyExtractor={(item) => item}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.optionRow, value === item && styles.optionRowSelected]}
-              onPress={() => { onSelect(item === '—' ? '' : item); setVisible(false); }}
-            >
-              <Text style={styles.optionText}>{item}</Text>
-            </TouchableOpacity>
-          )}
-        />
+      <AnchoredPanel visible={visible} maxHeight={340} minWidth={220}>
+        {/* Plain ScrollView + map, not FlatList — these lists are always a
+            handful of strings (never long enough to need virtualization),
+            and a VirtualizedList nested inside the screen's own ScrollView
+            (now that AnchoredPanel isn't a separate Modal anymore) throws
+            "VirtualizedLists should never be nested inside plain
+            ScrollViews with the same orientation". */}
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+          {['—', ...options].map((item) => {
+            // The blank row's own real value is '' (see onSelect below),
+            // not the literal '—' it displays — compare against that so
+            // the blank row correctly highlights as selected when nothing's
+            // been picked yet, instead of never matching.
+            const isSelected = item === '—' ? value === '' : value === item;
+            return (
+              <TouchableOpacity
+                key={item}
+                style={[styles.optionRow, isSelected && styles.optionRowSelected]}
+                onPress={() => { onSelect(item === '—' ? '' : item); setVisible(false); }}
+              >
+                <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{item}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </AnchoredPanel>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // The panel positions itself (position: 'absolute', top: '100%') relative
+  // to this — since the label sits above the trigger with no absolutely
+  // positioned siblings involved, this container's own bottom edge already
+  // coincides with the trigger's bottom edge, so top: '100%' lands the
+  // panel exactly where it should without needing to measure anything.
+  container: { position: 'relative' },
   fieldLabel: {
     fontSize: 11,
     fontWeight: '700',
@@ -78,7 +90,7 @@ const styles = StyleSheet.create({
   },
   fieldLabelPlain: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#6B7280',
     marginBottom: 6,
   },
@@ -113,10 +125,14 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F3F4F6',
   },
   optionRowSelected: {
-    backgroundColor: '#FDECE1',
+    backgroundColor: '#DBEAFE',
   },
   optionText: {
     fontSize: 15,
     color: '#1F2937',
+  },
+  optionTextSelected: {
+    fontWeight: '600',
+    color: '#1D4ED8',
   },
 });

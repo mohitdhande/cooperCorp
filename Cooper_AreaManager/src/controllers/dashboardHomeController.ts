@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { useRouter } from 'expo-router';
@@ -7,15 +7,16 @@ import { UserProfile } from '../models/Login';
 import { DashboardSummary } from '../models/dashboard.types';
 import { TeamMember } from '../models/myTeam.types';
 import {
-  getDashboardSummary,
+  getDashboardSummary, getFaultCodes, getParts,
   reassignCommissioningTask, reassignServiceTask,
 } from '../viewModel/commisionAPi';
-import { getPermissions } from '../constants/permissions';
+import { getPermissions, getRole } from '../constants/permissions';
 import { parseApiError } from '../utils/apiError';
-import { formatTaskType } from '../utils/reportFormatters';
+import { formatTaskType, formatAssetLabel } from '../utils/reportFormatters';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
+import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 // Backend doesn't send a greeting string — purely a function of the
 // device's wall-clock hour at render time, same three-way split as any
@@ -110,7 +111,7 @@ export function useDashboardHomeController() {
   // Shared by both the live-fetch success path and the offline cache
   // fallback below — same normalization either way, just a different
   // source for `data`.
-  const applySummary = useCallback((data: DashboardSummary) => {
+  const applySummary = useCallback(async (data: DashboardSummary) => {
     const commissioning = (data.activeTasks?.commissioning || []).map((task: any) => ({ ...task, __kind: 'commissioning' }));
     const service = (data.activeTasks?.service || []).map((task: any) => ({ ...task, __kind: 'service' }));
     const completedCommissioning = (data.recentCompleted?.commissioning || []).map((task: any) => ({ ...task, __kind: 'commissioning' }));
@@ -129,12 +130,53 @@ export function useDashboardHomeController() {
       completed: data.summaryCounts?.completed || 0,
     };
     setSummary({ ...data, summaryCounts });
-    setRawActiveTasks([...commissioning, ...service]);
+    const allActive = [...commissioning, ...service];
+    setRawActiveTasks(allActive);
     setCarouselIndex(0);
     setRawRecentCompletedTasks([...completedCommissioning, ...completedService]);
     setCompletedCarouselIndex(0);
     setRawClosedTasks([...closedCommissioning, ...closedService]);
     setApprovalIndex(0);
+
+    const queuedOverrides = await deriveQueuedTaskStatusOverrides(allActive);
+    if (Object.keys(queuedOverrides).length > 0) {
+      // A same-session override (set the moment accept/start was tapped) is
+      // never staler than what the queue can tell us — it wins on conflict.
+      setTaskStatusOverrides((prev) => ({ ...queuedOverrides, ...prev }));
+    }
+  }, []);
+
+  // Warms the fault-codes/parts cache the commissioning/SR forms' own
+  // pickers read from (useTaskFormApiData.ts, useSrTaskForm.ts — same two
+  // cache keys) right after the dashboard itself loads, instead of waiting
+  // for the engineer to actually open a task form. Only fetches whichever
+  // of the two isn't already cached — these are backend-wide reference
+  // lists that barely change, so there's no reason to re-download them on
+  // every single dashboard load once they're already saved. Engineer-only
+  // (fault codes/parts are only ever used in the two forms, which are
+  // engineer-facing work) and fire-and-forget — a slow or failed warm-up
+  // should never hold up or break the dashboard's own loading.
+  const warmFaultCodesAndPartsCache = useCallback(async (token: string) => {
+    try {
+      const savedProfile = await AsyncStorage.getItem('userData');
+      const role = savedProfile ? getRole(JSON.parse(savedProfile).role) : null;
+      if (role !== 'engineer') return;
+
+      const [cachedFaultCodes, cachedParts] = await Promise.all([
+        getCachedData('faultCodes'),
+        getCachedData('parts'),
+      ]);
+      if (!cachedFaultCodes) {
+        const data = await getFaultCodes(token);
+        await cacheData('faultCodes', data);
+      }
+      if (!cachedParts) {
+        const data = await getParts(token);
+        await cacheData('parts', data);
+      }
+    } catch (error) {
+      console.log('[Dashboard] Failed to warm fault codes/parts cache:', error);
+    }
   }, []);
 
   const fetchSummary = useCallback(async (opts?: { silent?: boolean }): Promise<boolean> => {
@@ -144,13 +186,16 @@ export function useDashboardHomeController() {
       const token = await getToken();
       if (!token) return true;
       const data: DashboardSummary = await getDashboardSummary(token);
-      applySummary(data);
+      await applySummary(data);
       setShowingCachedDashboard(false);
       // No user-scoping needed on the cache key — logout already clears
       // all of AsyncStorage (see profileController.ts), so a stale
       // previous user's cached dashboard can never leak into a fresh
       // session.
       await cacheData('dashboard_summary', data);
+      // Not awaited — this shouldn't delay the dashboard itself finishing
+      // its own load.
+      warmFaultCodesAndPartsCache(token);
       return true;
     } catch (error: any) {
       // A site with no signal at all — fall back to whatever this device
@@ -162,7 +207,7 @@ export function useDashboardHomeController() {
       if (isNetworkError(error)) {
         const cached = await getCachedData<DashboardSummary>('dashboard_summary');
         if (cached) {
-          applySummary(cached.data);
+          await applySummary(cached.data);
           setShowingCachedDashboard(true);
           return true;
         }
@@ -186,6 +231,33 @@ export function useDashboardHomeController() {
 
   useEffect(() => {
     fetchSummary();
+  }, [fetchSummary]);
+
+  // Re-checks connectivity on its own, without waiting for the user to do
+  // anything — same cadence _layout.tsx already uses for the offline sync
+  // engines (once on foreground, every 20s while the app stays open).
+  // Without this, showingCachedDashboard only ever got set right when the
+  // screen first mounted; if the network dropped later while someone was
+  // already sitting on this screen, nothing would notice until they
+  // manually pulled to refresh or left and came back — the switch into the
+  // simplified offline dashboard (dashboard.tsx) would lag behind reality.
+  // `silent: true` keeps this invisible when it succeeds — no loading
+  // spinner flicker every 20 seconds while everything's fine.
+  const appState = useRef(AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        fetchSummary({ silent: true });
+      }
+      appState.current = nextState;
+    });
+    const interval = setInterval(() => {
+      if (appState.current === 'active') fetchSummary({ silent: true });
+    }, 20000);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, [fetchSummary]);
 
   // "You have N active Tasks" — commissioning.active + service.active,
@@ -275,7 +347,8 @@ export function useDashboardHomeController() {
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
       const kind = task.__kind === 'service' ? 'service' : 'commissioning';
-      await putOrQueue(`/api/${kind}/${taskId}/accept`, {}, `Accept task (${taskId})`, `${kind}_accept_${taskId}`);
+      const assetLabel = formatAssetLabel(task.asset?.gensetNumber, task.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/${kind}/${taskId}/accept`, {}, `Accept task (${assetLabel})`, `${kind}_accept_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'ACCEPTED' }));
     } catch (error: any) {
       const { message } = parseApiError(error, 'Failed to accept task. Please try again.');
@@ -292,7 +365,8 @@ export function useDashboardHomeController() {
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
       const kind = task.__kind === 'service' ? 'service' : 'commissioning';
-      await putOrQueue(`/api/${kind}/${taskId}/start`, {}, `Start task (${taskId})`, `${kind}_start_${taskId}`);
+      const assetLabel = formatAssetLabel(task.asset?.gensetNumber, task.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/${kind}/${taskId}/start`, {}, `Start task (${assetLabel})`, `${kind}_start_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'IN_PROGRESS' }));
     } catch (error: any) {
       const { message } = parseApiError(error, 'Failed to start task. Please try again.');
@@ -311,6 +385,13 @@ export function useDashboardHomeController() {
           assetId: task.asset?._id || '',
           gensetNumber: task.asset?.gensetNumber || '',
           engineNumber: task.asset?.engineNumber || '',
+          // Already sitting right here in the task list's own data — same
+          // instant-offline-render reasoning as gensetNumber/engineNumber
+          // above, this time for Step 5's locked-category card (the one
+          // the dealer/AM picked at creation), which otherwise depends
+          // entirely on loadPreviousData's own fetch/cache to show at all.
+          category: task.category || '',
+          subCategory: task.subCategory || '',
         },
       } as any);
     } else {
@@ -322,6 +403,13 @@ export function useDashboardHomeController() {
           taskType: formatTaskType(task.type),
           assignedToName: task.assignedTo?.name || '',
           assignedToRole: task.assignedTo?.role || '',
+          // Already sitting right here in the task list's own data — passed
+          // through so the form can show them immediately (and offline,
+          // before/without its own getAssetById call) instead of coming up
+          // blank until a live fetch succeeds. Same fields the SR form's
+          // own goToTaskForm branch already passes above.
+          gensetNumber: task.asset?.gensetNumber || '',
+          engineNumber: task.asset?.engineNumber || '',
         },
       } as any);
     }

@@ -102,9 +102,15 @@ export type AssetDetail = CommissioningAssetSearchResult & {
   alternateContactNumber?: string | null;
   // Only present once this asset's commissioning task has actually been
   // completed — absent (not just falsy) means no commissioning has ever
-  // been done on it. New Service Job gates on this: raising an SR for an
-  // asset that's never been commissioned isn't a valid flow.
+  // been done on it.
   completedAt?: string | null;
+  // Confirmed real field on GET /api/assets/:id — 'commissioned' once a
+  // commissioning task has been completed on this asset, something else
+  // (e.g. 'pending') otherwise. New Service Job gates on this (not
+  // completedAt above): raising an SR for an asset that isn't commissioned
+  // yet isn't a valid flow.
+  assetStatus?: string | null;
+  commissionedBy?: { userId?: string; name?: string; role?: string } | null;
   history?: {
     _id?: string; type: string; date?: string; status?: string; srNumber?: string;
     assignedTo?: { name: string; userId?: string; profilePic?: string | null };

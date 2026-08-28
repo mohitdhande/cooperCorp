@@ -53,7 +53,12 @@ function UploadRow({ item, index, onCancelItem }: { item: QueueItem; index: numb
         </View>
       </View>
 
-      {isError && !!item.errorMessage && <Text style={styles.rowErrorText}>{item.errorMessage}</Text>}
+      {/* Retryable (offline) rows skip their own copy of this message — it's
+          the same text on every one of them, so it's shown once for the
+          whole batch instead (see MediaUploadOverlay's own offlineBanner
+          below). A real, non-retryable error still gets its own per-row
+          text, since those messages genuinely differ file to file. */}
+      {isError && !!item.errorMessage && !item.retryable && <Text style={styles.rowErrorText}>{item.errorMessage}</Text>}
 
       {isUploading && (
         <>
@@ -84,6 +89,7 @@ export function MediaUploadOverlay({ visible, items, onCancelItem, onCancelAll, 
   if (!visible || items.length === 0) return null;
 
   const isBusy = items.some((it) => it.status === 'pending' || it.status === 'uploading');
+  const retryableCount = items.filter((it) => it.retryable).length;
 
   return (
     <View style={styles.overlay} pointerEvents="auto">
@@ -97,6 +103,14 @@ export function MediaUploadOverlay({ visible, items, onCancelItem, onCancelAll, 
             <UploadRow key={item.localId} item={item} index={index} onCancelItem={onCancelItem} />
           ))}
         </ScrollView>
+
+        {/* One shared line for every offline (retryable) row instead of
+            each repeating the identical message under its own file. */}
+        {retryableCount > 0 && (
+          <Text style={styles.offlineBannerText}>
+            Offline — {retryableCount} file{retryableCount > 1 ? 's' : ''} saved on this device, will upload once you're back online
+          </Text>
+        )}
 
         {isBusy ? (
           <TouchableOpacity style={styles.cancelAllButton} onPress={onCancelAll}>
@@ -157,6 +171,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   rowErrorText: { fontSize: 12, fontWeight: '500', color: '#9CA3AF', marginTop: 8 },
+  offlineBannerText: {
+    fontSize: 12, fontWeight: '600', color: '#B45309',
+    textAlign: 'center',
+    marginTop: 4, marginBottom: 12,
+  },
 
   uploadingLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   uploadingLabel: { fontSize: 13, fontWeight: '500', color: '#9CA3AF' },

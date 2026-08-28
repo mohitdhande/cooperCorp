@@ -13,6 +13,8 @@ import {
 import { cacheData, getCachedData } from '../../utils/offlineCache';
 import { putOrQueue, isNetworkError } from '../../utils/syncEngine';
 import { getPendingBody } from '../../utils/offlineQueue';
+import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
+import { logLocationForAction } from '../../utils/locationLogger';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto } from '../../models/taskForm.types';
 import { UserProfile } from '../../models/Login';
 import { getRole } from '../../constants/permissions';
@@ -23,7 +25,7 @@ import {
 } from '../../_components/srTaskForm/srDropdownOptions';
 import { parseApiError } from '../../utils/apiError';
 import { getPhotoValidationError, partitionValidPhotos, getPdfValidationError } from '../../utils/photoValidation';
-import { videoFileName } from '../../utils/reportFormatters';
+import { videoFileName, formatAssetLabel } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 
 // GET /api/service/category-config's per-category shape, merged with the
@@ -44,6 +46,11 @@ type FreeServiceItem = {
   no: number; label: string; status: string; canCreate: boolean; reason: string;
 };
 
+// Global, not per-task — the category/sub-category config is the same
+// backend-wide reference list for every service task, same idea as
+// this file's own faultCodes/parts cache keys.
+const CATEGORY_CONFIG_CACHE_KEY = 'serviceCategoryConfig';
+
 const FALLBACK_CATEGORY_META = { bg: '#F3F4F6', border: '#D1D5DB', text: '#374151', description: '' };
 
 export const SR_STEP_SEQUENCE = [1, 2, 3, 4, 5];
@@ -58,6 +65,7 @@ export function useSrTaskForm() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     taskId?: string; assetId?: string; gensetNumber?: string; engineNumber?: string;
+    category?: string; subCategory?: string;
   }>();
   const taskId = params.taskId || '';
   const assetId = params.assetId || '';
@@ -189,7 +197,8 @@ export function useSrTaskForm() {
       // Always the whole record (see buildAssetPayload's own comment) —
       // one dedupeKey covers every section's save button here, unlike
       // commissioning's per-section partial saves.
-      await putOrQueue(`/api/assets/${assetId}`, buildAssetPayload(), `Asset details (Asset ${assetId})`, `sr_asset_${assetId}`, isEngineer);
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, assetId);
+      await putOrQueue(`/api/assets/${assetId}`, buildAssetPayload(), `Asset details (${assetLabel})`, `sr_asset_${assetId}`, isEngineer);
       setSectionSuccess(prev => ({ ...prev, [sectionKey]: true }));
     } catch (error: any) {
       const { message } = parseApiError(error, 'Failed to save. Please try again.');
@@ -197,7 +206,7 @@ export function useSrTaskForm() {
     } finally {
       setSectionSaving(prev => ({ ...prev, [sectionKey]: false }));
     }
-  }, [assetId, buildAssetPayload, isEngineer]);
+  }, [assetId, buildAssetPayload, isEngineer, gensetSrNumber, engineNumber]);
 
   // ── Step 2: Complaint / Fault Codes ──
   const [apiFaultCodes, setApiFaultCodes] = useState<ApiFaultCode[]>([]);
@@ -244,6 +253,7 @@ export function useSrTaskForm() {
     setStep2Success(false);
     try {
       if (!taskId) return;
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
       await putOrQueue(
         `/api/service/${taskId}/save-progress`,
         {
@@ -254,7 +264,7 @@ export function useSrTaskForm() {
             correctiveAction: item.correctiveAction || '',
           })),
         },
-        `Fault Codes (Task ${taskId})`,
+        `Fault Codes (${assetLabel})`,
         `sr_faultcodes_${taskId}`,
         isEngineer
       );
@@ -264,7 +274,7 @@ export function useSrTaskForm() {
     } finally {
       setStep2Saving(false);
     }
-  }, [taskId, selectedComplaintCodes, isEngineer]);
+  }, [taskId, selectedComplaintCodes, isEngineer, gensetSrNumber, engineNumber]);
 
   // ── Step 3: Parts Used ──
   const [apiParts, setApiParts] = useState<ApiPart[]>([]);
@@ -285,10 +295,11 @@ export function useSrTaskForm() {
     setStep3Success(false);
     try {
       if (!taskId) return;
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
       await putOrQueue(
         `/api/service/${taskId}/save-progress`,
         { partsUsed: parts.map((part) => ({ partId: part.partId, quantity: part.quantity })) },
-        `Parts Used (Task ${taskId})`,
+        `Parts Used (${assetLabel})`,
         `sr_parts_${taskId}`,
         isEngineer
       );
@@ -298,7 +309,7 @@ export function useSrTaskForm() {
     } finally {
       setStep3Saving(false);
     }
-  }, [taskId, selectedParts, isEngineer]);
+  }, [taskId, selectedParts, isEngineer, gensetSrNumber, engineNumber]);
 
   // Adding a part, changing its quantity, or removing it all persist right
   // away — no separate per-card save button.
@@ -381,9 +392,16 @@ export function useSrTaskForm() {
     },
   }), [taskId]);
 
+  const persistMediaFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, formKind: 'service', taskId, target: 'site',
+  }), [taskId]);
+
   const mediaQueue = useMediaUploadQueue(
     mediaUploaders,
-    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), [])
+    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), []),
+    isEngineer,
+    persistMediaFailure
   );
 
   // Android's native camera intent can't mix photo and video capture in
@@ -568,16 +586,9 @@ export function useSrTaskForm() {
   // ── Step 5: Notes ──
   const [notes, setNotes] = useState('');
 
-  // Step 3's own Work Notes + Suggestion Comment + Voice of Customer fields.
-  // workNotes is deliberately its own always-blank-at-mount state, not an
-  // editor for `notes` above — `notes` pre-fills from whatever was already
-  // saved for this task, and this field shouldn't show up pre-filled with
-  // that.
-  const [workNotes, setWorkNotes] = useState('');
+  // Suggestion Comment — shown on Step 5, right above the Complete/Send-for-
+  // Approval button, not an editor for `notes` above.
   const [suggestionComment, setSuggestionComment] = useState('');
-  const [voiceOfCustomerName, setVoiceOfCustomerName] = useState('');
-  const [voiceOfCustomerRating, setVoiceOfCustomerRating] = useState(0);
-  const [voiceOfCustomerRemark, setVoiceOfCustomerRemark] = useState('');
 
   const [step5Saving, setStep5Saving] = useState(false);
   const [step5Success, setStep5Success] = useState(false);
@@ -589,21 +600,29 @@ export function useSrTaskForm() {
     setStep5Success(false);
     try {
       if (!taskId) return;
-      await putOrQueue(`/api/service/${taskId}/save-progress`, { notes }, `Notes (Task ${taskId})`, `sr_notes_${taskId}`, isEngineer);
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      await putOrQueue(`/api/service/${taskId}/save-progress`, { notes }, `Notes (${assetLabel})`, `sr_notes_${taskId}`, isEngineer);
       setStep5Success(true);
     } catch (error: any) {
       setStep5Error(parseApiError(error, 'Failed to save. Please try again.').message);
     } finally {
       setStep5Saving(false);
     }
-  }, [taskId, notes, isEngineer]);
+  }, [taskId, notes, isEngineer, gensetSrNumber, engineNumber]);
 
   // ── Step 5 (formerly step 6): Category & Approval — the state/variable
   // names below still say "step6" (not renamed to avoid a wide, purely
   // cosmetic diff), but this is the screen's Step 5 now. ──
   const [expandedCategory, setExpandedCategory] = useState('');
-  const [selectedCategoryLetter, setSelectedCategoryLetter] = useState('');
-  const [selectedSubCategory, setSelectedSubCategory] = useState('');
+  // Seeded from the task list's own nav params (see goToTaskForm in
+  // dashboardHomeController.ts/serviceTasksController.ts) — an
+  // instant-render fallback for the engineer's locked-category Step 5
+  // card, so it shows immediately (and offline, before/without
+  // loadPreviousData's own fetch or its cache) instead of sitting
+  // completely blank until a real answer arrives. loadPreviousData still
+  // overwrites these the moment it gets one, same as every other field.
+  const [selectedCategoryLetter, setSelectedCategoryLetter] = useState(params.category || '');
+  const [selectedSubCategory, setSelectedSubCategory] = useState(params.subCategory || '');
   // Engineer-only: was category/subCategory already set (by the dealer, at
   // creation) before this screen ever loaded — distinct from
   // selectedCategoryLetter/selectedSubCategory themselves, which the
@@ -614,12 +633,24 @@ export function useSrTaskForm() {
   // which re-fetches `task` on its own and previously left a stale flag
   // behind — the actual bug behind B/C/D/E sometimes falling back to the
   // unlocked full accordion after a refresh.
-  const categoryPresetAtCreation = !!task?.category && !!task?.subCategory;
+  //
+  // Falls back to the nav params (task?.category ?? params.category) only
+  // while `task` itself hasn't loaded yet — offline, before loadPreviousData
+  // ever resolves (live or cached), `task` stays null and this used to
+  // read as "nothing preset", showing the unlocked accordion even though
+  // the category genuinely was preset at creation (selectedCategoryLetter/
+  // selectedSubCategory above already showed the right values, just from
+  // the wrong UI branch). The `task` fallback still wins the moment it
+  // loads, real or cached, so this stays exactly as resilient to the
+  // refresh-desync bug above as before.
+  const presetCategory = task ? task.category : params.category;
+  const presetSubCategory = task ? task.subCategory : params.subCategory;
+  const categoryPresetAtCreation = !!presetCategory && !!presetSubCategory;
   // B/C/D/E's actual designed flow: dealer/AM set category at creation but
   // defer the sub-type to the engineer — distinct from categoryPresetAtCreation
   // above (both set) and from picking live in the unlocked accordion (neither
   // set). Drives a third Step 6 view: category locked, sub-type picker only.
-  const categoryOnlyPresetAtCreation = !!task?.category && !task?.subCategory;
+  const categoryOnlyPresetAtCreation = !!presetCategory && !presetSubCategory;
   const [step6Saving, setStep6Saving] = useState(false);
   const [step6Success, setStep6Success] = useState(false);
   const [step6Error, setStep6Error] = useState('');
@@ -639,29 +670,17 @@ export function useSrTaskForm() {
     setSelectedSubCategory(sub);
   }, []);
 
-  // Step 3's Notes/Suggestion Comment/Voice of Customer fields, sent
-  // together in the Complete/Send-for-Approval call's body — shared between
-  // both flows below rather than duplicated. Each key only appears when
-  // there's actually something to send, matching the empty-guard pattern
-  // the commissioning form's own suggestionComment already uses.
+  // Step 5's Suggestion Comment field, sent in the Complete/Send-for-Approval
+  // call's body — shared between both flows below rather than duplicated.
+  // Only appears when there's actually something to send, matching the
+  // empty-guard pattern the commissioning form's own suggestionComment
+  // already uses.
   const buildFinishExtras = useCallback(() => {
     const extras: Record<string, any> = {};
-    const trimmedNotes = workNotes.trim();
     const trimmedSuggestion = suggestionComment.trim();
-    const trimmedRemark = voiceOfCustomerRemark.trim();
-    const trimmedCustomerName = voiceOfCustomerName.trim();
-    if (trimmedNotes) extras.notes = trimmedNotes;
     if (trimmedSuggestion) extras.suggestionComment = trimmedSuggestion;
-    if (trimmedCustomerName || voiceOfCustomerRating || trimmedRemark) {
-      extras.customerFeedback = {
-        customerName: trimmedCustomerName,
-        rating: voiceOfCustomerRating,
-        comment: trimmedRemark,
-        submittedAt: new Date().toISOString(),
-      };
-    }
     return extras;
-  }, [workNotes, suggestionComment, voiceOfCustomerName, voiceOfCustomerRating, voiceOfCustomerRemark]);
+  }, [suggestionComment]);
 
   const handleSendForApproval = useCallback(async () => {
     if (!selectedCategoryLetter || !selectedSubCategory) return;
@@ -674,6 +693,11 @@ export function useSrTaskForm() {
     if (billingTypeRequired && !billingType) return;
     // Photos/videos/PDFs already uploaded immediately when picked (see
     // mediaQueue/MediaUploadOverlay) — nothing left to upload here.
+    // This dealer/AM action calls finishServiceTask directly (not
+    // putOrQueue — see that function's own comment), so it needs its own
+    // explicit location capture rather than getting it for free the way
+    // every putOrQueue-backed action does.
+    logLocationForAction(`Send For Approval (${formatAssetLabel(gensetSrNumber, engineNumber, taskId)})`);
     setStep6Saving(true);
     setStep6Error('');
     setStep6Success(false);
@@ -714,7 +738,7 @@ export function useSrTaskForm() {
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -742,8 +766,16 @@ export function useSrTaskForm() {
             }))
           : [];
         setCategoryConfig(list);
+        await cacheData(CATEGORY_CONFIG_CACHE_KEY, list);
       } catch (error) {
         console.log('[SR Task Form] Failed to load category config:', error);
+        // Offline — fall back to whatever this device last saw, so the
+        // engineer's own Complete step still has categories/sub-categories
+        // to pick from instead of coming up empty.
+        if (isNetworkError(error)) {
+          const cached = await getCachedData<FinishCategory[]>(CATEGORY_CONFIG_CACHE_KEY);
+          if (cached) setCategoryConfig(cached.data);
+        }
       } finally {
         setCategoryConfigLoading(false);
       }
@@ -804,16 +836,29 @@ export function useSrTaskForm() {
     setFinishing(true);
     setFinishError('');
     try {
-      const token = await getToken();
-      if (!token || !taskId) return;
-      await finishServiceTask(token, taskId, {
-        category: selectedCategoryLetter, subCategory: selectedSubCategory,
-        ...(billingTypeRequired ? { billingType } : {}),
-        ...buildFinishExtras(),
-      });
-      // Navigates straight to the report screen on success, same as
-      // commissioning's own Complete action — OTP sign-off, Approval
-      // Status, and Close Ticket all live there now, not back on this form.
+      if (!taskId) return;
+      // Queued like every other engineer save in this form — this is the
+      // one action (including the Suggestion Comment bundled into it via
+      // buildFinishExtras) that was still calling the API directly, so it
+      // failed outright offline instead of syncing later like everything
+      // else. Matches useTaskFormOtp.ts's handleMarkComplete on the
+      // commissioning side exactly.
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      await putOrQueue(
+        `/api/service/${taskId}/finish`,
+        {
+          category: selectedCategoryLetter, subCategory: selectedSubCategory,
+          ...(billingTypeRequired ? { billingType } : {}),
+          ...buildFinishExtras(),
+        },
+        `Complete Service (${assetLabel})`,
+        `service_finish_${taskId}`,
+        isEngineer
+      );
+      // Navigates straight to the report screen either way (queued or
+      // synced live), same as commissioning's own Complete action — OTP
+      // sign-off, Approval Status, and Close Ticket all live there now,
+      // not back on this form.
       router.replace({
         pathname: '/screens/srTaskReport',
         params: { task: JSON.stringify({ _id: taskId, assetId }) },
@@ -823,7 +868,7 @@ export function useSrTaskForm() {
     } finally {
       setFinishing(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber]);
 
   // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
   // handleFinishService/handleSendForApproval below navigate straight there
@@ -987,8 +1032,20 @@ export function useSrTaskForm() {
       const [faultCodesData, partsData] = await Promise.all([getFaultCodes(token), getParts(token)]);
       setApiFaultCodes(faultCodesData);
       setApiParts(partsData);
+      // Same cache the commissioning form's useTaskFormApiData.ts writes to —
+      // one shared "last known good" copy of these backend-wide lists serves
+      // both forms offline.
+      await Promise.all([cacheData('faultCodes', faultCodesData), cacheData('parts', partsData)]);
     } catch (error) {
       console.log('[SR Task Form] Failed to load fault codes / parts:', error);
+      if (isNetworkError(error)) {
+        const [cachedFaultCodes, cachedParts] = await Promise.all([
+          getCachedData<ApiFaultCode[]>('faultCodes'),
+          getCachedData<ApiPart[]>('parts'),
+        ]);
+        if (cachedFaultCodes) setApiFaultCodes(cachedFaultCodes.data);
+        if (cachedParts) setApiParts(cachedParts.data);
+      }
     } finally {
       setFaultCodesLoading(false);
       setPartsLoading(false);
@@ -1079,11 +1136,7 @@ export function useSrTaskForm() {
 
     // Step 5
     notes, setNotes, step5Saving, step5Success, step5Error, handleSaveNotes,
-    workNotes, setWorkNotes,
     suggestionComment, setSuggestionComment,
-    voiceOfCustomerName, setVoiceOfCustomerName,
-    voiceOfCustomerRating, setVoiceOfCustomerRating,
-    voiceOfCustomerRemark, setVoiceOfCustomerRemark,
 
     // Step 6
     expandedCategory, selectedCategoryLetter, selectedSubCategory,

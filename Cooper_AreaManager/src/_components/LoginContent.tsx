@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet, useWindowDimensions, ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, Platform, Alert, Keyboard } from 'react-native';
+import Constants from 'expo-constants';
 import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import Animated, {
@@ -219,6 +220,19 @@ export function LoginContent({ skipInitialHold = false }: Props) {
                 style={styles.input}
                 keyboardType="email-address"
                 autoCapitalize="none"
+                // Both fields' own padding math is identical (24px left
+                // inset either way) — the "username sits left of password"
+                // mismatch is Android's own autofill UI injecting a small
+                // suggestion icon into this field once it recognizes typed
+                // content as email-shaped, since this field is flagged as
+                // one via keyboardType but the password field below isn't
+                // flagged as a password field at all (it uses custom dot
+                // masking instead of secureTextEntry). Turning autofill
+                // decoration off here keeps both fields visually identical
+                // regardless of what's typed.
+                autoComplete="off"
+                importantForAutofill="no"
+                textContentType="none"
                 value={username}
                 onChangeText={setUsername}
                 returnKeyType="next"
@@ -231,6 +245,17 @@ export function LoginContent({ skipInitialHold = false }: Props) {
                   and its siblings above/below). */}
               <View style={styles.passwordGroup}>
                 <View style={styles.passwordWrapper}>
+                  {/* Literally the same base style object as the email
+                      field above (styles.input), not just matching numbers
+                      — this is what guarantees identical native padding
+                      behavior between the two, since a copy that merely
+                      repeats the same paddingHorizontal value can still
+                      diverge on Android depending on how/where that value
+                      is applied (directly on a standalone TextInput vs
+                      layered through a wrapping View). The eye icon is now
+                      an absolutely positioned overlay (see eyeButton) rather
+                      than a flex sibling, so this TextInput's own box model
+                      never differs from the email field's at all. */}
                   <TextInput
                     ref={register('password')}
                     placeholder="Password"
@@ -240,6 +265,9 @@ export function LoginContent({ skipInitialHold = false }: Props) {
                     onChangeText={handleMaskedPasswordChange}
                     autoCapitalize="none"
                     autoCorrect={false}
+                    autoComplete="off"
+                    importantForAutofill="no"
+                    textContentType="none"
                     returnKeyType="done"
                     onSubmitEditing={handleLogin}
                   />
@@ -278,6 +306,11 @@ export function LoginContent({ skipInitialHold = false }: Props) {
                 }
               </TouchableOpacity>
 
+              {/* Reads app.json's own "version" field directly — the same
+                  single number you bump by hand before each release, not a
+                  separately-tracked copy that could drift out of sync. */}
+              <Text style={styles.versionText}>v{Constants.expoConfig?.version}</Text>
+
               {/* Extra padding so button stays visible above keyboard */}
               <View style={{ height: 40 }} />
             </Animated.View>
@@ -288,6 +321,37 @@ export function LoginContent({ skipInitialHold = false }: Props) {
     </SafeAreaView>
   );
 }
+
+// Shared by the email field (styles.input, unchanged) and the password
+// field (styles.passwordInput, which just adds paddingRight for the eye
+// icon) — a single literal object, not two separately-maintained styles
+// with matching numbers, so Android can never render their left inset
+// differently the way it did when the password field's padding came from
+// a wrapping row instead of the TextInput itself.
+const loginInputBase = {
+  width: '100%' as const,
+  height: 54,
+  borderRadius: 24,
+  paddingHorizontal: 24,
+  paddingVertical: 10,
+  fontSize: 18,
+  color: '#FFFFFF',
+  backgroundColor: '#303036',
+  // Android doesn't reliably center a TextInput's text within a fixed
+  // height on its own (defaults toward top-aligned) — has to be told
+  // explicitly.
+  textAlignVertical: 'center' as const,
+  // Present (and zero) up front so AppTextInput.tsx's focus behavior
+  // (which adds a borderColor, but never sets borderWidth, once a field is
+  // focused) only ever changes a color on an already-existing border —
+  // never introduces a border where none of its style keys existed before.
+  // On Android, that "no border style at all" -> "borderColor appears"
+  // transition can switch which native background drawable the view uses,
+  // which was nudging the text's own position the instant a field was
+  // tapped even though borderWidth was always effectively 0 either way.
+  borderWidth: 0,
+  borderColor: 'transparent',
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -333,28 +397,35 @@ const styles = StyleSheet.create({
   // Frame107 — password field + "Forgot Password?" link grouped with their
   // own tighter 12px gap, distinct from fieldsGroup's 24px rhythm.
   passwordGroup: {
+    width: '100%',
     gap: 12,
   },
   input: {
-    height: 54, borderRadius: 24,
-    paddingHorizontal: 24, paddingVertical: 10,
-    fontSize: 18, color: '#FFFFFF',
-    backgroundColor: '#303036',
+    ...loginInputBase,
   },
+  // Just a positioning context for the eye icon now — no longer a
+  // flexDirection:'row' layout, so it no longer influences the TextInput's
+  // own box model at all.
   passwordWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 54, borderRadius: 24,
-    paddingLeft: 24, paddingRight: 10,
-    backgroundColor: '#303036',
+    position: 'relative',
   },
+  // Built directly off `input` (same paddingHorizontal:24 on the left, same
+  // everything else) rather than a separately-maintained style with
+  // matching numbers — the earlier version only matched the *value* of the
+  // left padding, and Android still rendered it differently depending on
+  // whether that padding sat directly on the TextInput or was inherited
+  // from a wrapping row's own padding. Sharing the literal style object
+  // removes that gap entirely: this can now only ever look identical to
+  // the email field on the left. paddingRight leaves room for the
+  // absolutely positioned eye icon.
   passwordInput: {
-    flex: 1,
-    fontSize: 18, color: '#FFFFFF',
-    paddingVertical: 10,
+    ...loginInputBase,
+    paddingRight: 56,
   },
   eyeButton: {
-    paddingHorizontal: 14, height: 54,
+    position: 'absolute',
+    right: 4, top: 0, bottom: 0,
+    width: 46,
     justifyContent: 'center', alignItems: 'center',
   },
   loginErrorText: {
@@ -371,4 +442,10 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#FFF', fontSize: 18, fontWeight: '400' },
   buttonDisabled: { opacity: 0.7 },
+  versionText: {
+    marginTop: 16,
+    textAlign: 'center',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+  },
 });

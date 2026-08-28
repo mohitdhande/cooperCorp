@@ -17,7 +17,7 @@ import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBan
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { AssetLocationContact } from '../../_components/shared/AssetLocationContact';
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
-import { AnchoredPanel, Anchor } from '../../_components/shared/AnchoredPanel';
+import { AnchoredPanel } from '../../_components/shared/AnchoredPanel';
 import { FreeServiceItem, ServiceCategory } from '../../controllers/newServiceJobController';
 import { FINANCING_BANK_OPTIONS } from '../../_components/srTaskForm/srDropdownOptions';
 import { DateField } from '../../_components/shared/DateField';
@@ -46,6 +46,13 @@ const FREE_SERVICE_STATUS_COLOR: Record<string, { bg: string; text: string; dot:
 };
 const DEFAULT_FREE_SERVICE_STATUS_COLOR = FREE_SERVICE_STATUS_COLOR.no_date;
 
+// GET /api/assets/:id's assetStatus values that are eligible to raise a
+// service request against — 'commissioned' (the normal case) plus
+// 'revalidated' (a commissioning that lapsed and was re-confirmed still
+// counts as commissioned for this gate). Anything else shows the
+// "Commissioning required" notice instead of the form.
+const SERVICEABLE_ASSET_STATUSES = ['commissioned', 'revalidated'];
+
 // Purely a display grouping for the Category list (General/Standard/AMC-
 // CAMC/Special headers) — doesn't change what gets selected or sent to the
 // API, that's still the live categoryConfig entry itself. Matched by title
@@ -70,32 +77,23 @@ function CategoryPickerField({
   onSelect: (cat: ServiceCategory) => void;
 }) {
   const [visible, setVisible] = useState(false);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const triggerRef = useRef<View>(null);
-
-  const openDropdown = () => {
-    triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setVisible(true);
-    });
-  };
 
   return (
-    <View>
-      <TouchableOpacity ref={triggerRef} style={styles.categoryTrigger} activeOpacity={0.7} onPress={openDropdown}>
+    <View style={styles.pickerContainer}>
+      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible((v) => !v)}>
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value?.title || 'Select category...'}
         </Text>
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} anchor={anchor} onRequestClose={() => setVisible(false)} maxHeight={480}>
+      <AnchoredPanel visible={visible} maxHeight={480}>
         {/* flexShrink: 1 (not just AnchoredPanel's own maxHeight+overflow:
             hidden on its outer panel) is what actually makes this scroll —
             without it a plain View child just renders at its full content
             height and gets silently clipped by the panel instead of
             becoming scrollable, which is what cut this list off before. */}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false}>
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           {CATEGORY_DISPLAY_GROUPS.map(({ group, titles }) => (
             <View key={group}>
               <Text style={styles.categoryGroupLabel}>{group}</Text>
@@ -137,24 +135,13 @@ function SubCategoryPickerField({
 }) {
   const isFreeService = category?.title === 'Free Service';
   const [visible, setVisible] = useState(false);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const triggerRef = useRef<View>(null);
-
-  const openDropdown = () => {
-    if (!category) return;
-    triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setVisible(true);
-    });
-  };
 
   return (
-    <View>
+    <View style={styles.pickerContainer}>
       <TouchableOpacity
-        ref={triggerRef}
         style={[styles.categoryTrigger, !category && styles.categoryTriggerDisabled]}
         activeOpacity={0.7}
-        onPress={openDropdown}
+        onPress={() => { if (category) setVisible((v) => !v); }}
       >
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value || 'Select sub-category...'}
@@ -162,13 +149,13 @@ function SubCategoryPickerField({
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} anchor={anchor} onRequestClose={() => setVisible(false)} maxHeight={300}>
+      <AnchoredPanel visible={visible} maxHeight={300}>
         {/* flexShrink: 1 (not just AnchoredPanel's own maxHeight+overflow:
             hidden on its outer panel) is what actually makes this scroll —
             without it a plain View child just renders at its full content
             height and gets silently clipped by the panel instead of
             becoming scrollable. */}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false}>
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           {isFreeService ? (
             freeServiceLoading ? (
               <ActivityIndicator style={{ marginVertical: 20 }} color="#F26722" />
@@ -218,27 +205,18 @@ function SubCategoryPickerField({
 // Plain flat list, same trigger/panel shape as the pickers above.
 function BankPickerField({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
   const [visible, setVisible] = useState(false);
-  const [anchor, setAnchor] = useState<Anchor | null>(null);
-  const triggerRef = useRef<View>(null);
-
-  const openDropdown = () => {
-    triggerRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height });
-      setVisible(true);
-    });
-  };
 
   return (
-    <View>
-      <TouchableOpacity ref={triggerRef} style={styles.categoryTrigger} activeOpacity={0.7} onPress={openDropdown}>
+    <View style={styles.pickerContainer}>
+      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible((v) => !v)}>
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value || 'Select bank...'}
         </Text>
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} anchor={anchor} onRequestClose={() => setVisible(false)} maxHeight={300}>
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false}>
+      <AnchoredPanel visible={visible} maxHeight={300}>
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           {FINANCING_BANK_OPTIONS.map((bank) => (
             <TouchableOpacity
               key={bank}
@@ -425,12 +403,13 @@ export default function NewServiceJobScreen() {
               </TouchableOpacity>
             </>
           )
-        ) : !asset.completedAt ? (
-          // Asset exists but has never had a commissioning task completed on
-          // it (completedAt absent from GET /api/assets/:id) — raising a
-          // service request for it isn't a valid flow, so the New Service
-          // Request form is replaced entirely by this notice instead of
-          // just being disabled/hidden below a still-visible form.
+        ) : !SERVICEABLE_ASSET_STATUSES.includes(asset.assetStatus || '') ? (
+          // Asset exists but isn't commissioned yet (assetStatus from
+          // GET /api/assets/:id isn't 'commissioned' or 'revalidated') —
+          // raising a service request for it isn't a valid flow, so the
+          // New Service Request form is replaced entirely by this notice
+          // instead of just being disabled/hidden below a still-visible
+          // form.
           <>
             {/* Same shared AssetIdentityHeader every task list/form/report
                 screen uses — task/taskPeople are empty here since nothing's
@@ -563,7 +542,7 @@ export default function NewServiceJobScreen() {
                 )}
 
                 <View style={[styles.formField, { marginTop: 16 }]}>
-                  <Text style={styles.formLabel}>Voice of Customer</Text>
+                  <Text style={styles.formLabel}>Voice of Customer <Text style={styles.requiredStar}>*</Text></Text>
                   <TextInput
                     style={[styles.formInput, styles.formTextarea]}
                     placeholder="Additional details..."
@@ -576,14 +555,14 @@ export default function NewServiceJobScreen() {
                   />
                 </View>
 
-        
+
 
                 <View style={{ marginTop: 16 }}>
-                  <DateField label="Due Date" value={dueDate} onChangeText={setDueDate} placeholder="dd/mm/yyyy" />
+                  <DateField label="Due Date" required labelStyle={styles.formLabel} value={dueDate} onChangeText={setDueDate} placeholder="dd/mm/yyyy" />
                 </View>
 
                 <View style={[styles.formField, { marginTop: 16 }]}>
-                  <Text style={styles.formLabel}>Assign To</Text>
+                  <Text style={styles.formLabel}>Assign To <Text style={styles.requiredStar}>*</Text></Text>
                   <TouchableOpacity style={styles.assignToField} onPress={openAssigneePicker}>
                     <UserRoundCog size={18} color="#9CA3AF" />
                     <Text style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]} numberOfLines={1}>
@@ -600,9 +579,9 @@ export default function NewServiceJobScreen() {
                 )}
 
                 <TouchableOpacity
-                  style={[styles.createButton, { marginTop: 20 }, (!selectedAssignee || !jobTitle.trim() || !category || (needsSubCategoryNow && !subCategory)) && styles.createButtonDisabled]}
+                  style={[styles.createButton, { marginTop: 20 }, (!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || !dueDate.trim() || (needsSubCategoryNow && !subCategory)) && styles.createButtonDisabled]}
                   onPress={handleCreateJob}
-                  disabled={!selectedAssignee || !jobTitle.trim() || !category || (needsSubCategoryNow && !subCategory) || creating}
+                  disabled={!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || !dueDate.trim() || (needsSubCategoryNow && !subCategory) || creating}
                 >
                   <Text style={styles.createButtonText}>{creating ? 'Creating…' : 'Create Service Request'}</Text>
                 </TouchableOpacity>
@@ -644,7 +623,7 @@ const styles = StyleSheet.create({
 
   placeholderText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center', marginTop: 40 },
 
-  // Asset found but never commissioned — replaces the New Service Request
+  // Asset found but not commissioned yet — replaces the New Service Request
   // form entirely with this notice.
   commissioningRequiredBox: {
     flexDirection: 'row', gap: 12,
@@ -742,6 +721,9 @@ const styles = StyleSheet.create({
   },
   formTextarea: { height: 100 },
 
+  // The dropdown panel positions itself (position: 'absolute', top: '100%')
+  // relative to this — see AnchoredPanel/DropdownField's own comments.
+  pickerContainer: { position: 'relative' },
   categoryTrigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',

@@ -58,7 +58,13 @@ export function AssignEngineerModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
+        {/* Plain View, not a nested Pressable — matches every other
+            bottom-sheet modal in the app (profile.tsx's photo-options
+            sheet, taskForm.tsx/srTaskForm.tsx's own option sheets). A
+            second Pressable here made the outer/inner overlay negotiate
+            for the touch on Android, which is what made the Select/Assign
+            button below need two taps instead of one. */}
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
           <View style={styles.dragHandle} />
 
           <Text style={styles.title}>{title}</Text>
@@ -148,7 +154,7 @@ export function AssignEngineerModal({
               )}
             </TouchableOpacity>
           </View>
-        </Pressable>
+        </View>
       </Pressable>
     </Modal>
   );

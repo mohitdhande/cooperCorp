@@ -8,7 +8,7 @@ import {
 } from '../../viewModel/commisionAPi';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart } from '../../models/taskForm.types';
 import {
-  ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS, PHASE_OPTIONS,
+  ENGINE_TYPE_OPTIONS, ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS, PHASE_OPTIONS,
   PANEL_TYPE_OPTIONS, CPCB_NORM_OPTIONS,
 } from '../../_components/srTaskForm/srDropdownOptions';
 import { useTaskFormApiData } from './useTaskFormApiData';
@@ -19,6 +19,7 @@ import { cacheData, getCachedData } from '../../utils/offlineCache';
 import { putOrQueue, isNetworkError } from '../../utils/syncEngine';
 import { getPendingBody } from '../../utils/offlineQueue';
 import { getRole, Role } from '../../constants/permissions';
+import { formatAssetLabel } from '../../utils/reportFormatters';
 
 // The old steps 7 (Review) and 8 (Work Completion OTP) were folded into
 // step 6 itself — the completion summary and OTP verification now render
@@ -29,8 +30,10 @@ export const TOTAL_STEPS = 6;
 // ── Commissioning-checks (Group A/B/C/D/E) field definitions ──
 // All Group A/B/C fields share one rule: a "<field>_comment" is only sent
 // when the field's own value is "Not OK" and a comment was actually typed.
-const GROUP_A_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A11', 'A12', 'A13'];
-const GROUP_A_COMMENT_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A11', 'A12', 'A13'];
+// A6 split into A6a/A6b/A6c (3 separate Earthing sub-checks) — each one
+// does use the Not-OK-comment pattern too, same as every other row here.
+const GROUP_A_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6a', 'A6b', 'A6c', 'A7', 'A8', 'A9', 'A10', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A11', 'A12', 'A13'];
+const GROUP_A_COMMENT_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6a', 'A6b', 'A6c', 'A7', 'A8', 'A9', 'A10', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A11', 'A12', 'A13'];
 const GROUP_B_FIELDS = ['B1', 'B2', 'B3', 'B4a', 'B4b', 'B4c', 'B4d', 'B5R', 'B5Y', 'B5B'];
 const GROUP_B_COMMENT_FIELDS = ['B1', 'B2', 'B3', 'B4a', 'B4b', 'B4c', 'B4d'];
 const GROUP_C_FIELDS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18'];
@@ -39,6 +42,13 @@ const LOAD_STAGE_PREFIXES = ['D0', 'D25', 'D50', 'D75', 'D100'];
 const LOAD_STAGE_SUFFIXES = ['LR', 'LY', 'LB', 'VR', 'VY', 'VB', 'F', 'BV', 'REM'];
 const GROUP_D_FIELDS = LOAD_STAGE_PREFIXES.flatMap(p => LOAD_STAGE_SUFFIXES.map(s => `${p}${s}`));
 const GROUP_E_FIELDS = ['E_runHrs'];
+// Customer Handover (Step 5) — confirmed real backend keys, E1-E7. Doesn't
+// collide with Running Hours' own E_runHrs key above (different literal
+// strings), even though both live under the same "E" letter. Comment
+// fields use a "c" suffix (E1c, not E1_comment) — a different convention
+// from every other group's own "_comment" suffix, so this section keeps
+// its own payload-building instead of reusing buildGroupPayload.
+const GROUP_F_FIELDS = ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7'];
 
 // ── Validation-checks (Revalidation task type) fields ──
 // Unlike commissioning checks, each field has its own trigger value for
@@ -74,6 +84,8 @@ export function useTaskForm() {
     taskType?: string;
     assignedToName?: string;
     assignedToRole?: string;
+    gensetNumber?: string;
+    engineNumber?: string;
   }>();
   const assetId = params.assetId || '';
   const taskId = params.taskId || '';
@@ -107,9 +119,21 @@ export function useTaskForm() {
       .catch((error) => console.log('[Task Form] Failed to load role:', error));
   }, []);
 
-  const apiData = useTaskFormApiData({ taskId, showToast });
-  const photos = useTaskFormPhotos({ taskId });
-  const otp = useTaskFormOtp({ taskId, showToast, isEngineer });
+  // Seeded from the task list's own nav params (see goToTaskForm in
+  // commissioningTasksController.ts/dashboardHomeController.ts) — an
+  // instant-render fallback so these two fields show immediately instead of
+  // sitting blank until loadAssetData's own fetch (or its offline cache
+  // fallback) resolves. loadAssetData still overwrites them the moment it
+  // gets a real answer, same as every other field applyAssetData sets.
+  // Declared up here (not down with the rest of Step 1's asset fields)
+  // since apiData/photos/otp below all need them already available for
+  // their own putOrQueue descriptions (see formatAssetLabel).
+  const [gensetSrNumber, setGensetSrNumber] = useState(params.gensetNumber || '');
+  const [engineNumber, setEngineNumber] = useState(params.engineNumber || '');
+
+  const apiData = useTaskFormApiData({ taskId, showToast, isEngineer, gensetNumber: gensetSrNumber, engineNumber });
+  const photos = useTaskFormPhotos({ taskId, isEngineer });
+  const otp = useTaskFormOtp({ taskId, showToast, isEngineer, gensetNumber: gensetSrNumber, engineNumber });
 
   // Step 6's own optional freetext field, sent as suggestionComment in the
   // Complete Task call below — not part of any of the other step-save
@@ -148,13 +172,20 @@ export function useTaskForm() {
     return () => { cancelled = true; };
   }, [taskId, photos.hydrateSitePhotos]);
 
+  // Both lists load once, right when the form opens — not gated to their
+  // own step (currentStep === 3/4) like before. Waiting for the user to
+  // actually reach a step meant that, if they went offline before ever
+  // opening it, that list had never been fetched (or cached) at all —
+  // e.g. reaching Step 4 offline after only ever visiting Step 3 online
+  // left the parts picker empty even though fault codes worked fine.
+  // Loading both up front matches the SR form's own loadFaultCodesAndParts,
+  // which never had this gap.
   useEffect(() => {
-    if (currentStep === 3) apiData.loadFaultCodes();
-    if (currentStep === 4) apiData.loadParts();
-    // apiData's loaders are stable (useCallback with no deps), so this only
-    // needs to react to step changes.
+    apiData.loadFaultCodes();
+    apiData.loadParts();
+    // apiData's loaders are stable (useCallback with no deps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStep]);
+  }, []);
 
   // ── Task type detection ──
   const taskTypeRaw = params.taskType || 'Re-Commissioning';
@@ -174,7 +205,6 @@ export function useTaskForm() {
 
   // ── Step 1 — asset fields ──
   const [gensetModel, setGensetModel] = useState('');
-  const [gensetSrNumber, setGensetSrNumber] = useState('');
   // The raw, untouched asset fetch result — kept separately from the
   // individual editable fields below (gensetSrNumber etc., which the user
   // can change in Step 1) purely so TaskSummaryHeader's identity pill has
@@ -184,7 +214,7 @@ export function useTaskForm() {
   // field of it.
   const [assetDetail, setAssetDetail] = useState<any>(null);
   const [engineModel, setEngineModel] = useState('');
-  const [engineNumber, setEngineNumber] = useState('');
+
   const [engineKw, setEngineKw] = useState('');
   const [engineType, setEngineType] = useState('');
   const [engineFamily, setEngineFamily] = useState('');
@@ -310,7 +340,8 @@ export function useTaskForm() {
     setSectionSuccess(prev => ({ ...prev, [section]: false }));
     try {
       if (!assetId) return;
-      await putOrQueue(`/api/assets/${assetId}`, body, `${SECTION_LABELS[section] || section} (Asset ${assetId})`, `asset_${section}_${assetId}`, isEngineer);
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, assetId);
+      await putOrQueue(`/api/assets/${assetId}`, body, `${SECTION_LABELS[section] || section} (${assetLabel})`, `asset_${section}_${assetId}`, isEngineer);
       setSectionSuccess(prev => ({ ...prev, [section]: true }));
     } catch (error: any) {
       setSectionError(prev => ({
@@ -320,28 +351,31 @@ export function useTaskForm() {
     } finally {
       setSectionSaving(prev => ({ ...prev, [section]: false }));
     }
-  }, [assetId, isEngineer]);
+  }, [assetId, isEngineer, gensetSrNumber, engineNumber]);
 
   const handleSaveGensetIdentification = useCallback(() => saveAssetSection('genset', {
     gensetModel, gensetNumber: gensetSrNumber, engineModel, engineNumber,
-    kw: engineKw, engineType, engineFamily, fuelType, applicationMaterial: application,
-  }), [saveAssetSection, gensetModel, gensetSrNumber, engineModel, engineNumber, engineKw, engineType, engineFamily, fuelType, application]);
+    kw: engineKw, engineType, engineFamily, fuelType, applicationMaterial: application, cpcb: cpcbNorm,
+  }), [saveAssetSection, gensetModel, gensetSrNumber, engineModel, engineNumber, engineKw, engineType, engineFamily, fuelType, application, cpcbNorm]);
 
   const handleSaveAlternatorPanel = useCallback(() => saveAssetSection('alternator', {
     alternatorMake: altMake, alternatorModel: altModel, alternatorSerialNumber: altSn,
     atsSerialNumber: atsSn, batterySerialNumber: batterySn, kva, phase, panelType,
-    controlPanelSerialNumber: panelSn, cpcb: cpcbNorm,
+    controlPanelSerialNumber: panelSn,
     // loadUnbalance itself (the Yes/No answer) was never actually included
     // here before — only the percentage was, so the backend had no way to
     // tell "balanced" apart from "unbalanced but no % entered yet".
     loadUnbalance: loadUnbalance === 'Yes',
     loadUnbalancePercentage: loadUnbalance === 'Yes' && loadUnbalancePercentage ? Number(loadUnbalancePercentage) : null,
     loadUnbalanceComment: loadUnbalance === 'No' ? (loadUnbalanceComment || null) : null,
-  }), [saveAssetSection, altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, cpcbNorm, loadUnbalance, loadUnbalancePercentage, loadUnbalanceComment]);
+  }), [saveAssetSection, altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, loadUnbalance, loadUnbalancePercentage, loadUnbalanceComment]);
 
-  const gensetMissingCount = [gensetModel, engineModel, engineFamily, fuelType, application].filter(v => !v).length;
+  // cpcbNorm moved here from Alternator & Panel — the field itself now
+  // lives on the Genset Identification card (beside Application), so its
+  // "missing" count and save payload moved with it.
+  const gensetMissingCount = [gensetModel, engineModel, engineFamily, fuelType, application, cpcbNorm].filter(v => !v).length;
   const altMissingCount = [
-    altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, cpcbNorm, loadUnbalance,
+    altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, loadUnbalance,
   ].filter(v => !v).length;
 
   // ── Step 2 — commissioning checks (Group A/B/C/D/E) ──
@@ -374,7 +408,7 @@ export function useTaskForm() {
   // as the asset sections above, layered group by group since the backend
   // returns every group's fields merged into one flat commissioningChecks
   // object.
-  const CHECK_GROUP_KEYS = ['groupA', 'groupB', 'groupC', 'groupD', 'groupE'];
+  const CHECK_GROUP_KEYS = ['groupA', 'groupB', 'groupC', 'groupD', 'groupE', 'groupF'];
 
   const loadCommissioningChecks = useCallback(async () => {
     if (!taskId) return;
@@ -468,10 +502,11 @@ export function useTaskForm() {
       // Same shape saveCommissioningProgress sends — replicated directly
       // here (instead of calling that function) so a network failure can
       // fall through to putOrQueue's own queueing instead of throwing.
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
       const { queued } = await putOrQueue(
         `/api/commissioning/${taskId}/progress`,
         { commissioningChecks: payload },
-        `Checks — ${groupKey} (Task ${taskId})`,
+        `Checks — ${groupKey} (${assetLabel})`,
         `checks_${groupKey}_${taskId}`,
         isEngineer
       );
@@ -484,7 +519,7 @@ export function useTaskForm() {
     } finally {
       setSectionSaving(prev => ({ ...prev, [groupKey]: false }));
     }
-  }, [taskId, showToast, isEngineer]);
+  }, [taskId, showToast, isEngineer, gensetSrNumber, engineNumber]);
 
   const handleSaveGroupA = useCallback(
     () => saveGroupChecks('groupA', buildGroupPayload(GROUP_A_FIELDS, GROUP_A_COMMENT_FIELDS)),
@@ -508,6 +543,17 @@ export function useTaskForm() {
     GROUP_E_FIELDS.forEach(key => { if (commissioningChecks[key]) payload[key] = commissioningChecks[key]; });
     return saveGroupChecks('groupE', payload);
   }, [saveGroupChecks, commissioningChecks]);
+  const handleSaveCustomerHandover = useCallback(() => {
+    const payload: Record<string, string> = {};
+    GROUP_F_FIELDS.forEach(key => {
+      if (commissioningChecks[key]) payload[key] = commissioningChecks[key];
+      // "c" suffix, not "_comment" — this section's own confirmed
+      // convention, only sent once the row's actually marked "No".
+      const comment = commissioningChecks[`${key}c`];
+      if (commissioningChecks[key] === 'No' && comment) payload[`${key}c`] = comment;
+    });
+    return saveGroupChecks('groupF', payload);
+  }, [saveGroupChecks, commissioningChecks]);
 
   const handleSaveValidationChecks = useCallback(async () => {
     const section = 'validationChecks';
@@ -524,10 +570,11 @@ export function useTaskForm() {
         if (validationChecks[key] === trigger && comment) payload[`${key}_comment`] = comment;
       });
 
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
       const { queued } = await putOrQueue(
         `/api/commissioning/${taskId}/progress`,
         { validationChecks: payload },
-        `Validation Checks (Task ${taskId})`,
+        `Validation Checks (${assetLabel})`,
         `validation_${taskId}`,
         isEngineer
       );
@@ -540,7 +587,7 @@ export function useTaskForm() {
     } finally {
       setSectionSaving(prev => ({ ...prev, [section]: false }));
     }
-  }, [taskId, validationChecks, showToast, isEngineer]);
+  }, [taskId, validationChecks, showToast, isEngineer, gensetSrNumber, engineNumber]);
 
   // ── Step 3 — complaint codes ──
   const [selectedComplaintCodes, setSelectedComplaintCodes] = useState<SelectedComplaintCode[]>([]);
@@ -723,10 +770,11 @@ export function useTaskForm() {
       body.coolantLevel = coolantLevel || undefined;
       if (coolantLevel.toUpperCase() === 'NOT OK' && readings.coolantLevelComment) body.coolantLevelComment = readings.coolantLevelComment;
 
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
       const { queued } = await putOrQueue(
         `/api/commissioning/${taskId}/readings`,
         { readings: body },
-        `Electrical Readings (Task ${taskId})`,
+        `Electrical Readings (${assetLabel})`,
         `readings_${taskId}`,
         isEngineer
       );
@@ -742,7 +790,7 @@ export function useTaskForm() {
     } finally {
       setReadingsSaving(false);
     }
-  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer]);
+  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
 
   // Step 6's "Complete" action: every photo/video/PDF has already uploaded
   // immediately when it was picked (see useTaskFormPhotos/
@@ -818,7 +866,7 @@ export function useTaskForm() {
     loadUnbalancePercentage, setLoadUnbalancePercentage,
     loadUnbalanceComment, setLoadUnbalanceComment,
     commissioningDate, setCommissioningDate,
-    ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS, PHASE_OPTIONS,
+    ENGINE_TYPE_OPTIONS, ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS, PHASE_OPTIONS,
     PANEL_TYPE_OPTIONS, CPCB_NORM_OPTIONS,
     gensetMissingCount, altMissingCount,
     handleSaveGensetIdentification, handleSaveAlternatorPanel,
@@ -829,6 +877,7 @@ export function useTaskForm() {
     prefillChecks, handleLoadPrefillChecks,
     validationChecks, updateValidationCheck,
     handleSaveGroupA, handleSaveGroupB, handleSaveGroupC, handleSaveGroupD, handleSaveGroupE,
+    handleSaveCustomerHandover,
     handleSaveValidationChecks,
 
     // Step 3

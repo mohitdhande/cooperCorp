@@ -8,9 +8,14 @@ import { SitePhoto } from '../../models/taskForm.types';
 import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } from '../../utils/photoValidation';
 import { splitMediaByExtension, videoFileName } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
+import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
 
 type UseTaskFormPhotosArgs = {
   taskId: string;
+  // Threaded straight into useMediaUploadQueue's own offlineEnabled — same
+  // engineer-only scoping as every other offline feature in this form (see
+  // useTaskForm.ts's own isEngineer comment).
+  isEngineer: boolean;
 };
 
 function toSitePhoto(item: QueueItem): SitePhoto {
@@ -22,7 +27,7 @@ function toSitePhoto(item: QueueItem): SitePhoto {
 // useMediaUploadQueue) the moment it's picked/captured, rather than sitting
 // local until a final "Complete" batch upload — see MediaUploadOverlay for
 // the overlay this drives.
-export function useTaskFormPhotos({ taskId }: UseTaskFormPhotosArgs) {
+export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs) {
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
   const [runningHoursPhotos, setRunningHoursPhotos] = useState<SitePhoto[]>([]);
@@ -45,13 +50,26 @@ export function useTaskFormPhotos({ taskId }: UseTaskFormPhotosArgs) {
     },
   }), [taskId]);
 
+  const persistSiteFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, formKind: 'commissioning', taskId, target: 'site',
+  }), [taskId]);
+  const persistRunningHoursFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, formKind: 'commissioning', taskId, target: 'runningHours',
+  }), [taskId]);
+
   const siteQueue = useMediaUploadQueue(
     uploaders,
-    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), [])
+    useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), []),
+    isEngineer,
+    persistSiteFailure
   );
   const runningHoursQueue = useMediaUploadQueue(
     uploaders,
-    useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), [])
+    useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), []),
+    isEngineer,
+    persistRunningHoursFailure
   );
 
   // Android's native camera intent can't mix photo and video capture in

@@ -656,15 +656,6 @@ export const getParts = async (token: string) => {
   return response.data;
 };
 
-export const saveStepProgress = async (token: string, taskId: string, body: object) => {
-  const response = await axiosClient.put(
-    `/api/commissioning/${taskId}/save-progress`,
-    body,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return response.data;
-};
-
 export const generateCommissioningOtp = async (token: string, taskId: string) => {
   const response = await axiosClient.post(
     `/api/commissioning/${taskId}/otp/generate`,
@@ -1105,7 +1096,13 @@ const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string
     };
     xhr.onerror = () => {
       if (aborted) return;
-      reject(new Error('GCS video upload network error'));
+      // Tagged the same way abortError() tags its own Error — this has no
+      // axios request/response object for isNetworkError (syncEngine.ts) to
+      // key off, so useMediaUploadQueue's isRetryableFailure checks this
+      // name directly to decide whether to auto-retry once back online.
+      const err: any = new Error('GCS video upload network error');
+      err.name = 'NetworkError';
+      reject(err);
     };
     xhr.onabort = () => {
       aborted = true;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCar
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
+import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { useTaskReportController } from '../../controllers/taskReportController';
 import {
   val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName, getTaskPeople,
@@ -76,7 +77,11 @@ const COMMISSIONING_GROUP_A = [
   ['A3', 'All canopy doors open fully for service access'],
   ['A4', 'DG set room ventilation (if installed in a room)'],
   ['A5', 'Fitment of exhaust silencer and exhaust piping'],
-  ['A6', 'Earthing (2 pits genset/panel body, 1 neutral, 1 alternator)'],
+  // Split into 3 sub-checks, matching taskForm.tsx's own Step 2 — A6a/A6b/
+  // A6c are the confirmed real backend field keys for these.
+  ['A6a', 'A. 2 Nos. of earthing pits for genset and control panel Body'],
+  ['A6b', 'B. 1 Nos. of earthing pit for neutral.'],
+  ['A6c', 'C. 1 Nos. of earthing pit for alternator.'],
   ['A7', 'Visually check all fasteners'],
   ['A8', 'Visually check wiring connections in control panel'],
   ['A9', '230V supply for battery charger (if external charger fitted)'],
@@ -109,6 +114,20 @@ const COMMISSIONING_GROUP_C = [
   ['C15', 'Dosing Module Fitment & Connection'],
   ['C16', 'ATS Control Module Fitment & Connections'],
   ['C17', 'ATS System Working'],
+];
+
+// Customer Handover (Step 5) — shown with an "E" badge to match
+// taskForm.tsx. Confirmed real backend keys: E1-E7, Yes/No values, "c"-
+// suffixed comments (E1c, not E1_comment) — passed to renderCheckGroup
+// below via its own commentSuffix param.
+const COMMISSIONING_GROUP_F = [
+  ['E1', 'Demonstrate operation of Genset — Starting & stopping.'],
+  ['E2', 'Demonstrate daily checks of Genset.'],
+  ['E3', 'Demonstrate AMF panel operation (if applicable).'],
+  ['E4', 'Demonstrate how to put load on DG set.'],
+  ['E5', "Explain Do's & Don'ts of DG set."],
+  ['E6', 'Explain ATS function & DEF filling process.'],
+  ['E7', 'Use Low Sulphur Diesel only as per standard specified.'],
 ];
 
 const VALIDATION_GROUP_A = [
@@ -153,7 +172,7 @@ const VALIDATION_GROUP_G = [
   ['G2', 'Overall Condition of Engine and Alternator'],
 ];
 
-const renderCheckGroup = (letter: string, title: string, items: string[][], checks: Record<string, any>) => (
+const renderCheckGroup = (letter: string, title: string, items: string[][], checks: Record<string, any>, commentSuffix = '_comment') => (
   <View key={letter} style={{ marginBottom: 18 }}>
     <View style={styles.groupHeaderRow}>
       <View style={styles.groupLetterCircle}>
@@ -162,7 +181,7 @@ const renderCheckGroup = (letter: string, title: string, items: string[][], chec
       <Text style={styles.groupHeaderTitle}>{title}</Text>
     </View>
     {items.map(([key, label]) => (
-      <CheckRow key={key} label={label} value={checks[key]} comment={checks[`${key}_comment`]} />
+      <CheckRow key={key} label={label} value={checks[key]} comment={checks[`${key}${commentSuffix}`]} />
     ))}
   </View>
 );
@@ -187,7 +206,7 @@ export default function TaskReportScreen() {
   const initialTask = safeJsonParse<any>(params.task) ?? null;
 
   const {
-    task, asset: a, isLoading, refreshing, onRefresh, detailError,
+    task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
@@ -204,6 +223,7 @@ export default function TaskReportScreen() {
   const [engineExpanded, setEngineExpanded] = useState(false);
   const [alternatorExpanded, setAlternatorExpanded] = useState(false);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  const [customerHandoverExpanded, setCustomerHandoverExpanded] = useState(false);
   const [complaintExpanded, setComplaintExpanded] = useState(false);
   const [partsExpanded, setPartsExpanded] = useState(false);
   const [readingsExpanded, setReadingsExpanded] = useState(false);
@@ -244,6 +264,8 @@ export default function TaskReportScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScreenBackground />
+
+      {isLoading && <LoadingOverlay message="Loading full report..." />}
 
       <View style={[styles.header, { paddingHorizontal: headerPad }]}>
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
@@ -292,13 +314,6 @@ export default function TaskReportScreen() {
             </View>
           </View>
         </View>
-
-        {isLoading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#1E1951" />
-            <Text style={styles.loadingText}>Loading full report...</Text>
-          </View>
-        )}
 
         <View style={{ marginTop: 16 }}>
           <ActivityHistoryCard task={task} />
@@ -443,8 +458,7 @@ export default function TaskReportScreen() {
           )}
         </ReportSectionCard>
 
-        {!isPreCommissioning && (
-          <ReportSectionCard
+        <ReportSectionCard
             title={isRevalidation ? 'Validation Checks' : 'Commissioning Checks'}
             expanded={checksExpanded}
             onToggle={() => setChecksExpanded(!checksExpanded)}
@@ -521,6 +535,15 @@ export default function TaskReportScreen() {
                 </View>
               </>
             )}
+          </ReportSectionCard>
+
+        {!isRevalidation && (
+          <ReportSectionCard
+            title="Customer Handover"
+            expanded={customerHandoverExpanded}
+            onToggle={() => setCustomerHandoverExpanded(!customerHandoverExpanded)}
+          >
+            {renderCheckGroup('E', 'Customer Handover', COMMISSIONING_GROUP_F, commissioningChecks, 'c')}
           </ReportSectionCard>
         )}
 
@@ -829,7 +852,22 @@ export default function TaskReportScreen() {
             never shows alongside it. */}
         {isOtpPending && (
           <View style={[styles.otpPendingBar, { marginHorizontal: hPad, marginBottom: 16, paddingHorizontal: hPad }]}>
-            <TouchableOpacity style={styles.otpPendingButton} onPress={openOtpSheet}>
+            {/* Styled disabled while offline (not the RN `disabled` prop —
+                that would swallow the tap entirely) so a tap still lands
+                and can show why it's blocked, instead of just doing
+                nothing. OTP generate/verify are inherently live-only (see
+                commisionAPi.ts) and can't queue for later like every other
+                save in this app now can. */}
+            <TouchableOpacity
+              style={[styles.otpPendingButton, isOffline && styles.otpPendingButtonDisabled]}
+              onPress={() => {
+                if (isOffline) {
+                  Alert.alert('You\'re offline', 'Verifying the customer OTP needs an internet connection. Please try again once you\'re back online.');
+                  return;
+                }
+                openOtpSheet();
+              }}
+            >
               <Text style={styles.otpPendingButtonText}>Verify Client OTP</Text>
             </TouchableOpacity>
           </View>
@@ -1069,6 +1107,7 @@ const styles = StyleSheet.create({
     height: 56,
   },
   otpPendingButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  otpPendingButtonDisabled: { backgroundColor: '#FBC7A4' },
 
   // "OTP Pending" card — sits in the scroll content, states the fact;
   // the actual "Verify Client OTP" button lives in the floating footer.
@@ -1232,8 +1271,6 @@ const styles = StyleSheet.create({
   identityPill: { borderRadius: 100, paddingHorizontal: 14, paddingVertical: 7 },
   identityPillText: { fontSize: 13, fontWeight: '700' },
 
-  loadingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
-  loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
 
   fieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
   fieldHalf: { width: '48%' },

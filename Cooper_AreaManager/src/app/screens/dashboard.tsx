@@ -226,6 +226,88 @@ export default function DashboardScreen() {
     );
   }
 
+  // Engineers get a drastically simplified view while offline (cached
+  // dashboard data) — just the offline banner + Active Task carousel, no
+  // Insights/team/SR-approvals content that would be stale or meaningless
+  // without a live connection. Reuses the same showingCachedDashboard flag
+  // and Active Task carousel state/handlers as the normal dashboard below,
+  // so tapping a card still opens the task form exactly as it does online.
+  if (getRole(profile.role) === 'engineer' && showingCachedDashboard) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+        <DashboardBackground />
+        {(activeTasksLoading || Object.values(taskActionLoading).some(Boolean)) && <LoadingOverlay />}
+
+        <ScrollView
+          style={{ flex: 1 }}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 130, paddingTop: 12 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
+        >
+          <View style={[styles.offlineDataBanner, { marginHorizontal: hPad }]}>
+            <CloudOff size={14} color="#6B7280" />
+            <Text style={styles.offlineDataBannerText}>Showing saved data — no connection right now</Text>
+          </View>
+          <PendingSyncBanner />
+
+          <View style={[styles.sectionHeaderRow, { paddingHorizontal: hPad, marginTop: 20 }]}>
+            <Text style={styles.sectionTitle}>
+              {showingCompleted ? 'Recents' : 'Active Task'}
+            </Text>
+            {activeCarouselList.length > 0 && (
+              <PageController
+                current={activeCarouselIndex + 1}
+                total={activeCarouselList.length}
+                onPrev={showingCompleted ? goToPrevCompleted : goToPrevTask}
+                onNext={showingCompleted ? goToNextCompleted : goToNextTask}
+              />
+            )}
+          </View>
+
+          {activeTasksLoading ? null : activeTasksError ? (
+            <View style={{ paddingHorizontal: hPad }}>
+              <Text style={styles.teamStatusText}>{activeTasksError}</Text>
+            </View>
+          ) : activeCarouselList.length === 0 ? (
+            <View style={{ paddingHorizontal: hPad }}>
+              <EmptyActiveTaskCard />
+            </View>
+          ) : (
+            <ScrollView
+              ref={activeCarouselRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              decelerationRate="fast"
+              onMomentumScrollEnd={(e) => {
+                const newIndex = Math.round(e.nativeEvent.contentOffset.x / width);
+                if (showingCompleted) setCompletedCarouselIndex(newIndex);
+                else setCarouselIndex(newIndex);
+              }}
+            >
+              {activeCarouselList.map((task: any) => (
+                <View key={task._id} style={{ width, paddingHorizontal: hPad }}>
+                  <TaskPreviewCard
+                    task={task}
+                    effectiveStatus={taskStatusOverrides[task._id] || task.status}
+                    isLoading={!!taskActionLoading[task._id]}
+                    errorMsg={taskActionError[task._id]}
+                    onArrowPress={() => handleArrowPress(task)}
+                    onAcceptPress={showingCompleted ? undefined : () => handleAcceptActiveTask(task)}
+                  />
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </ScrollView>
+
+        <View style={styles.floatingFooter} pointerEvents="box-none">
+          <BottomNavBar active="home" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const showTeamSection = permissions.hasMyTeam;
 
   return (

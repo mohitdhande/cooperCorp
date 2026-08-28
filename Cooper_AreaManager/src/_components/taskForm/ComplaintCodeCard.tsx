@@ -22,15 +22,34 @@ type Props = {
 // A selected complaint code — a read-only summary (code/priority pills,
 // title, colored Observation/Root Cause/Corrective Action blocks) by
 // default, switching to editable text areas once the pencil button is
-// tapped; tapping the checkmark that replaces it saves and collapses back
-// to the summary view. Corrective action is SR (service) tasks only — pass
+// tapped. Corrective action is SR (service) tasks only — pass
 // onChangeCorrectiveAction to show that field.
+//
+// Two distinct save mechanisms, one per phase:
+// - Before the very first save (a freshly-added, never-saved code), the
+//   top-right button is disabled — there's nothing to "edit again" yet —
+//   and the dedicated green circle below is the only way to save.
+// - After that first save, the green circle disappears and the top-right
+//   button takes over entirely: it shows a pencil in view mode (tap to
+//   edit), swaps to a checkmark once editing (tap to save the update and
+//   collapse back to the summary view, pencil again).
 export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChangeRootCause, onChangeCorrectiveAction, onSave, isSaving }: Props) {
   // Freshly-added codes (item.isNew) open straight into the editable
   // fields instead of an empty read-only summary — only re-collapses to
   // the summary view once actually saved. Only read once per card (a new
   // uid mounts a new card instance), so editing later doesn't reopen it.
   const [isEditing, setIsEditing] = useState(!!item.isNew);
+  const [hasSavedOnce, setHasSavedOnce] = useState(!item.isNew);
+
+  const handleTopRightPress = () => {
+    if (!hasSavedOnce) return;
+    if (isEditing) {
+      onSave();
+      setIsEditing(false);
+    } else {
+      setIsEditing(true);
+    }
+  };
 
   return (
     <View style={styles.card}>
@@ -43,12 +62,22 @@ export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChang
           <TouchableOpacity style={[styles.actionButton, styles.actionButtonLeft]} onPress={onRemove}>
             <X size={20} color="#0F0F0F" />
           </TouchableOpacity>
-          {/* Pure open/close toggle for the edit fields — saving is the
-              dedicated green button below, which was already doing the
-              exact same onSave() call this used to duplicate while
-              editing. */}
-          <TouchableOpacity style={[styles.actionButton, styles.actionButtonRight]} onPress={() => setIsEditing((v) => !v)}>
-            <Pencil size={20} color="#0F0F0F" />
+          {/* Disabled until the first save (nothing to re-edit yet); after
+              that, doubles as both the edit-toggle and the save action —
+              pencil opens editing, and the same button turns into a
+              checkmark that saves and collapses back to the summary. */}
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionButtonRight, !hasSavedOnce && styles.actionButtonDisabled]}
+            onPress={handleTopRightPress}
+            disabled={!hasSavedOnce || (isEditing && isSaving)}
+          >
+            {isEditing && isSaving ? (
+              <ActivityIndicator size="small" color="#0F0F0F" />
+            ) : isEditing ? (
+              <CheckCheck size={20} color="#0F0F0F" />
+            ) : (
+              <Pencil size={20} color="#0F0F0F" />
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -119,19 +148,23 @@ export function ComplaintCodeCard({ item, onRemove, onChangeObservation, onChang
         </>
       )}
 
-      {/* Always visible (not just while editing) — this card's own save,
+      {/* Only shown before the first save — this card's own save,
           independent of every other complaint code card's. Same green
           circular double-check button as SelectedPartCard's own save
-          button, for visual consistency between the two card types. */}
-      <View style={styles.saveRow}>
-        <TouchableOpacity
-          style={styles.saveButton}
-          onPress={() => { onSave(); setIsEditing(false); }}
-          disabled={isSaving}
-        >
-          {isSaving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <CheckCheck size={18} color="#FFFFFF" />}
-        </TouchableOpacity>
-      </View>
+          button, for visual consistency between the two card types. Once
+          saved once, the top-right button takes over editing/saving and
+          this disappears for good on this card. */}
+      {!hasSavedOnce && (
+        <View style={styles.saveRow}>
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={() => { onSave(); setIsEditing(false); setHasSavedOnce(true); }}
+            disabled={isSaving}
+          >
+            {isSaving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <CheckCheck size={18} color="#FFFFFF" />}
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -187,6 +220,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 10, borderBottomRightRadius: 10,
     borderTopLeftRadius: 2, borderBottomLeftRadius: 2,
   },
+  actionButtonDisabled: { opacity: 0.4 },
   titleBlock: { gap: 2 },
   title: {
     fontWeight: '700',

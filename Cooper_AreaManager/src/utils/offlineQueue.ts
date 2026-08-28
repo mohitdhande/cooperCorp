@@ -133,3 +133,30 @@ export async function getPendingBody(dedupeKey: string): Promise<Record<string, 
   const match = queue.find((a) => a.dedupeKey === dedupeKey);
   return match ? match.body : null;
 }
+
+// Reconstructs the in-memory "already accepted/started" status bump that
+// handleAcceptActiveTask/handleStartActiveTask (dashboardHomeController.ts,
+// commissioningTasksController.ts, serviceTasksController.ts) each apply
+// optimistically the instant those actions are tapped — from this durable
+// queue instead, since a fresh mount of any of those controllers (e.g. the
+// bottom nav's router.replace always creating a brand new screen instance
+// rather than popping back to the existing one) resets that in-memory state
+// to {} and loses the bump entirely. Without this, a task accepted/started
+// while offline would revert to showing its stale pre-accept/start status
+// after any such remount, even though the accept/start is still safely
+// queued and waiting to sync. putOrQueue's dedupeKeys for these two actions
+// are predictable (`${kind}_accept_${taskId}` / `${kind}_start_${taskId}`),
+// so this just checks which of those are still sitting in the queue —
+// nothing to find once the queued action has actually synced and been
+// removed, since a live refetch by then already reflects the real status.
+export async function deriveQueuedTaskStatusOverrides(tasks: { _id: string; __kind?: string }[]): Promise<Record<string, string>> {
+  const queue = await readQueue();
+  const dedupeKeys = new Set(queue.map((action) => action.dedupeKey));
+  const overrides: Record<string, string> = {};
+  tasks.forEach((task) => {
+    const kind = task.__kind === 'service' ? 'service' : 'commissioning';
+    if (dedupeKeys.has(`${kind}_start_${task._id}`)) overrides[task._id] = 'IN_PROGRESS';
+    else if (dedupeKeys.has(`${kind}_accept_${task._id}`)) overrides[task._id] = 'ACCEPTED';
+  });
+  return overrides;
+}

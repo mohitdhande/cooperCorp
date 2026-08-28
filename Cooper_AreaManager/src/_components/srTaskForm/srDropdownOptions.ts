@@ -2,8 +2,9 @@
 export const ENGINE_TYPE_OPTIONS = ['TC 3000', 'NA 3000', 'TC 1500', 'NA 1500', 'Other'];
 
 export const ENGINE_FAMILY_OPTIONS = [
-  'Cyl', 'V Twin', '3Cycl Bosch', '3 Cyl Stanadyne',
-  '4 Cyl 4.5 Ltr', '6 Cyl 6.8 Ltr', '6 Cyl 7.8 Ltr',
+  'Single cylinder', 'V Twin', '2 cylinder CRDI', '2 cylinder MECH',
+  '3 cylinder Bosch', '3 cylinder stanadyne',
+  '4 cylinder 4.5 Ltr', '6 cylinder 6.8 Ltr', '6 cylinder 7.8 Ltr',
   'Escort Kubota', 'VECV',
 ];
 
@@ -11,14 +12,14 @@ export const FUEL_TYPE_OPTIONS = ['Diesel', 'CNG', 'LNG', 'LPG', 'PNG', 'Biogas'
 
 export const APPLICATION_OPTIONS = [
   'Genset', 'G-Drive', 'Fire Pump', 'Marine', 'APU',
-  'Pump Set', 'Tractor', 'Compressor', 'Lighting Tower',
+  'Pump Set', 'Tractor', 'Compressor', 'Lighting Tower', 'Other'
 ];
 
 export const PHASE_OPTIONS = ['Single Phase', 'Three Phase'];
 
 export const PANEL_TYPE_OPTIONS = ['STD', 'ASAS', 'AMF', 'SYNC'];
 
-export const CPCB_NORM_OPTIONS = ['CPCB I', 'CPCB II', 'CPCB IV+'];
+export const CPCB_NORM_OPTIONS = ['CPCB II', 'CPCB IV+'];
 
 // New Service Request's "Financing Bank" field — only shown for the two
 // Cooper-managed AMC/CAMC categories (letters D/E), which are the ones
@@ -71,7 +72,7 @@ export const SERVICE_CATEGORIES = [
   },
   {
     letter: 'D',
-    name: 'AMC (Annual Maintenance Contract)',
+    name: 'Cooper AMC',
     subCategories: ['AMC Visit', 'PM Service', 'Diesel Filling Rental Genset', 'Breakdown'],
     bg: '#F3E8FF', border: '#D8B4FE', text: '#7E22CE',
     description: 'Preventive and corrective maintenance under a Cooper-managed Annual Maintenance Contract.',
@@ -79,7 +80,7 @@ export const SERVICE_CATEGORIES = [
   },
   {
     letter: 'E',
-    name: 'CAMC (Comprehensive AMC)',
+    name: 'Cooper CAMC',
     subCategories: ['AMC In Scope', 'AMC Out Of Scope', 'Breakdown', 'Demonstration', 'PM Service'],
     bg: '#E0E7FF', border: '#C7D2FE', text: '#4338CA',
     description: 'Comprehensive AMC covering parts and labour, managed by Cooper — all in-scope repairs are included.',

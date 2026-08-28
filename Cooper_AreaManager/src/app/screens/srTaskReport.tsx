@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,9 +13,10 @@ import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCar
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
+import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { useSrTaskReportController } from '../../controllers/srTaskReportController';
 import {
-  val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, getTaskPeople, videoFileName,
+  val, formatDate, formatDateTime12h, formatAddress, getPriorityColor, getPriorityTextColor, getTaskPeople, videoFileName,
 } from '../../utils/reportFormatters';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { safeJsonParse } from '../../utils/safeJsonParse';
@@ -124,11 +125,15 @@ function VerifyOtpSheet({
   onSaveRemark: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={step === 3 ? () => {} : onClose}>
-      {/* Dismissible by tap-outside/X/back on steps 1-2 only — once OTP is
-          verified (step 3), the only way out is explicitly saving (or
-          leaving blank) the customer remark via Save & Close below. */}
-      <Pressable style={styles.otpModalOverlay} onPress={step === 3 ? undefined : onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* Dismissible by tap-outside/X/back at every step, including step 3
+          — OTP verification is already saved server-side (task is already
+          CLIENT_APPROVED) by the time step 3 shows, so dismissing here only
+          ever drops an unsaved, optional remark. Step 3 used to block every
+          exit on the assumption Save & Close would always succeed, but it
+          can legitimately fail (e.g. parts still pending AM review) and
+          that left the sheet with no way out at all. */}
+      <Pressable style={styles.otpModalOverlay} onPress={onClose}>
         <Pressable style={styles.otpSheet} onPress={(e) => e.stopPropagation()}>
           <View style={styles.otpSheetHandle} />
           <View style={styles.otpSheetHeaderRow}>
@@ -136,11 +141,9 @@ function VerifyOtpSheet({
               <Text style={styles.otpSheetTitle}>Client OTP Verification</Text>
               {!!contactNumber && <Text style={styles.otpSheetContactNumber}>{contactNumber}</Text>}
             </View>
-            {step !== 3 && (
-              <TouchableOpacity style={styles.otpCloseButton} onPress={onClose}>
-                <X size={18} color="#6B7280" />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.otpCloseButton} onPress={onClose}>
+              <X size={18} color="#6B7280" />
+            </TouchableOpacity>
           </View>
 
           <OtpStepper step={step} />
@@ -272,11 +275,12 @@ export default function ServiceTaskReportScreen() {
   const initialTask = safeJsonParse<any>(params.task) ?? null;
 
   const {
-    task, asset: a, isLoading, refreshing, onRefresh, detailError,
+    task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     signedPhotoUrls, photosSigning,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    otpVerified, partsDone, workDone,
     isOtpPending,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
@@ -317,6 +321,17 @@ export default function ServiceTaskReportScreen() {
   const completionOtp = task.completionOtp || null;
   const customerFeedback = task.customerFeedback || null;
 
+  // Why Close Ticket is greyed out below, once OTP is verified but the
+  // ticket still isn't closeable — parts and work approval are independent
+  // gates, so either or both can be the reason.
+  const closeBlockedReason = !partsDone && !workDone
+    ? 'Waiting for parts and work approval'
+    : !partsDone
+    ? 'Waiting for parts approval'
+    : !workDone
+    ? 'Waiting for work approval'
+    : '';
+
   const categoryColor =
     SERVICE_CATEGORIES.find((c) => c.letter === category) ||
     { bg: '#F3F4F6', border: '#D1D5DB', text: '#374151', name: 'Service' };
@@ -326,6 +341,8 @@ export default function ServiceTaskReportScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScreenBackground />
 
+      {isLoading && <LoadingOverlay message="Loading full report..." />}
+
       {/* App bar is the ScrollView's own first child (not a fixed sibling
           above it) — the whole screen, header included, scrolls as one
           unit, same fix already applied to newJob.tsx/newServiceJob.tsx/
@@ -333,7 +350,7 @@ export default function ServiceTaskReportScreen() {
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: (canCloseTicket || isOtpPending) ? 210 : 130 }}
+        contentContainerStyle={{ paddingHorizontal: hPad, paddingBottom: ((otpVerified && task.status !== 'CLOSED') || isOtpPending) ? 210 : 130 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
       >
         {/* headerPad (30/420) is wider than this ScrollView's own hPad
@@ -385,13 +402,6 @@ export default function ServiceTaskReportScreen() {
           )}
         </View>
 
-        {isLoading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#1E1951" />
-            <Text style={styles.loadingText}>Loading full report...</Text>
-          </View>
-        )}
-
         {/* Same "Pending Customer Sign-off" banner srTaskForm.tsx's Step 5
             used to show — moved here since OTP verification itself now
             lives on this screen. */}
@@ -403,6 +413,24 @@ export default function ServiceTaskReportScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.pendingSignOffTitle}>Pending Customer Sign-off</Text>
               <Text style={styles.pendingSignOffSubtitle}>Collect OTP from the customer to proceed.</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Customer's already confirmed the work (OTP verified) but the
+            ticket can't close yet — parts and/or work approval still
+            pending. Mutually exclusive with isOtpPending above, with
+            canCloseTicket (which drops this once every gate clears), and
+            with an already-CLOSED ticket (also !canCloseTicket, but for a
+            completely different reason). */}
+        {otpVerified && !canCloseTicket && task.status !== 'CLOSED' && (
+          <View style={styles.completedWaitingBanner}>
+            <View style={styles.completedWaitingIconCircle}>
+              <Check size={18} color="#FFFFFF" strokeWidth={3} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.completedWaitingTitle}>Completed</Text>
+              <Text style={styles.completedWaitingSubtitle}>Waiting for approvals before closing.</Text>
             </View>
           </View>
         )}
@@ -534,7 +562,7 @@ export default function ServiceTaskReportScreen() {
               the top "Pending Customer Sign-off" banner react to — states
               the fact inline in this card too, matching commissioning's
               own merged-card pattern. */}
-          {isOtpPending && (
+          {isOtpPending ? (
             <View style={[styles.otpPendingCard, { marginTop: 16 }]}>
               <View style={styles.otpPendingCardIconCircle}>
                 <Text style={styles.otpPendingCardIconText}>!</Text>
@@ -547,7 +575,18 @@ export default function ServiceTaskReportScreen() {
                 <Text style={styles.otpPendingCardPillText}>PENDING</Text>
               </View>
             </View>
-          )}
+          ) : completionOtp?.verified === true ? (
+            <View style={[styles.partsApprovalBannerDone, { marginTop: 16 }]}>
+              <View style={styles.partsApprovalIconChipDone}>
+                <CheckCircle2 size={16} color="#16A34A" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.partsApprovalTitleDone}>OTP Verified</Text>
+                <Text style={styles.partsApprovalSubtitleDone}>{formatDateTime12h(completionOtp.verifiedAt || task.updatedAt)}</Text>
+              </View>
+              <View style={styles.doneTag}><Text style={styles.doneTagText}>DONE</Text></View>
+            </View>
+          ) : null}
         </View>
 
         <View style={{ marginTop: 16 }}>
@@ -683,18 +722,7 @@ export default function ServiceTaskReportScreen() {
           ) : null}
         </ReportSectionCard>
 
-        <ReportSectionCard title="Service" expanded={serviceExpanded} onToggle={() => setServiceExpanded(!serviceExpanded)}>
-          <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>TYPE OF SERVICE</Text>
-              <Text style={styles.fieldValue}>{val(a.serviceType)}</Text>
-            </View>
-            <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>WARRANTY STATUS</Text>
-              <Text style={styles.fieldValue}>{val(a.warrantyStatus)}</Text>
-            </View>
-          </View>
-        </ReportSectionCard>
+ 
 
         <ReportSectionCard title="Electrical Readings" expanded={readingsExpanded} onToggle={() => setReadingsExpanded(!readingsExpanded)}>
           <InfoRow label="AC Volt R-Y (V)" value={a.acVoltageRY} />
@@ -934,7 +962,7 @@ export default function ServiceTaskReportScreen() {
       {/* Floats over the content instead of pushing the ScrollView up in
           normal flow — same pattern as commissioning's taskReport.tsx.
           No BottomNavBar on this screen (removed) — Verify Client OTP/
-          Close Service are the only actions it offers, so they sit alone
+          Close Ticket are the only actions it offers, so they sit alone
           at the bottom edge instead of alongside nav icons.
           pointerEvents="box-none" lets touches pass through the
           transparent space around the button/bar to whatever scrolled
@@ -947,30 +975,50 @@ export default function ServiceTaskReportScreen() {
             verified), so never shows alongside it. */}
         {isOtpPending && (
           <View style={[styles.closeServiceBar, { paddingHorizontal: hPad }]}>
-            <TouchableOpacity style={styles.closeServiceButton} onPress={openOtpSheet}>
+            {/* Styled disabled while offline (not the RN `disabled` prop —
+                that would swallow the tap entirely) so a tap still lands
+                and can show why it's blocked. OTP generate/verify are
+                inherently live-only (see commisionAPi.ts) and can't queue
+                for later like every other save in this app now can. */}
+            <TouchableOpacity
+              style={[styles.closeServiceButton, isOffline && styles.closeServiceButtonDisabled]}
+              onPress={() => {
+                if (isOffline) {
+                  Alert.alert('You\'re offline', 'Verifying the customer OTP needs an internet connection. Please try again once you\'re back online.');
+                  return;
+                }
+                openOtpSheet();
+              }}
+            >
               <Text style={styles.closeServiceButtonText}>Verify Client OTP</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Same 3-gate close rule as srDetail.tsx/srTaskForm.tsx — the
-            report screen is otherwise read-only, so this is the one
-            action it offers once the ticket is actually eligible to
-            close. */}
-        {canCloseTicket && (
+        {/* Same 3-gate close rule as srDetail.tsx/srTaskForm.tsx, but shown
+            (greyed out, with the reason underneath) as soon as OTP is
+            verified rather than only once every gate has already cleared —
+            so the button reads as "waiting" instead of just disappearing,
+            and turns enabled the moment parts/work approval come through. */}
+        {otpVerified && task.status !== 'CLOSED' && (
           <View style={[styles.closeServiceBar, { paddingHorizontal: hPad }]}>
             <TouchableOpacity
-              style={[styles.closeServiceButton, closingTicket && styles.buttonDisabled]}
+              style={[
+                styles.closeServiceButton,
+                !canCloseTicket && styles.closeServiceButtonPending,
+                canCloseTicket && closingTicket && styles.buttonDisabled,
+              ]}
               onPress={handleCloseTicket}
-              disabled={closingTicket}
+              disabled={!canCloseTicket || closingTicket}
             >
               {closingTicket ? <ActivityIndicator color="#FFFFFF" size="small" /> : (
                 <>
                   <CheckCheck size={18} color="#FFFFFF" />
-                  <Text style={styles.closeServiceButtonText}>Close Service</Text>
+                  <Text style={styles.closeServiceButtonText}>Close Ticket</Text>
                 </>
               )}
             </TouchableOpacity>
+            {!canCloseTicket && !!closeBlockedReason && <Text style={styles.closeServiceHintText}>{closeBlockedReason}</Text>}
             {!!closeTicketError && <Text style={styles.closeServiceErrorText}>{closeTicketError}</Text>}
           </View>
         )}
@@ -1008,6 +1056,12 @@ const styles = StyleSheet.create({
     height: 56,
   },
   closeServiceButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  closeServiceButtonDisabled: { backgroundColor: '#8B84B8' },
+  // Not just the navy button dimmed via opacity — "not eligible to close
+  // yet" reads as its own pale-green waiting state, distinct from the
+  // navy-dimmed "request in flight" state (buttonDisabled) below.
+  closeServiceButtonPending: { backgroundColor: '#A7E8C7' },
+  closeServiceHintText: { color: '#6B7280', fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 8 },
   closeServiceErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 8 },
   detailErrorBanner: {
     backgroundColor: '#FEE2E2', borderRadius: 14,
@@ -1055,6 +1109,21 @@ const styles = StyleSheet.create({
   },
   pendingSignOffTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
   pendingSignOffSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
+
+  completedWaitingBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#16A34A',
+    borderRadius: 20,
+    padding: 16,
+    marginTop: 16,
+  },
+  completedWaitingIconCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  completedWaitingTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  completedWaitingSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
   reportTaskTitle: { fontSize: 16, fontWeight: '700', color: '#000000' },
   reportCatStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   reportCatBadgeCircle: {
@@ -1063,9 +1132,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   reportCatBadgeLetter: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
-
-  loadingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
-  loadingText: { marginLeft: 8, color: '#9CA3AF', fontSize: 13 },
 
   fieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
   fieldHalf: { width: '48%' },

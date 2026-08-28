@@ -1,66 +1,47 @@
 import React from 'react';
-import { Modal, Pressable, StyleSheet, Dimensions } from 'react-native';
-
-export type Anchor = { x: number; y: number; width: number; height: number };
+import { View, StyleSheet } from 'react-native';
 
 type Props = {
   visible: boolean;
-  anchor: Anchor | null;
-  onRequestClose: () => void;
   maxHeight?: number;
-  minWidth?: number;
+  // Numeric (e.g. 220) lets the panel spill wider than a narrow parent
+  // column (Engine Family/CPCB Norm's own 48%-width field, for instance) —
+  // defaults to '100%' (exactly the parent's own width) when omitted.
+  minWidth?: number | string;
   children: React.ReactNode;
 };
 
-const SCREEN_MARGIN = 12;
-const GAP = 6;
-
-// Renders `children` as a small floating panel anchored just below (or,
-// if there isn't room, above) a trigger element's measured on-screen
-// position — instead of a full-width bottom sheet — so pickers open "in
-// place" next to what was tapped, like a native <select>.
-export function AnchoredPanel({ visible, anchor, onRequestClose, maxHeight = 320, minWidth, children }: Props) {
-  if (!visible || !anchor) return null;
-
-  const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
-  const spaceBelow = screenHeight - (anchor.y + anchor.height) - SCREEN_MARGIN;
-  const spaceAbove = anchor.y - SCREEN_MARGIN;
-  const opensUpward = spaceBelow < 160 && spaceAbove > spaceBelow;
-
-  const panelWidth = Math.max(minWidth ?? 0, anchor.width);
-  const left = Math.min(Math.max(anchor.x, SCREEN_MARGIN), screenWidth - panelWidth - SCREEN_MARGIN);
-  const availableHeight = Math.max(120, opensUpward ? spaceAbove : spaceBelow);
+// Renders `children` as a small floating panel anchored right below
+// whatever wraps it — the caller must give that wrapper `position:
+// 'relative'` (DropdownField/CategoryPickerField etc. already do). Not a
+// full-screen Modal anymore: a Modal blocked the whole screen's own
+// scrolling while a dropdown was open (a tap to close it was required
+// before you could scroll at all) — this panel is just part of the normal
+// content instead, so it scrolls together with its own field, no drift,
+// and the rest of the screen keeps scrolling normally while it's open.
+// Trade-off: since it's no longer portaled above everything, it can only
+// reliably paint over content in its own immediate row/card, not over
+// unrelated sections further down a long screen — acceptable for the
+// short field lists these pickers actually live in.
+// No backdrop to tap outside of anymore — closes only when an option is
+// picked or the trigger itself is tapped again (each caller's own
+// openDropdown toggles visible rather than always setting it true).
+export function AnchoredPanel({ visible, maxHeight = 320, minWidth, children }: Props) {
+  if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onRequestClose}>
-      <Pressable style={styles.overlay} onPress={onRequestClose}>
-        <Pressable
-          style={[
-            styles.panel,
-            {
-              left,
-              width: panelWidth,
-              maxHeight: Math.min(maxHeight, availableHeight),
-              ...(opensUpward
-                ? { bottom: screenHeight - anchor.y + GAP }
-                : { top: anchor.y + anchor.height + GAP }),
-            },
-          ]}
-          onPress={() => {}}
-        >
-          {children}
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <View style={[styles.panel, { maxHeight, minWidth: minWidth ?? ('100%' as any) }]}>
+      {children}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-  },
   panel: {
     position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 6,
     backgroundColor: '#fff',
     borderRadius: 14,
     elevation: 8,
@@ -69,5 +50,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 12,
     overflow: 'hidden',
+    zIndex: 1000,
   },
 });

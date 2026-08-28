@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Linking, TextInput } from 'react-native';
+import { Alert, AppState, AppStateStatus, Linking, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { UserProfile } from '../models/Login';
@@ -20,6 +20,12 @@ export function useSrTaskReportController(initialTask: any) {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  // True the moment the live task-detail fetch fails from a genuine network
+  // error (regardless of whether a cache existed to fall back to) — drives
+  // disabling the Verify OTP button below, since OTP generate/verify are
+  // inherently live-only actions (see commisionAPi.ts) that can't queue
+  // for later the way every other save in this app now can.
+  const [isOffline, setIsOffline] = useState(false);
 
   // Returns whether the task detail itself loaded — the asset fetch failing
   // on its own doesn't count as a failure here, since the report still has
@@ -36,6 +42,7 @@ export function useSrTaskReportController(initialTask: any) {
 
       const data = await getServiceTaskById(token, initialTask._id);
       setDetail(data);
+      setIsOffline(false);
       // No user-scoping needed on the cache key — logout already clears all
       // of AsyncStorage, so a stale previous user's cached detail can never
       // leak into a fresh session.
@@ -62,6 +69,7 @@ export function useSrTaskReportController(initialTask: any) {
       // saw for this task instead of leaving the screen on just initialTask
       // (the list's sparse summary).
       if (isNetworkError(error)) {
+        setIsOffline(true);
         const cached = await getCachedData(`service_report_detail_${initialTask._id}`);
         if (cached) { setDetail(cached.data); return true; }
       }
@@ -82,6 +90,29 @@ export function useSrTaskReportController(initialTask: any) {
       setDetailError(ok ? '' : 'Failed to load the latest task details.');
       setIsLoading(false);
     })();
+  }, [fetchDetail]);
+
+  // Re-checks connectivity on its own (same cadence as
+  // dashboardHomeController.ts's own fix) — without this, isOffline only
+  // ever got set right when the screen first loaded; going offline later
+  // while already sitting on this report wouldn't disable the Verify OTP
+  // button until a manual pull-to-refresh. Silent — no loading spinner
+  // every 20s.
+  const appState = useRef(AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        fetchDetail();
+      }
+      appState.current = nextState;
+    });
+    const interval = setInterval(() => {
+      if (appState.current === 'active') fetchDetail();
+    }, 20000);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, [fetchDetail]);
 
   const onRefresh = useCallback(async () => {
@@ -336,10 +367,27 @@ export function useSrTaskReportController(initialTask: any) {
 
   // Save & Close always calls PUT /:id/close — there's no separate
   // /:id/feedback route for service tasks (confirmed: it 404s), unlike
-  // commissioning's own equivalent endpoint. If the task isn't actually
-  // close-eligible yet (parts/work approval still pending), the backend's
-  // own rejection surfaces normally below as remarkError.
+  // commissioning's own equivalent endpoint. Same partsDone/workDone gate
+  // handleCloseTicket enforces below — checked client-side before ever
+  // calling the API instead of just trusting the backend to reject an
+  // ineligible close (confirmed the backend doesn't always reject this
+  // reliably, which let a ticket close once with both approvals still
+  // PENDING).
   const handleSaveRemark = useCallback(async () => {
+    if (!partsDone || !workDone) {
+      // Same wording the backend itself used to reject this — kept
+      // consistent so the message reads the same whether the client or
+      // the server ends up being the one that catches it.
+      setRemarkError(
+        !partsDone && !workDone
+          ? 'Parts and work approval must be reviewed before closing.'
+          : !partsDone
+          ? 'Parts must be reviewed by AM before closing.'
+          : 'Work approval must be confirmed before closing.'
+      );
+      return;
+    }
+
     setRemarkSaving(true);
     setRemarkError('');
     try {
@@ -360,15 +408,16 @@ export function useSrTaskReportController(initialTask: any) {
     } finally {
       setRemarkSaving(false);
     }
-  }, [remark, initialTask?._id, fetchDetail]);
+  }, [remark, initialTask?._id, fetchDetail, partsDone, workDone]);
 
   return {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
-    detailError,
+    detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     signedPhotoUrls, photosSigning,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    otpVerified, partsDone, workDone,
     isOtpPending,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   getMyTasksByStatus, getMyTeamData, reassignServiceTask,
 } from '../viewModel/commisionAPi';
 import { parseApiError } from '../utils/apiError';
-import { flattenTeamTasks, bucketTaskStatus } from '../utils/reportFormatters';
+import { flattenTeamTasks, bucketTaskStatus, formatAssetLabel } from '../utils/reportFormatters';
 import { getPermissions } from '../constants/permissions';
 import { UserProfile } from '../models/Login';
 import { TeamMember } from '../models/myTeam.types';
@@ -14,6 +14,7 @@ import { useAssetTaskSearch } from './useAssetTaskSearch';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
+import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 const PAGE_SIZE = 10;
 
@@ -145,13 +146,27 @@ export function useServiceTasksController() {
           if (!cached) throw fetchErr;
           data = cached.data;
         }
-        setTasks(data.service || []);
+        const serviceTasks = data.service || [];
+        setTasks(serviceTasks);
         setTotalCount(data.counts?.service?.[statusKey] || 0);
         setCounts({
           active: data.counts?.service?.active || 0,
           completed: data.counts?.service?.completed || 0,
           closed: data.counts?.service?.closed || 0,
         });
+
+        // Reconstructs the accept/start status bump from the durable queue
+        // (see deriveQueuedTaskStatusOverrides' own comment) — without this,
+        // this screen would lose it on a bottom-nav remount the same way
+        // the Dashboard did. __kind is tagged here only for this lookup —
+        // putOrQueue's dedupeKeys for service tasks are prefixed "service_",
+        // not the default "commissioning_" this helper otherwise assumes.
+        const queuedOverrides = await deriveQueuedTaskStatusOverrides(
+          serviceTasks.map((t: any) => ({ ...t, __kind: 'service' }))
+        );
+        if (Object.keys(queuedOverrides).length > 0) {
+          setTaskStatusOverrides((prev) => ({ ...queuedOverrides, ...prev }));
+        }
       }
     } catch (err: any) {
       console.log('[Service Tasks] Failed to load tasks:', err);
@@ -162,14 +177,27 @@ export function useServiceTasksController() {
     }
   }, [isAreaManager]);
 
-  useEffect(() => {
-    // Wait for the profile to load first — otherwise this would fire once
-    // against GET /me/tasks before we even know the caller is an area
-    // manager, then immediately again against GET /me/team once isAreaManager
-    // resolves, wasting a request.
-    if (!profile) return;
-    fetchPage(selectedTab, page);
-  }, [fetchPage, selectedTab, page, profile]);
+  // useFocusEffect (not a plain useEffect) — refires both on mount/tab/page
+  // change AND every time this screen regains focus, e.g. coming back from
+  // View Report after closing a ticket. Without this, the list only ever
+  // fetched once and kept showing a task under Completed even after its
+  // status had already moved to Closed server-side, since nothing told
+  // this screen to look again. Same fix as commissioningTasksController.ts.
+  useFocusEffect(
+    useCallback(() => {
+      // Wait for the profile to load first — otherwise this would fire once
+      // against GET /me/tasks before we even know the caller is an area
+      // manager, then immediately again against GET /me/team once isAreaManager
+      // resolves, wasting a request.
+      if (!profile) return;
+      // The AM branch's /me/team tree is cached in teamDataRef — dropped
+      // here too, not just in onRefresh, so regaining focus actually
+      // re-fetches instead of re-bucketing the same stale tree (a no-op
+      // for the engineer path below, which never populates this ref).
+      teamDataRef.current = null;
+      fetchPage(selectedTab, page);
+    }, [fetchPage, selectedTab, page, profile])
+  );
 
   useEffect(() => {
     AsyncStorage.getItem('userData')
@@ -210,6 +238,11 @@ export function useServiceTasksController() {
         assetId: task.asset?._id || '',
         gensetNumber: task.asset?.gensetNumber || '',
         engineNumber: task.asset?.engineNumber || '',
+        // Already sitting right here in the task list's own data — instant
+        // offline render for Step 5's locked-category card, same reasoning
+        // as gensetNumber/engineNumber above.
+        category: task.category || '',
+        subCategory: task.subCategory || '',
       },
     } as any);
   }, [router]);
@@ -239,7 +272,9 @@ export function useServiceTasksController() {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
-      await putOrQueue(`/api/service/${taskId}/accept`, {}, `Accept task (${taskId})`, `service_accept_${taskId}`);
+      const task = tasks.find((t) => t._id === taskId);
+      const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/service/${taskId}/accept`, {}, `Accept task (${assetLabel})`, `service_accept_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'ACCEPTED' }));
     } catch (err: any) {
       const { message } = parseApiError(err, 'Failed to accept task. Please try again.');
@@ -247,13 +282,15 @@ export function useServiceTasksController() {
     } finally {
       setTaskActionLoading((prev) => ({ ...prev, [taskId]: false }));
     }
-  }, []);
+  }, [tasks]);
 
   const handleStartTask = useCallback(async (taskId: string) => {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
-      await putOrQueue(`/api/service/${taskId}/start`, {}, `Start task (${taskId})`, `service_start_${taskId}`);
+      const task = tasks.find((t) => t._id === taskId);
+      const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/service/${taskId}/start`, {}, `Start task (${assetLabel})`, `service_start_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'IN_PROGRESS' }));
     } catch (err: any) {
       const { message } = parseApiError(err, 'Failed to start task. Please try again.');
@@ -261,7 +298,7 @@ export function useServiceTasksController() {
     } finally {
       setTaskActionLoading((prev) => ({ ...prev, [taskId]: false }));
     }
-  }, []);
+  }, [tasks]);
 
   const openAssignPicker = useCallback((task: any) => {
     setAssignPickerTask(task);

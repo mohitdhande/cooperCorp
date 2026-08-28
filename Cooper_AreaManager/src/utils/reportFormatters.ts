@@ -2,6 +2,22 @@
 
 export const val = (v: any) => (v === undefined || v === null || v === '' ? '--' : String(v));
 
+// "Genset ABC123, Engine XYZ456" — used everywhere a putOrQueue description
+// needs to identify which physical asset a queued save/failure belongs to.
+// A raw Mongo _id ("Task 68f2a91c...") means nothing to an engineer reading
+// the pending-sync/failed-sync banners on-site; the genset/engine serial
+// numbers are what they'd actually recognize. Falls back to the task/asset
+// id only when neither serial number is available at all (should be rare —
+// every call site threading this through already has at least one from
+// either the task list's own nav params or the form's own asset fetch).
+export function formatAssetLabel(gensetNumber?: string, engineNumber?: string, fallbackId?: string): string {
+  const parts: string[] = [];
+  if (gensetNumber) parts.push(`Genset ${gensetNumber}`);
+  if (engineNumber) parts.push(`Engine ${engineNumber}`);
+  if (parts.length > 0) return parts.join(', ');
+  return fallbackId ? `Task ${fallbackId}` : 'this asset';
+}
+
 // "1.9 MB" / "850 KB" — used by DocumentsCard's list row next to each
 // added PDF's upload status. Returns '' (renders nothing) when the picker
 // result didn't include a fileSize — not every platform path returns one.

@@ -1,16 +1,33 @@
 import { useCallback, useState } from 'react';
 import { getToken } from '../../utils/tokenStore';
-import { getFaultCodes, getParts, saveStepProgress } from '../../viewModel/commisionAPi';
+import { getFaultCodes, getParts } from '../../viewModel/commisionAPi';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart } from '../../models/taskForm.types';
 import { parseApiError } from '../../utils/apiError';
+import { cacheData, getCachedData } from '../../utils/offlineCache';
+import { isNetworkError, putOrQueue } from '../../utils/syncEngine';
+import { formatAssetLabel } from '../../utils/reportFormatters';
+
+// Shared with the SR form's own loader (useSrTaskForm.ts) — same backend
+// lists, so one cached copy on-device serves both forms.
+const FAULT_CODES_CACHE_KEY = 'faultCodes';
+const PARTS_CACHE_KEY = 'parts';
 
 type UseTaskFormApiDataArgs = {
   taskId: string;
   showToast: (message: string, type: 'success' | 'error') => void;
+  // Threaded into putOrQueue below — same engineer-only offline scoping as
+  // every other save in this form (see useTaskForm.ts's own isEngineer
+  // comment). Matches the SR form's equivalent saves, which already queue.
+  isEngineer: boolean;
+  // Just for putOrQueue's own description (see formatAssetLabel) — a
+  // failed/pending sync banner showing "Task 68f2a91c..." means nothing to
+  // an engineer, the genset/engine serial numbers do.
+  gensetNumber?: string;
+  engineNumber?: string;
 };
 
 // Encapsulates the API interactions for fault codes, parts, and step-level save operations.
-export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs) {
+export function useTaskFormApiData({ taskId, showToast, isEngineer, gensetNumber, engineNumber }: UseTaskFormApiDataArgs) {
   const [apiFaultCodes, setApiFaultCodes] = useState<ApiFaultCode[]>([]);
   const [apiParts, setApiParts] = useState<ApiPart[]>([]);
   const [faultCodesLoading, setFaultCodesLoading] = useState(false);
@@ -29,8 +46,16 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
       if (!token) return;
       const data = await getFaultCodes(token);
       setApiFaultCodes(data);
+      await cacheData(FAULT_CODES_CACHE_KEY, data);
     } catch (error) {
       console.log('Failed to load fault codes:', error);
+      // Offline (or any other failure) — fall back to whatever list was
+      // cached from the last successful load, so the picker still has
+      // options to select from instead of showing empty.
+      if (isNetworkError(error)) {
+        const cached = await getCachedData<ApiFaultCode[]>(FAULT_CODES_CACHE_KEY);
+        if (cached) setApiFaultCodes(cached.data);
+      }
     } finally {
       setFaultCodesLoading(false);
     }
@@ -43,8 +68,13 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
       if (!token) return;
       const data = await getParts(token);
       setApiParts(data);
+      await cacheData(PARTS_CACHE_KEY, data);
     } catch (error) {
       console.log('Failed to load parts:', error);
+      if (isNetworkError(error)) {
+        const cached = await getCachedData<ApiPart[]>(PARTS_CACHE_KEY);
+        if (cached) setApiParts(cached.data);
+      }
     } finally {
       setPartsLoading(false);
     }
@@ -56,18 +86,23 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
     setStep3Error('');
     setStep3Success(false);
     try {
-      const token = await getToken();
-      if (!token) return;
-      await saveStepProgress(token, taskId, {
-        faultCodes: selectedComplaintCodes.map(item => ({
-          codeId: item.codeId,
-          observation: item.observation,
-          rootCause: item.rootCause,
-          correctiveAction: item.correctiveAction,
-        })),
-      });
+      const assetLabel = formatAssetLabel(gensetNumber, engineNumber, taskId);
+      const { queued } = await putOrQueue(
+        `/api/commissioning/${taskId}/save-progress`,
+        {
+          faultCodes: selectedComplaintCodes.map(item => ({
+            codeId: item.codeId,
+            observation: item.observation,
+            rootCause: item.rootCause,
+            correctiveAction: item.correctiveAction,
+          })),
+        },
+        `Fault Codes (${assetLabel})`,
+        `commissioning_faultcodes_${taskId}`,
+        isEngineer
+      );
       setStep3Success(true);
-      showToast('Fault codes saved!', 'success');
+      showToast(queued ? 'Saved on this device — will sync later' : 'Fault codes saved!', 'success');
     } catch (error: any) {
       const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       setStep3Error(msg);
@@ -75,7 +110,7 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
     } finally {
       setStep3Saving(false);
     }
-  }, [showToast, taskId]);
+  }, [showToast, taskId, isEngineer, gensetNumber, engineNumber]);
 
   const savePartsUsed = useCallback(async (selectedParts: SelectedPart[]) => {
     if (!taskId) return;
@@ -83,16 +118,21 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
     setStep4Error('');
     setStep4Success(false);
     try {
-      const token = await getToken();
-      if (!token) return;
-      await saveStepProgress(token, taskId, {
-        partsUsed: selectedParts.map(part => ({
-          partId: part.partId,
-          quantity: part.quantity,
-        })),
-      });
+      const assetLabel = formatAssetLabel(gensetNumber, engineNumber, taskId);
+      const { queued } = await putOrQueue(
+        `/api/commissioning/${taskId}/save-progress`,
+        {
+          partsUsed: selectedParts.map(part => ({
+            partId: part.partId,
+            quantity: part.quantity,
+          })),
+        },
+        `Parts Used (${assetLabel})`,
+        `commissioning_parts_${taskId}`,
+        isEngineer
+      );
       setStep4Success(true);
-      showToast('Parts saved!', 'success');
+      showToast(queued ? 'Saved on this device — will sync later' : 'Parts saved!', 'success');
     } catch (error: any) {
       const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       setStep4Error(msg);
@@ -100,7 +140,7 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
     } finally {
       setStep4Saving(false);
     }
-  }, [showToast, taskId]);
+  }, [showToast, taskId, isEngineer, gensetNumber, engineNumber]);
 
   return {
     apiFaultCodes,

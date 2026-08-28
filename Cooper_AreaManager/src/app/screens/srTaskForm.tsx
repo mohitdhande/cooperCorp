@@ -4,17 +4,7 @@ import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info, Pencil, Plus, Star } from 'lucide-react-native';
-
-// Voice of Customer's 1-5 star rating, labeled the same way for every
-// caller instead of showing a bare number.
-const RATING_LABELS: Record<number, string> = {
-  1: 'Poor',
-  2: 'Fair',
-  3: 'Good',
-  4: 'Very Good',
-  5: 'Excellent',
-};
+import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info, Pencil } from 'lucide-react-native';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
 import { DropdownField } from '../../_components/taskForm/DropdownField';
@@ -30,6 +20,10 @@ import { TaskSummaryHeader } from '../../_components/shared/TaskSummaryHeader';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { MediaUploadOverlay } from '../../_components/shared/MediaUploadOverlay';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
+import { CompleteTaskButton } from '../../_components/shared/CompleteTaskButton';
+import { AddItemButton } from '../../_components/shared/AddItemButton';
+import { SuggestionCommentCard } from '../../_components/shared/SuggestionCommentCard';
+import { SectionSaveButton } from '../../_components/shared/SectionSaveButton';
 import { useFieldFocusChain } from '../../utils/useFieldFocusChain';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { formatFileSize } from '../../utils/reportFormatters';
@@ -389,18 +383,21 @@ export default function SrTaskFormScreen() {
                         <DropdownField plainLabel label="Fuel Type" value={vm.fuelType} options={vm.FUEL_TYPE_OPTIONS} onSelect={vm.setFuelType} />
                       </View>
                     </View>
-                    <View style={styles.fieldFull}>
-                      <DropdownField plainLabel label="Application" value={vm.application} options={vm.APPLICATION_OPTIONS} onSelect={vm.setApplication} />
+                    <View style={styles.fieldRow}>
+                      <View style={styles.fieldHalf}>
+                        <DropdownField plainLabel label="Application" value={vm.application} options={vm.APPLICATION_OPTIONS} onSelect={vm.setApplication} />
+                      </View>
+                      <View style={styles.fieldHalf}>
+                        <DropdownField plainLabel label="CPCB Norm" value={vm.cpcbNorm} options={vm.CPCB_NORM_OPTIONS} onSelect={vm.setCpcbNorm} />
+                      </View>
                     </View>
 
                     {vm.sectionError['genset'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['genset']}</Text> : null}
-                    <TouchableOpacity
-                      style={[styles.checkSaveButton, vm.sectionSuccess['genset'] && styles.checkSaveButtonDone]}
+                    <SectionSaveButton
                       onPress={() => vm.handleSaveAssetSection('genset')}
-                      disabled={vm.sectionSaving['genset']}
-                    >
-                      {vm.sectionSaving['genset'] ? <ActivityIndicator color="#fff" size="small" /> : <CheckCheck size={20} color="#FFFFFF" />}
-                    </TouchableOpacity>
+                      saving={vm.sectionSaving['genset']}
+                      done={vm.sectionSuccess['genset']}
+                    />
                   </>
                 )}
               </View>
@@ -461,7 +458,7 @@ export default function SrTaskFormScreen() {
                         />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>KVA</Text>
+                        <Text style={styles.fieldLabel}>KVA Rating</Text>
                         <TextInput
                           ref={register('kva')}
                           style={styles.fieldInput} value={vm.kva} onChangeText={vm.setKva} keyboardType="numeric"
@@ -481,9 +478,6 @@ export default function SrTaskFormScreen() {
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Panel S/N</Text>
                         <TextInput style={styles.fieldInput} value={vm.panelSn} onChangeText={vm.setPanelSn} />
-                      </View>
-                      <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="CPCB Norm" value={vm.cpcbNorm} options={vm.CPCB_NORM_OPTIONS} onSelect={vm.setCpcbNorm} />
                       </View>
                     </View>
 
@@ -512,13 +506,11 @@ export default function SrTaskFormScreen() {
                     </View>
 
                     {vm.sectionError['alternator'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['alternator']}</Text> : null}
-                    <TouchableOpacity
-                      style={[styles.checkSaveButton, vm.sectionSuccess['alternator'] && styles.checkSaveButtonDone]}
+                    <SectionSaveButton
                       onPress={() => vm.handleSaveAssetSection('alternator')}
-                      disabled={vm.sectionSaving['alternator']}
-                    >
-                      {vm.sectionSaving['alternator'] ? <ActivityIndicator color="#fff" size="small" /> : <CheckCheck size={20} color="#FFFFFF" />}
-                    </TouchableOpacity>
+                      saving={vm.sectionSaving['alternator']}
+                      done={vm.sectionSuccess['alternator']}
+                    />
                   </>
                 )}
               </View>
@@ -556,13 +548,11 @@ export default function SrTaskFormScreen() {
                     </View>
 
                     {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
-                    <TouchableOpacity
-                      style={[styles.checkSaveButton, vm.sectionSuccess['electrical'] && styles.checkSaveButtonDone]}
+                    <SectionSaveButton
                       onPress={() => vm.handleSaveAssetSection('electrical')}
-                      disabled={vm.sectionSaving['electrical']}
-                    >
-                      {vm.sectionSaving['electrical'] ? <ActivityIndicator color="#fff" size="small" /> : <CheckCheck size={20} color="#FFFFFF" />}
-                    </TouchableOpacity>
+                      saving={vm.sectionSaving['electrical']}
+                      done={vm.sectionSuccess['electrical']}
+                    />
                   </>
                 ) : (
                   <View style={styles.readingsDisplayGrid}>
@@ -641,13 +631,11 @@ export default function SrTaskFormScreen() {
                     ))}
 
                     {vm.sectionError['engineParams'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['engineParams']}</Text> : null}
-                    <TouchableOpacity
-                      style={[styles.checkSaveButton, vm.sectionSuccess['engineParams'] && styles.checkSaveButtonDone]}
+                    <SectionSaveButton
                       onPress={() => vm.handleSaveAssetSection('engineParams')}
-                      disabled={vm.sectionSaving['engineParams']}
-                    >
-                      {vm.sectionSaving['engineParams'] ? <ActivityIndicator color="#fff" size="small" /> : <CheckCheck size={20} color="#FFFFFF" />}
-                    </TouchableOpacity>
+                      saving={vm.sectionSaving['engineParams']}
+                      done={vm.sectionSuccess['engineParams']}
+                    />
                   </>
                 ) : (
                   <View style={styles.readingsDisplayGrid}>
@@ -704,10 +692,7 @@ export default function SrTaskFormScreen() {
               {vm.step2Error ? <Text style={styles.sectionErrorText}>{vm.step2Error}</Text> : null}
 
               {/* Below the added-codes list now, not above it. */}
-              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openComplaintPicker} disabled={vm.task?.status === 'COMPLETED'}>
-                <Plus size={18} color="#0F0F0F" />
-                <Text style={styles.addCodeButtonText}>ADD CODE</Text>
-              </TouchableOpacity>
+              <AddItemButton label="Add Code" onPress={openComplaintPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
 
               <ComplaintCodePickerModal
                 visible={vm.complaintPickerVisible}
@@ -736,10 +721,7 @@ export default function SrTaskFormScreen() {
               {vm.step3Error ? <Text style={styles.sectionErrorText}>{vm.step3Error}</Text> : null}
 
               {/* Below the added-parts list now, not above it. */}
-              <TouchableOpacity style={[styles.addCodeButton, { marginBottom: 16 }]} onPress={openPartPicker} disabled={vm.task?.status === 'COMPLETED'}>
-                <Plus size={18} color="#0F0F0F" />
-                <Text style={styles.addCodeButtonText}>ADD PARTS</Text>
-              </TouchableOpacity>
+              <AddItemButton label="Add Part" onPress={openPartPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
 
               <PartPickerModal
                 visible={vm.partPickerVisible}
@@ -783,67 +765,6 @@ export default function SrTaskFormScreen() {
                 onRemove={vm.handleRemovePhoto}
               />
 
-              {/* Notes / Suggestion Comment / Voice of Customer — UI only for
-                  now, no save wiring yet. */}
-              <View style={[styles.sectionCard, { marginTop: 16 }]}>
-                <Text style={styles.vocLabel}>NOTES</Text>
-                <TextInput
-                  style={[styles.fieldInput, styles.feedbackTextArea]}
-                  placeholder="Enter work notes (one per line)..."
-                  placeholderTextColor="#9CA3AF"
-                  value={vm.workNotes}
-                  onChangeText={vm.setWorkNotes}
-                  multiline
-                  numberOfLines={4}
-                />
-
-                <View style={styles.vocDivider} />
-
-                <Text style={styles.vocLabel}>SUGGESTION COMMENT</Text>
-                <TextInput
-                  style={[styles.fieldInput, styles.feedbackTextArea]}
-                  placeholder="Enter suggestion comments (one per line)..."
-                  placeholderTextColor="#9CA3AF"
-                  value={vm.suggestionComment}
-                  onChangeText={vm.setSuggestionComment}
-                  multiline
-                  numberOfLines={4}
-                />
-
-                <View style={styles.vocDivider} />
-
-                <Text style={styles.vocLabel}>VOICE OF CUSTOMER</Text>
-                <TextInput
-                  style={[styles.fieldInput, { marginBottom: 14 }]}
-                  placeholder="Customer name..."
-                  placeholderTextColor="#9CA3AF"
-                  value={vm.voiceOfCustomerName}
-                  onChangeText={vm.setVoiceOfCustomerName}
-                />
-                <View style={styles.vocStarRow}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <TouchableOpacity key={n} onPress={() => vm.setVoiceOfCustomerRating(n)} hitSlop={6}>
-                      <Star
-                        size={28}
-                        color={n <= vm.voiceOfCustomerRating ? '#F26722' : '#D1D5DB'}
-                        fill={n <= vm.voiceOfCustomerRating ? '#F26722' : 'none'}
-                      />
-                    </TouchableOpacity>
-                  ))}
-                  {!!vm.voiceOfCustomerRating && (
-                    <Text style={styles.vocRatingLabel}>{RATING_LABELS[vm.voiceOfCustomerRating]}</Text>
-                  )}
-                </View>
-                <TextInput
-                  style={[styles.fieldInput, styles.feedbackTextArea, { marginTop: 14 }]}
-                  placeholder="Customer remark..."
-                  placeholderTextColor="#9CA3AF"
-                  value={vm.voiceOfCustomerRemark}
-                  onChangeText={vm.setVoiceOfCustomerRemark}
-                  multiline
-                  numberOfLines={4}
-                />
-              </View>
             </>
           )}
 
@@ -999,17 +920,17 @@ export default function SrTaskFormScreen() {
 
               {!!vm.finishError && <Text style={styles.sectionErrorText}>{vm.finishError}</Text>}
 
+              <SuggestionCommentCard value={vm.suggestionComment} onChangeText={vm.setSuggestionComment} style={{ marginTop: 16 }} />
+
               <View style={styles.finishActionsRow}>
                 <TouchableOpacity style={styles.backButton} onPress={vm.handleBack}>
                   <ChevronLeft size={24} color="#4B5563" />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.finishCompleteButton, (!vm.selectedCategoryLetter || !vm.selectedSubCategory || (needsBillingType && !vm.billingType) || vm.finishing) && styles.buttonDisabled]}
+                <CompleteTaskButton
                   onPress={vm.handleFinishService}
-                  disabled={!vm.selectedCategoryLetter || !vm.selectedSubCategory || (needsBillingType && !vm.billingType) || vm.finishing}
-                >
-                  {vm.finishing ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.finishCompleteButtonText}>Complete</Text>}
-                </TouchableOpacity>
+                  loading={vm.finishing}
+                  disabled={!vm.selectedCategoryLetter || !vm.selectedSubCategory || (needsBillingType && !vm.billingType)}
+                />
               </View>
             </>
           )}
@@ -1161,17 +1082,17 @@ export default function SrTaskFormScreen() {
                     {vm.step6Error ? <Text style={styles.sectionErrorText}>{vm.step6Error}</Text> : null}
                   </View>
 
+                  <SuggestionCommentCard value={vm.suggestionComment} onChangeText={vm.setSuggestionComment} style={{ marginTop: 16 }} />
+
                   <View style={styles.finishActionsRow}>
                     <TouchableOpacity style={styles.backButton} onPress={vm.handleBack}>
                       <ChevronLeft size={24} color="#4B5563" />
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.completeTaskButton, { flex: 1, marginTop: 0 }, (!vm.selectedSubCategory || (needsBillingTypeAM && !vm.billingType) || vm.step6Saving) && styles.buttonDisabled]}
+                    <CompleteTaskButton
                       onPress={vm.handleSendForApproval}
-                      disabled={!vm.selectedSubCategory || (needsBillingTypeAM && !vm.billingType) || vm.step6Saving}
-                    >
-                      {vm.step6Saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.completeTaskButtonText}>Complete Task</Text>}
-                    </TouchableOpacity>
+                      loading={vm.step6Saving}
+                      disabled={!vm.selectedSubCategory || (needsBillingTypeAM && !vm.billingType)}
+                    />
                   </View>
             </>
           )}
@@ -1272,30 +1193,19 @@ const styles = StyleSheet.create({
   // these same two sections, instead of the purple GroupHeader uses by
   // default everywhere else here.
   sectionPillHeaderWhite: { backgroundColor: '#FFFFFF' },
-  checkSaveButton: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: '#4AC686',
-    justifyContent: 'center', alignItems: 'center',
-    alignSelf: 'flex-end', marginTop: 16,
-  },
-  checkSaveButtonDone: { backgroundColor: '#33A86B' },
 
   fieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14, gap: 12 },
   fieldHalf: { width: '48%' },
   fieldFull: { marginTop: 14 },
-  fieldLabel: { fontSize: 13, fontWeight: '500', color: '#6B7280', marginBottom: 6 },
-  fieldLabelStatic: { fontSize: 11, fontWeight: '700', color: '#9CA3AF', marginBottom: 6, letterSpacing: 0.3 },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#6B7280', marginBottom: 6 },
+  // Same spec as fieldLabel (Step 1's Genset Identification labels) —
+  // Electrical Readings/Engine Parameters previously had their own
+  // smaller, lighter, letter-spaced look instead of matching.
+  fieldLabelStatic: { fontSize: 13, fontWeight: '700', color: '#6B7280', marginBottom: 6 },
   fieldInput: {
     borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#1F2937', backgroundColor: '#fff',
   },
-  feedbackTextArea: { minHeight: 100, textAlignVertical: 'top' },
-
-  vocLabel: { fontSize: 13, fontWeight: '700', color: '#1E1951', marginBottom: 10, letterSpacing: 0.3 },
-  vocDivider: { height: 1, backgroundColor: '#F3F4F6', marginVertical: 18 },
-  vocStarRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  vocRatingLabel: { fontSize: 14, fontWeight: '600', color: '#4338CA', marginLeft: 4 },
-
   toggleRow: { flexDirection: 'row' },
   toggleOption: {
     flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10,
@@ -1357,15 +1267,6 @@ const styles = StyleSheet.create({
   notOkButtonText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
   notOkButtonTextActive: { color: '#DC2626' },
 
-  addCodeButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    borderWidth: 1, borderColor: '#DEDEDE', borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    height: 56, paddingHorizontal: 24, marginTop: 8, marginBottom: 16,
-    overflow: 'hidden',
-  },
-  addCodeButtonText: { color: '#0F0F0F', fontWeight: '600', fontSize: 18 },
-
   stepSectionLabel: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.6, marginBottom: 12, marginTop: 4 },
 
   // Category selection (Step 5)
@@ -1424,22 +1325,6 @@ const styles = StyleSheet.create({
   },
   partsApprovalNoticeText: { fontSize: 13, fontWeight: '600', color: '#2563EB', flexShrink: 1 },
   finishActionsRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  finishCompleteButton: {
-    flex: 1.4,
-    backgroundColor: '#1E1951',
-    borderRadius: 100,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  finishCompleteButtonText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-
-  completeTaskButton: {
-    backgroundColor: '#4AC686', borderRadius: 24,
-    borderWidth: 1, borderColor: '#DEDEDE',
-    height: 56, justifyContent: 'center', alignItems: 'center',
-    marginTop: 20,
-  },
-  completeTaskButtonText: { color: '#FFFFFF', fontWeight: '600', fontSize: 18},
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   optionsSheet: {

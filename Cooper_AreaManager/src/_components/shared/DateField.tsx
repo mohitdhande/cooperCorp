@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, StyleProp, ViewStyle, TextStyle } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { Calendar } from 'lucide-react-native';
 import { DateTimePicker } from '@expo/ui/community/datetime-picker';
@@ -32,17 +32,18 @@ type Props = {
   placeholder?: string;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<ViewStyle>;
+  labelStyle?: StyleProp<TextStyle>;
 };
 
 // Every "type a date" field in the app shares this: tapping opens the
 // native date picker instead of the keyboard, so the dd/mm/yyyy value is
 // always valid — no free-typing, no format mistakes.
-export function DateField({ label, required, labelExtra, value, onChangeText, placeholder, containerStyle, inputStyle }: Props) {
+export function DateField({ label, required, labelExtra, value, onChangeText, placeholder, containerStyle, inputStyle, labelStyle }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <View style={containerStyle}>
-      <Text style={styles.label}>
+      <Text style={[styles.label, labelStyle]}>
         {label}{required ? <Text style={styles.required}> *</Text> : null}{labelExtra ? <> {labelExtra}</> : null}
       </Text>
       <TouchableOpacity style={[styles.input, inputStyle]} onPress={() => setPickerOpen(true)} activeOpacity={0.7}>

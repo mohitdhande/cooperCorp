@@ -6,8 +6,10 @@ import { val } from '../utils/reportFormatters';
 const getBadgeStyle = (value: string) => {
   if (!value) return { badge: styles.badgeNeutral, text: styles.badgeTextNeutral };
   const v = value.trim().toLowerCase();
-  if (v === 'ok') return { badge: styles.badgeOk, text: styles.badgeTextOk };
-  if (v === 'not ok') return { badge: styles.badgeBad, text: styles.badgeTextBad };
+  // Customer Handover's own vocabulary (Yes/No) reads the same as OK/Not
+  // OK color-wise — both are "done fine" vs "needs attention".
+  if (v === 'ok' || v === 'yes') return { badge: styles.badgeOk, text: styles.badgeTextOk };
+  if (v === 'not ok' || v === 'no') return { badge: styles.badgeBad, text: styles.badgeTextBad };
   return { badge: styles.badgeNeutral, text: styles.badgeTextNeutral };
 };
 

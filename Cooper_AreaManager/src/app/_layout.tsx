@@ -11,6 +11,7 @@ import {
   Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold,
 } from '@expo-google-fonts/inter';
 import { runSync } from '../utils/syncEngine';
+import { runMediaSync } from '../utils/mediaSyncEngine';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -30,9 +31,10 @@ export default function RootLayout() {
     Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold,
   });
 
-  // Tries to drain the offline queue (see syncEngine.ts) once at startup,
-  // again every time the app comes back to the foreground, and then every
-  // 20s while it stays in the foreground — covers both "engineer was
+  // Tries to drain the offline write queue (syncEngine.ts) and the offline
+  // media-upload queue (mediaSyncEngine.ts) once at startup, again every
+  // time the app comes back to the foreground, and then every 20s while it
+  // stays in the foreground — covers both "engineer was
   // offline at a site, phone regains signal on the drive back, app is
   // still open/backgrounded" (the AppState listener) and "app stayed open
   // the whole time, connectivity (e.g. mobile data) just turned back on
@@ -46,14 +48,19 @@ export default function RootLayout() {
   const appState = useRef(AppState.currentState);
   useEffect(() => {
     runSync();
+    runMediaSync();
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (appState.current.match(/inactive|background/) && nextState === 'active') {
         runSync();
+        runMediaSync();
       }
       appState.current = nextState;
     });
     const interval = setInterval(() => {
-      if (appState.current === 'active') runSync();
+      if (appState.current === 'active') {
+        runSync();
+        runMediaSync();
+      }
     }, 20000);
     return () => {
       subscription.remove();

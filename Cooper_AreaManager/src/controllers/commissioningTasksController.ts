@@ -5,7 +5,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import {
   getMyTasksByStatus, getMyTeamData, reassignCommissioningTask,
 } from '../viewModel/commisionAPi';
-import { formatTaskType, flattenTeamTasks, bucketTaskStatus } from '../utils/reportFormatters';
+import { formatTaskType, flattenTeamTasks, bucketTaskStatus, formatAssetLabel } from '../utils/reportFormatters';
 import { parseApiError } from '../utils/apiError';
 import { getPermissions } from '../constants/permissions';
 import { UserProfile } from '../models/Login';
@@ -14,6 +14,7 @@ import { useAssetTaskSearch } from './useAssetTaskSearch';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
+import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 const PAGE_SIZE = 10;
 
@@ -145,13 +146,23 @@ export function useCommissioningTasksController() {
           if (!cached) throw fetchErr;
           data = cached.data;
         }
-        setTasks(data.commissioning || []);
+        const commissioningTasks = data.commissioning || [];
+        setTasks(commissioningTasks);
         setTotalCount(data.counts?.commissioning?.[statusKey] || 0);
         setCounts({
           active: data.counts?.commissioning?.active || 0,
           completed: data.counts?.commissioning?.completed || 0,
           closed: data.counts?.commissioning?.closed || 0,
         });
+
+        // Reconstructs the accept/start status bump from the durable queue
+        // (see deriveQueuedTaskStatusOverrides' own comment) — without this,
+        // this screen would lose it on a bottom-nav remount the same way
+        // the Dashboard did.
+        const queuedOverrides = await deriveQueuedTaskStatusOverrides(commissioningTasks);
+        if (Object.keys(queuedOverrides).length > 0) {
+          setTaskStatusOverrides((prev) => ({ ...queuedOverrides, ...prev }));
+        }
       }
     } catch (err: any) {
       console.log('[Commissioning Tasks] Failed to load tasks:', err);
@@ -175,6 +186,11 @@ export function useCommissioningTasksController() {
       // manager, then immediately again against GET /me/team once isAreaManager
       // resolves, wasting a request.
       if (!profile) return;
+      // The AM branch's /me/team tree is cached in teamDataRef — dropped
+      // here too, not just in onRefresh, so regaining focus actually
+      // re-fetches instead of re-bucketing the same stale tree (a no-op
+      // for the engineer path below, which never populates this ref).
+      teamDataRef.current = null;
       fetchPage(selectedTab, page);
     }, [fetchPage, selectedTab, page, profile])
   );
@@ -207,6 +223,12 @@ export function useCommissioningTasksController() {
         taskType: formatTaskType(task.type),
         assignedToName: task.assignedTo?.name || '',
         assignedToRole: task.assignedTo?.role || '',
+        // Already sitting right here in the task list's own data — passed
+        // through so the form can show them immediately (and offline,
+        // before/without its own getAssetById call) instead of coming up
+        // blank until a live fetch succeeds.
+        gensetNumber: task.asset?.gensetNumber || '',
+        engineNumber: task.asset?.engineNumber || '',
       },
     } as any);
   }, [router]);
@@ -226,7 +248,9 @@ export function useCommissioningTasksController() {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
-      await putOrQueue(`/api/commissioning/${taskId}/accept`, {}, `Accept task (${taskId})`, `commissioning_accept_${taskId}`);
+      const task = tasks.find((t) => t._id === taskId);
+      const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/commissioning/${taskId}/accept`, {}, `Accept task (${assetLabel})`, `commissioning_accept_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'ACCEPTED' }));
     } catch (err: any) {
       const { message } = parseApiError(err, 'Failed to accept task. Please try again.');
@@ -234,13 +258,15 @@ export function useCommissioningTasksController() {
     } finally {
       setTaskActionLoading((prev) => ({ ...prev, [taskId]: false }));
     }
-  }, []);
+  }, [tasks]);
 
   const handleStartTask = useCallback(async (taskId: string) => {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
-      await putOrQueue(`/api/commissioning/${taskId}/start`, {}, `Start task (${taskId})`, `commissioning_start_${taskId}`);
+      const task = tasks.find((t) => t._id === taskId);
+      const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
+      await putOrQueue(`/api/commissioning/${taskId}/start`, {}, `Start task (${assetLabel})`, `commissioning_start_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'IN_PROGRESS' }));
     } catch (err: any) {
       const { message } = parseApiError(err, 'Failed to start task. Please try again.');
@@ -248,7 +274,7 @@ export function useCommissioningTasksController() {
     } finally {
       setTaskActionLoading((prev) => ({ ...prev, [taskId]: false }));
     }
-  }, []);
+  }, [tasks]);
 
   const openAssignPicker = useCallback((task: any) => {
     setAssignPickerTask(task);

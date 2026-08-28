@@ -31,6 +31,14 @@ type TwoOptionToggleRowProps = {
   onSetComment?: (v: string) => void;
 };
 
+type YesNoToggleRowProps = {
+  question: string;
+  value: string;
+  comment: string;
+  onSetValue: (v: string) => void;
+  onSetComment: (v: string) => void;
+};
+
 type MultiOptionToggleRowProps = {
   index: string;
   question: string;
@@ -94,10 +102,21 @@ function ToggleRowCore({
             row's remaining width on Android, pushing the toggle pill
             outside the card. */}
         <View style={styles.rowLabelGroup}>
-          <Text style={styles.rowLabel}>
-            {!!indexLabel && <Text style={styles.rowIndex}>{indexLabel} </Text>}
-            {question}
-          </Text>
+          <View style={styles.rowLabelRow}>
+            {/* A real two-column layout, not the index as inline text
+                ahead of the question — that made a wrapped question's
+                second/third line flow back under the number instead of
+                staying indented, and numbers across rows didn't line up
+                the way a real list's do. The column itself always renders
+                (even with indexLabel=''), so a sub-item with no number of
+                its own (index=null, e.g. Earthing's A/B/C rows) still
+                lines its question text up under every numbered row's
+                question text, instead of starting flush left. */}
+            <View style={styles.rowIndexCol}>
+              {!!indexLabel && <Text style={styles.rowIndex}>{indexLabel}</Text>}
+            </View>
+            <Text style={styles.rowLabel}>{question}</Text>
+          </View>
           {subtext ? <Text style={styles.subtext}>{subtext}</Text> : null}
         </View>
 
@@ -186,6 +205,27 @@ export const TwoOptionToggleRow: React.FC<TwoOptionToggleRowProps> = ({
   );
 };
 
+// Customer Handover's own rows — Yes/No vocabulary (not OK/Not-OK), no
+// per-row index number (the group heading's own "E." number is enough),
+// and a comment box that reveals once marked "No" — X stays bound to the
+// "needs attention" option (No), matching every other row in this file.
+export const YesNoToggleRow: React.FC<YesNoToggleRowProps> = ({
+  question, value, comment, onSetValue, onSetComment,
+}) => (
+  <ToggleRowCore
+    indexLabel=""
+    alt={false}
+    question={question}
+    optionA="Yes"
+    optionB="No"
+    value={value}
+    onSetValue={onSetValue}
+    commentTriggerValue="No"
+    comment={comment}
+    onSetComment={onSetComment}
+  />
+);
+
 // A checklist row offering more than two mutually-exclusive option chips.
 export const MultiOptionToggleRow: React.FC<MultiOptionToggleRowProps> = ({
   index, question, options, value, onSetValue,
@@ -230,15 +270,25 @@ const styles = StyleSheet.create({
   rowLabelGroup: {
     flex: 1,
   },
+  rowLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  rowIndexCol: {
+    width: 22,
+  },
   rowLabel: {
+    flex: 1,
     fontSize: 16,
     fontWeight: '600',
     color: '#0F0F0F',
     lineHeight: 21,
   },
   rowIndex: {
+    fontSize: 16,
     color: '#9CA3AF',
     fontWeight: '500',
+    lineHeight: 21,
   },
   // The joined X/check pill — outer corners rounded, inner corners sharp,
   // matching the pasted "Check Blaock" component exactly.

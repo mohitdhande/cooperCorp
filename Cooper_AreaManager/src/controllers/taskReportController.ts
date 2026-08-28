@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Linking, TextInput } from 'react-native';
+import { Alert, AppState, AppStateStatus, Linking, TextInput } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
@@ -27,6 +27,12 @@ export function useTaskReportController(initialTask: any) {
   // Gates the Approve/Close actions below — admin stands in for the
   // (non-existent in this app) rsm role, same pattern as srDetailController.
   const [role, setRole] = useState<Role>('engineer');
+  // True the moment the live task-detail fetch fails from a genuine network
+  // error (regardless of whether a cache existed to fall back to) — drives
+  // disabling the Verify OTP button below, since OTP generate/verify are
+  // inherently live-only actions (see commisionAPi.ts) that can't queue for
+  // later the way every other save in this app now can.
+  const [isOffline, setIsOffline] = useState(false);
 
   // Returns whether the task detail itself loaded — the asset fetch failing
   // on its own doesn't count as a failure here, since the report still has
@@ -55,6 +61,7 @@ export function useTaskReportController(initialTask: any) {
     try {
       const data = await getCommissioningTaskDetail(token, initialTask._id);
       setDetail(data);
+      setIsOffline(false);
       // No user-scoping needed on the cache key — logout already clears all
       // of AsyncStorage, so a stale previous user's cached detail can never
       // leak into a fresh session (same rule as dashboard_summary's cache).
@@ -69,6 +76,7 @@ export function useTaskReportController(initialTask: any) {
       // detail). A real server error still reports failure normally, since
       // stale data can't fix that.
       if (isNetworkError(error)) {
+        setIsOffline(true);
         const cached = await getCachedData(`commissioning_detail_${initialTask._id}`);
         console.log('[Task Report] Cached task detail found?', !!cached, '| cached assetId:', cached?.data?.assetId);
         if (cached) { setDetail(cached.data); assetIdToFetch = cached.data.assetId || initialTask.assetId; }
@@ -119,6 +127,28 @@ export function useTaskReportController(initialTask: any) {
       setDetailError(ok ? '' : 'Failed to load the latest task details.');
       setIsLoading(false);
     })();
+  }, [fetchDetail]);
+
+  // Re-checks connectivity on its own (same cadence as dashboardHomeController.ts's
+  // own fix) — without this, isOffline only ever got set right when the
+  // screen first loaded; going offline later while already sitting on this
+  // report wouldn't disable the Verify OTP button until a manual
+  // pull-to-refresh. Silent — no loading spinner every 20s.
+  const appState = useRef(AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        fetchDetail();
+      }
+      appState.current = nextState;
+    });
+    const interval = setInterval(() => {
+      if (appState.current === 'active') fetchDetail();
+    }, 20000);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, [fetchDetail]);
 
   const onRefresh = useCallback(async () => {
@@ -432,7 +462,7 @@ export function useTaskReportController(initialTask: any) {
 
   return {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
-    detailError,
+    detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
