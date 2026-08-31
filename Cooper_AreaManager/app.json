@@ -3,7 +3,7 @@
     "name": "Cooper",
     "backgroundColor": "#11101C",
     "slug": "Cooper",
-    "version": "1.0.0",
+    "version": "0.2",
     "orientation": "portrait",
     "icon": "./assets/app_icon.png",
     "scheme": "cooper",
@@ -65,6 +65,15 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to access your location to verify you're on-site while completing a task."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
         }
       ]
     ],

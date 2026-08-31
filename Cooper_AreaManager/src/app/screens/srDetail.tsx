@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import { View, Image, TouchableOpacity, StyleSheet, ScrollView, Modal, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, Modal, ActivityIndicator, useWindowDimensions } from 'react-native';
+// expo-image (not RN's own Image) for these photo thumbnails — disk-caches
+// by URL, so reopening this screen or scrolling back doesn't re-download
+// the same signed GCS URL again.
+import { Image } from 'expo-image';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -777,25 +781,31 @@ export default function SrDetailScreen() {
                 <Text style={styles.emptyText}>No parts recorded.</Text>
               ) : (
                 partsUsed.map((p: any, i: number) => {
+                  // partId populates as null (not an error) if the part it
+                  // references was since deleted — `|| {}` keeps every
+                  // field read below safe (shows "--" via val()) instead of
+                  // crashing, per the Parts API reference doc's null-partId
+                  // warning.
                   const partInfo = p.partId || {};
                   const decision = p.decision;
                   const decisionStyle = PART_DECISION_PILL[decision] || PART_DECISION_PILL.PENDING;
                   const rowId = partRowId(p, i);
+                  // category/subCategory/unit were removed in the
+                  // 2026-08-29 Part schema change — cpcbNorm/engineFamily
+                  // are their closest replacement, shown only when set.
+                  const partSubtitle = [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · ');
                   return (
                     <View key={rowId} style={styles.partCard}>
                       <View style={styles.partTop}>
                         <View style={styles.partCodeBadge}>
-                          <Text style={styles.partCodeText}>{val(partInfo.code)}</Text>
+                          <Text style={styles.partCodeText}>{val(partInfo.componentNumber)}</Text>
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.partName}>{val(partInfo.name)}</Text>
-                          <Text style={styles.partCategory}>
-                            {val(partInfo.category)} {partInfo.subCategory ? `› ${partInfo.subCategory}` : ''}
-                          </Text>
+                          <Text style={styles.partName}>{val(partInfo.description)}</Text>
+                          {!!partSubtitle && <Text style={styles.partCategory}>{partSubtitle}</Text>}
                         </View>
                       </View>
                       <View style={styles.partBottom}>
-                        <Text style={styles.partUnit}>{val(partInfo.unit)}</Text>
                         <Text style={styles.partQty}>Qty: {val(p.quantity)}</Text>
                       </View>
                       {canReviewParts && isCompletedView && decision === 'PENDING' && !!partInfo._id && rejectingPartId === partInfo._id ? (
@@ -984,12 +994,20 @@ export default function SrDetailScreen() {
                   <Text style={styles.plainSectionLabel}>PARTS USED</Text>
                 </View>
                 {partsUsed.map((p: any, i: number) => {
+                  // partId populates as null (not an error) if the part it
+                  // references was since deleted — `|| {}` keeps every
+                  // field read below safe instead of crashing.
                   const partInfo = p.partId || {};
                   return (
                     <View key={p._id || i} style={styles.plainPartRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.plainPartName}>{val(partInfo.name)}</Text>
-                        <Text style={styles.plainPartSub}>{val(partInfo.code)} · {val(partInfo.unit)}</Text>
+                        <Text style={styles.plainPartName}>{val(partInfo.description)}</Text>
+                        {/* unit was removed in the 2026-08-29 Part schema
+                        change — componentNumber/cpcbNorm are what's left to
+                        show here. */}
+                        <Text style={styles.plainPartSub}>
+                          {val(partInfo.componentNumber)}{partInfo.cpcbNorm ? ` · ${partInfo.cpcbNorm}` : ''}
+                        </Text>
                       </View>
                       <Text style={styles.plainPartQty}>×{val(p.quantity)}</Text>
                     </View>
@@ -1321,13 +1339,9 @@ const styles = StyleSheet.create({
   partCodeText: { fontSize: 12, fontWeight: '700', color: '#374151' },
   partName: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   partCategory: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
-  partBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  partUnit: {
-    fontSize: 12, fontWeight: '600', color: '#F26722',
-    backgroundColor: '#FFEDD5',
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 8,
-  },
+  // unit was removed in the 2026-08-29 Part schema change — no replacement,
+  // so this row now only ever holds Qty, right-aligned.
+  partBottom: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
   partQty: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
   partDecisionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   partDecisionPill: {

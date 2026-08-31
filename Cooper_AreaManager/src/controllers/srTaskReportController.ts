@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Alert, AppState, AppStateStatus, Linking, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
@@ -79,41 +80,60 @@ export function useSrTaskReportController(initialTask: any) {
 
   const [detailError, setDetailError] = useState('');
 
+  // Profile only — loaded once, no reason to re-read it every time this
+  // screen regains focus (it doesn't change while the app is open).
   useEffect(() => {
     AsyncStorage.getItem('userData')
       .then((saved) => { if (saved) setProfile(JSON.parse(saved)); })
       .catch((error) => console.log('[SR Task Report] Failed to load profile:', error));
+  }, []);
 
-    (async () => {
-      setIsLoading(true);
-      const ok = await fetchDetail();
-      setDetailError(ok ? '' : 'Failed to load the latest task details.');
-      setIsLoading(false);
-    })();
-  }, [fetchDetail]);
-
-  // Re-checks connectivity on its own (same cadence as
-  // dashboardHomeController.ts's own fix) — without this, isOffline only
-  // ever got set right when the screen first loaded; going offline later
-  // while already sitting on this report wouldn't disable the Verify OTP
-  // button until a manual pull-to-refresh. Silent — no loading spinner
-  // every 20s.
+  // useFocusEffect (not a plain useEffect) — both the initial load and the
+  // periodic re-check only run while this screen is actually the one on
+  // screen. A plain useEffect would keep the AppState listener/interval
+  // alive for as long as this controller stayed *mounted*, which in an
+  // expo-router Stack is well past the point the user has navigated away
+  // (previous screens stay mounted in the background) — silently polling
+  // this task's detail every 20s from a screen nobody's looking at.
+  // useFocusEffect's own cleanup (returned below) tears it down the moment
+  // focus is lost, and the same setup runs again next time this screen
+  // regains focus (also re-checking connectivity — see isOffline's own
+  // comment above — so isOffline can't stay stale from before you
+  // navigated away either).
+  // `hasFetchedOnceRef` keeps the very first load's normal full-screen
+  // spinner (the expected first-load experience) while every later
+  // refocus fetches silently, matching what the periodic check already did.
   const appState = useRef(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-      if (appState.current.match(/inactive|background/) && nextState === 'active') {
-        fetchDetail();
-      }
-      appState.current = nextState;
-    });
-    const interval = setInterval(() => {
-      if (appState.current === 'active') fetchDetail();
-    }, 20000);
-    return () => {
-      subscription.remove();
-      clearInterval(interval);
-    };
-  }, [fetchDetail]);
+  const hasFetchedOnceRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        if (!hasFetchedOnceRef.current) {
+          setIsLoading(true);
+          const ok = await fetchDetail();
+          setDetailError(ok ? '' : 'Failed to load the latest task details.');
+          setIsLoading(false);
+          hasFetchedOnceRef.current = true;
+        } else {
+          fetchDetail();
+        }
+      })();
+
+      const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+        if (appState.current.match(/inactive|background/) && nextState === 'active') {
+          fetchDetail();
+        }
+        appState.current = nextState;
+      });
+      const interval = setInterval(() => {
+        if (appState.current === 'active') fetchDetail();
+      }, 20000);
+      return () => {
+        subscription.remove();
+        clearInterval(interval);
+      };
+    }, [fetchDetail])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -127,13 +147,18 @@ export function useSrTaskReportController(initialTask: any) {
 
   // Polls while a work approval is sitting with the AM/RSM, so this report
   // screen reflects an approve/reject decision made elsewhere within one
-  // poll tick instead of requiring a manual pull-to-refresh.
+  // poll tick instead of requiring a manual pull-to-refresh. useFocusEffect
+  // (not a plain useEffect) for the same reason as the block above — this
+  // shouldn't keep polling every 8s from a screen the user has navigated
+  // away from while it stays mounted in the background.
   const pendingWorkApprovalStatus = task?.workApproval?.status;
-  useEffect(() => {
-    if (pendingWorkApprovalStatus !== 'PENDING_AM' && pendingWorkApprovalStatus !== 'PENDING_RSM') return;
-    const interval = setInterval(() => { fetchDetail(); }, 8000);
-    return () => clearInterval(interval);
-  }, [pendingWorkApprovalStatus, fetchDetail]);
+  useFocusEffect(
+    useCallback(() => {
+      if (pendingWorkApprovalStatus !== 'PENDING_AM' && pendingWorkApprovalStatus !== 'PENDING_RSM') return;
+      const interval = setInterval(() => { fetchDetail(); }, 8000);
+      return () => clearInterval(interval);
+    }, [pendingWorkApprovalStatus, fetchDetail])
+  );
 
   // Video playback — task.videos are raw GCS URLs, unplayable directly
   // (private bucket). Tapping a video opens the modal immediately (spinner

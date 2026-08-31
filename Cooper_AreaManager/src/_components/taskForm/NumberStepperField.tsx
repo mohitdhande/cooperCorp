@@ -9,10 +9,13 @@ type Props = {
   onChangeValue: (val: string) => void;
   unit?: string;
   step?: number;
+  // Auto-computed fields (e.g. Total Load KW = Load KW R+Y+B added
+  // together) — no typing, no spinner arrows, just the live value.
+  readOnly?: boolean;
 };
 
 // Numeric input with up/down spinner arrows + optional unit suffix (V, A, %, Hz, °C).
-export function NumberStepperField({ label, value, onChangeValue, unit, step = 1 }: Props) {
+export function NumberStepperField({ label, value, onChangeValue, unit, step = 1, readOnly }: Props) {
   const handleStep = (dir: 1 | -1) => {
     const current = parseFloat(value) || 0;
     onChangeValue(String(current + dir * step));
@@ -21,23 +24,26 @@ export function NumberStepperField({ label, value, onChangeValue, unit, step = 1
   return (
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputRow}>
+      <View style={[styles.inputRow, readOnly && styles.inputRowReadOnly]}>
         <TextInput
-          style={styles.input}
+          style={[styles.input, readOnly && styles.inputReadOnly]}
           value={value}
           onChangeText={onChangeValue}
           keyboardType="numeric"
+          editable={!readOnly}
         />
         {unit ? <Text style={styles.unit}>{unit}</Text> : null}
-        <View style={styles.spinnerColumn}>
-          <TouchableOpacity style={styles.spinnerBtn} onPress={() => handleStep(1)}>
-            <Text style={styles.spinnerArrow}>▲</Text>
-          </TouchableOpacity>
-          <View style={styles.spinnerDivider} />
-          <TouchableOpacity style={styles.spinnerBtn} onPress={() => handleStep(-1)}>
-            <Text style={styles.spinnerArrow}>▼</Text>
-          </TouchableOpacity>
-        </View>
+        {!readOnly && (
+          <View style={styles.spinnerColumn}>
+            <TouchableOpacity style={styles.spinnerBtn} onPress={() => handleStep(1)}>
+              <Text style={styles.spinnerArrow}>▲</Text>
+            </TouchableOpacity>
+            <View style={styles.spinnerDivider} />
+            <TouchableOpacity style={styles.spinnerBtn} onPress={() => handleStep(-1)}>
+              <Text style={styles.spinnerArrow}>▼</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -67,6 +73,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1F2937',
   },
+  inputRowReadOnly: { backgroundColor: '#F3F4F6' },
+  inputReadOnly: { color: '#6B7280' },
   unit: {
     color: '#9CA3AF',
     fontSize: 13,

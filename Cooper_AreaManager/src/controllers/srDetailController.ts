@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Linking } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -114,12 +115,18 @@ export function useSrDetailController(initialTask: any) {
   // one poll tick instead of waiting on a manual pull-to-refresh. No
   // isLoading toggle on the poll tick itself — only the initial load shows
   // the full-screen spinner.
+  // useFocusEffect (not a plain useEffect) — this shouldn't keep polling
+  // every 8s from a screen the user has navigated away from while it stays
+  // mounted in the background (expo-router's Stack keeps previous screens
+  // mounted, not unmounted, on push).
   const pendingWorkApprovalStatus = (detail || initialTask)?.workApproval?.status;
-  useEffect(() => {
-    if (pendingWorkApprovalStatus !== 'PENDING_AM' && pendingWorkApprovalStatus !== 'PENDING_RSM') return;
-    const interval = setInterval(() => { fetchDetail(); }, 8000);
-    return () => clearInterval(interval);
-  }, [pendingWorkApprovalStatus, fetchDetail]);
+  useFocusEffect(
+    useCallback(() => {
+      if (pendingWorkApprovalStatus !== 'PENDING_AM' && pendingWorkApprovalStatus !== 'PENDING_RSM') return;
+      const interval = setInterval(() => { fetchDetail(); }, 8000);
+      return () => clearInterval(interval);
+    }, [pendingWorkApprovalStatus, fetchDetail])
+  );
 
   // Merged, not just detail-or-initialTask — the detail endpoint's response
   // only carries `assetId` (a bare string), not the populated `asset` object

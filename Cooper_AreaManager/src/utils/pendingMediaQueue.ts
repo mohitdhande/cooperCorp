@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
+import { devLog } from './devLog';
 
 // Durable, cross-restart counterpart to offlineQueue.ts — that one only
 // ever stores small JSON bodies (cheap to keep in AsyncStorage forever);
@@ -34,7 +35,7 @@ async function readQueue(): Promise<PendingMediaItem[]> {
     const raw = await AsyncStorage.getItem(QUEUE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (error) {
-    console.log('[Media Queue] Failed to read queue:', error);
+    devLog('[Media Queue] Failed to read queue:', error);
     return [];
   }
 }
@@ -88,7 +89,7 @@ export async function removePendingMedia(id: string): Promise<void> {
     try {
       new File(match.fileUri).delete();
     } catch (error) {
-      console.log('[Media Queue] Failed to delete on-disk copy:', error);
+      devLog('[Media Queue] Failed to delete on-disk copy:', error);
     }
   }
 }

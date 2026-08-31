@@ -55,21 +55,25 @@ export type SelectedComplaintCode = {
 
 // ─── Parts ───
 // API-sourced part (from /api/parts)
+// Part schema fully replaced 2026-08-29 — code/name/unit/category/subCategory
+// no longer exist anywhere in the API. componentNumber/description are the
+// direct replacements for code/name; unit/category/subCategory have no
+// replacement at all. engineFamily/cpcbNorm/maxQty are new.
 export type ApiPart = {
   _id: string;
-  code: string;
-  name: string;
-  unit: string;
-  category: string;
-  subCategory: string;
+  componentNumber: string;
+  description: string;
+  engineFamily?: string[];
+  cpcbNorm?: 'CPCB II' | 'CPCB IV+';
+  maxQty?: number;
 };
 
 export type SelectedPart = {
   partId: string; // the _id from /api/parts
-  code: string;
-  name: string;
-  unit: string;
-  category: string;
-  subCategory: string;
+  componentNumber: string;
+  description: string;
+  engineFamily?: string[];
+  cpcbNorm?: 'CPCB II' | 'CPCB IV+';
+  maxQty?: number;
   quantity: number;
 };

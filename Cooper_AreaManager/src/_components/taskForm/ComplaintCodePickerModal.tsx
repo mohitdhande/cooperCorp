@@ -55,8 +55,10 @@ export function ComplaintCodePickerModal({ visible, onClose, faultCodes, loading
   const searchResults = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     if (!q) return [];
+    // Guard against a fault code missing code/description from the API —
+    // same crash risk as PartPickerModal's identical search filter.
     return faultCodes.filter(f =>
-      f.code.toLowerCase().includes(q) || f.description.toLowerCase().includes(q)
+      (f.code || '').toLowerCase().includes(q) || (f.description || '').toLowerCase().includes(q)
     );
   }, [faultCodes, searchText]);
 
@@ -234,8 +236,11 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 20,
   },
+  // Same fix as PartPickerModal's identical full-screen list — a classic
+  // 3-button Android nav bar isn't reported as a safe-area inset, so
+  // without extra padding here the last row sits right behind it.
   listContent: {
-    paddingBottom: 24,
+    paddingBottom: 120,
   },
   row: {
     flexDirection: 'row',

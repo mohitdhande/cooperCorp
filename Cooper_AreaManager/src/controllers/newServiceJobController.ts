@@ -64,24 +64,11 @@ function toDateOnly(d: Date): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// Due Date is free-typed as dd/mm/yyyy (no picker/mask yet) — parsed back
-// to plain "YYYY-MM-DD" for the request body; returns null (silently
-// omitted, rather than sending garbage) if it isn't a complete, valid date.
-function parseDDMMYYYYToDateOnly(value: string): string | null {
-  const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!match) return null;
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
 // Drives the "New Service Job" screen (reached from Services' + icon,
 // dealer/areaManager only): search an asset by genset/engine S/N, show its
 // detail, then a single "New Service Request" action opens a "Create Job
 // Card" step — title, date, an assignee search+pick from the subordinate
-// roster, optional due date/notes, then Create. Unlike Commissioning's
+// roster, optional notes, then Create. Unlike Commissioning's
 // New Job, there's no backend "available actions" concept for service
 // (no PRE_COMMISSIONING/COMMISSIONING-style type enum), so the single
 // action is always offered rather than fetched.
@@ -163,7 +150,6 @@ export function useNewServiceJobController() {
   // Assign To opens this as its own bottom-sheet-style picker instead of an
   // inline search+list, matching newJob.tsx's precedent.
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
-  const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
   const [performedBy, setPerformedBy] = useState('');
   const [creating, setCreating] = useState(false);
@@ -232,7 +218,6 @@ export function useNewServiceJobController() {
         setFreeServiceError('');
         setSelectedAssignee(null);
         setAssigneePickerVisible(false);
-        setDueDate('');
         setNotes('');
         setPerformedBy('');
         setCreateError('');
@@ -317,7 +302,6 @@ export function useNewServiceJobController() {
     try {
       const token = await getToken();
       if (!token) return;
-      const dueDateOnly = dueDate.trim() ? parseDDMMYYYYToDateOnly(dueDate) : null;
       const created = await createServiceEntry(token, {
         assetId: asset._id,
         title: jobTitle.trim(),
@@ -328,7 +312,6 @@ export function useNewServiceJobController() {
         category: category.letter,
         ...(subCategory ? { subCategory } : {}),
         ...(financingBank ? { bankName: financingBank } : {}),
-        ...(dueDateOnly ? { dueDate: dueDateOnly } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         ...(performedBy.trim() ? { performedBy: performedBy.trim() } : {}),
       });
@@ -353,7 +336,7 @@ export function useNewServiceJobController() {
     } finally {
       setCreating(false);
     }
-  }, [asset, jobTitle, category, needsSubCategoryNow, subCategory, selectedAssignee, dueDate, notes, performedBy, router, isDealer, profile]);
+  }, [asset, jobTitle, category, needsSubCategoryNow, subCategory, selectedAssignee, notes, performedBy, router, isDealer, profile]);
 
   return {
     searchText, setSearchText, handleSearch, handleClearSearch, searched, isSearching, searchError,
@@ -368,7 +351,7 @@ export function useNewServiceJobController() {
     freeServiceItems, freeServiceLoading, freeServiceError,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,
-    dueDate, setDueDate, notes, setNotes, performedBy, setPerformedBy,
+    notes, setNotes, performedBy, setPerformedBy,
     handleCreateJob, creating, createError,
   };
 }

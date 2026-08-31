@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+// expo-image (not RN's own Image) for these report photo thumbnails —
+// disk-caches by URL, so reopening a report or scrolling back to a photo
+// you've already loaded doesn't re-download the same signed GCS URL again.
+import { Image } from 'expo-image';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -79,9 +83,9 @@ const COMMISSIONING_GROUP_A = [
   ['A5', 'Fitment of exhaust silencer and exhaust piping'],
   // Split into 3 sub-checks, matching taskForm.tsx's own Step 2 — A6a/A6b/
   // A6c are the confirmed real backend field keys for these.
-  ['A6a', 'A. 2 Nos. of earthing pits for genset and control panel Body'],
-  ['A6b', 'B. 1 Nos. of earthing pit for neutral.'],
-  ['A6c', 'C. 1 Nos. of earthing pit for alternator.'],
+  ['A6a', 'A. 1 Nos earthing pits for Genset and Control Panel Body'],
+  ['A6b', 'B. 2 Nos. of earthing pits for Neutral'],
+  ['A6c', 'C. 1 Nos. of earthing pits for Alternator Body'],
   ['A7', 'Visually check all fasteners'],
   ['A8', 'Visually check wiring connections in control panel'],
   ['A9', '230V supply for battery charger (if external charger fitted)'],
@@ -430,10 +434,24 @@ export default function TaskReportScreen() {
               <Text style={styles.fieldValue}>{val(a.atsSerialNumber)}</Text>
             </View>
           </View>
+          {/* Battery S/N was a single field — now Battery Type plus two
+          separate serial numbers (battery1SerialNumber/battery2SerialNumber
+          — the old batterySerialNumber key is no longer what's saved).
+          Controller Type/S/R are new fields too. */}
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>BATTERY S/N</Text>
-              <Text style={styles.fieldValue}>{val(a.batterySerialNumber)}</Text>
+              <Text style={styles.fieldLabel}>BATTERY TYPE</Text>
+              <Text style={styles.fieldValue}>{val(a.batteryType)}</Text>
+            </View>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>BATTERY 1 S/N</Text>
+              <Text style={styles.fieldValue}>{val(a.battery1SerialNumber)}</Text>
+            </View>
+          </View>
+          <View style={styles.fieldRow}>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>BATTERY 2 S/N</Text>
+              <Text style={styles.fieldValue}>{val(a.battery2SerialNumber)}</Text>
             </View>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>PANEL S/N</Text>
@@ -444,6 +462,16 @@ export default function TaskReportScreen() {
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>PANEL TYPE</Text>
               <Text style={styles.fieldValue}>{val(a.panelType)}</Text>
+            </View>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>CONTROLLER TYPE</Text>
+              <Text style={styles.fieldValue}>{val(a.controllerType)}</Text>
+            </View>
+          </View>
+          <View style={styles.fieldRow}>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>CONTROLLER S/R</Text>
+              <Text style={styles.fieldValue}>{val(a.controllerSerialNumber)}</Text>
             </View>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
@@ -602,22 +630,28 @@ export default function TaskReportScreen() {
             <Text style={styles.emptyText}>No parts recorded.</Text>
           ) : (
             partsUsed.map((p: any, i: number) => {
+              // partId populates as null (not an error) if the part it
+              // references was since deleted — `|| {}` keeps every field
+              // read below safe (shows "--" via val()) instead of crashing,
+              // per the Parts API reference doc's null-partId warning.
               const partInfo = p.partId || {};
+              // category/subCategory/unit were removed in the 2026-08-29
+              // Part schema change — cpcbNorm/engineFamily are their closest
+              // replacement for "extra info about this part", shown only
+              // when actually set.
+              const partSubtitle = [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · ');
               return (
                 <View key={p._id || i} style={styles.partReportCard}>
                   <View style={styles.partReportTop}>
                     <View style={styles.partCodeBadgeReport}>
-                      <Text style={styles.partCodeTextReport}>{val(partInfo.code)}</Text>
+                      <Text style={styles.partCodeTextReport}>{val(partInfo.componentNumber)}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.partNameReport}>{val(partInfo.name)}</Text>
-                      <Text style={styles.partCategoryReport}>
-                        {val(partInfo.category)} {partInfo.subCategory ? `› ${partInfo.subCategory}` : ''}
-                      </Text>
+                      <Text style={styles.partNameReport}>{val(partInfo.description)}</Text>
+                      {!!partSubtitle && <Text style={styles.partCategoryReport}>{partSubtitle}</Text>}
                     </View>
                   </View>
                   <View style={styles.partReportBottom}>
-                    <Text style={styles.partUnitReport}>{val(partInfo.unit)}</Text>
                     <Text style={styles.partQtyReport}>Qty: {val(p.quantity)}</Text>
                   </View>
                 </View>
@@ -631,16 +665,16 @@ export default function TaskReportScreen() {
             <Text style={styles.emptyText}>No readings recorded.</Text>
           ) : (
             <>
-              <InfoRow label="AC Volt R-Y (V)" value={gensetReadings.acVoltageRY} />
-              <InfoRow label="AC Volt Y-B (V)" value={gensetReadings.acVoltageYB} />
-              <InfoRow label="AC Volt B-R (V)" value={gensetReadings.acVoltageBR} />
-              <InfoRow label="AC Amp R (A)" value={gensetReadings.acAmpR} />
-              <InfoRow label="AC Amp Y (A)" value={gensetReadings.acAmpY} />
-              <InfoRow label="AC Amp B (A)" value={gensetReadings.acAmpB} />
+              <InfoRow label="AC Volt R-Y" value={gensetReadings.acVoltageRY} />
+              <InfoRow label="AC Volt Y-B" value={gensetReadings.acVoltageYB} />
+              <InfoRow label="AC Volt B-R" value={gensetReadings.acVoltageBR} />
+              <InfoRow label="AC Amp R" value={gensetReadings.acAmpR} />
+              <InfoRow label="AC Amp Y" value={gensetReadings.acAmpY} />
+              <InfoRow label="AC Amp B" value={gensetReadings.acAmpB} />
               <InfoRow label="Load kW R" value={gensetReadings.loadKwR} />
               <InfoRow label="Load kW Y" value={gensetReadings.loadKwY} />
               <InfoRow label="Load kW B" value={gensetReadings.loadKwB} />
-              <InfoRow label="Total kW" value={gensetReadings.totalKwLoad} />
+              <InfoRow label="Total Load KW" value={gensetReadings.totalKwLoad} />
               <InfoRow label="Load %" value={gensetReadings.loadPercentage} />
               <InfoRow label="RPM" value={gensetReadings.rpm} />
               <InfoRow label="Frequency (Hz)" value={gensetReadings.frequency} />
@@ -1356,16 +1390,9 @@ const styles = StyleSheet.create({
   partCodeTextReport: { fontSize: 12, fontWeight: '700', color: '#374151' },
   partNameReport: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   partCategoryReport: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
-  partReportBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  partUnitReport: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#F26722',
-    backgroundColor: '#FFEDD5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
+  // unit was removed in the 2026-08-29 Part schema change — no replacement,
+  // so this row now only ever holds Qty, right-aligned.
+  partReportBottom: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
   partQtyReport: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
 
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

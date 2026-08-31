@@ -241,11 +241,11 @@ export default function DashboardScreen() {
         <ScrollView
           style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 130, paddingTop: 12 }}
+          contentContainerStyle={{ paddingBottom: 32, paddingTop: 12 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
         >
           <View style={[styles.offlineDataBanner, { marginHorizontal: hPad }]}>
-            <CloudOff size={14} color="#6B7280" />
+            <CloudOff size={16} color="#B45309" />
             <Text style={styles.offlineDataBannerText}>Showing saved data — no connection right now</Text>
           </View>
           <PendingSyncBanner />
@@ -300,10 +300,6 @@ export default function DashboardScreen() {
             </ScrollView>
           )}
         </ScrollView>
-
-        <View style={styles.floatingFooter} pointerEvents="box-none">
-          <BottomNavBar active="home" />
-        </View>
       </SafeAreaView>
     );
   }
@@ -339,7 +335,7 @@ export default function DashboardScreen() {
         <PendingSyncBanner />
         {showingCachedDashboard && (
           <View style={[styles.offlineDataBanner, { marginHorizontal: hPad }]}>
-            <CloudOff size={14} color="#6B7280" />
+            <CloudOff size={16} color="#B45309" />
             <Text style={styles.offlineDataBannerText}>Showing saved data — no connection right now</Text>
           </View>
         )}
@@ -798,13 +794,18 @@ const styles = StyleSheet.create({
 
   bannerText: { fontSize: 32, fontWeight: '400', color: '#686868', lineHeight: 38 },
   bannerCountBold: { fontSize: 32, fontWeight: '600', color: '#000000' },
+  // Was a flat gray pill with small, low-contrast text — easy to miss.
+  // Now a warm amber warning banner (same visual language as the app's
+  // other attention states, e.g. the "N missing" pill), bigger/bolder
+  // text, so "no connection" actually reads as a status worth noticing.
   offlineDataBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#F3F4F6', borderRadius: 10,
-    paddingVertical: 8, paddingHorizontal: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#FEF3C7', borderRadius: 10,
+    borderWidth: 1, borderColor: '#FCD34D',
+    paddingVertical: 10, paddingHorizontal: 14,
     marginBottom: 12,
   },
-  offlineDataBannerText: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
+  offlineDataBannerText: { fontSize: 13, fontWeight: '700', color: '#92400E', flexShrink: 1 },
   bannerActiveText: { fontSize: 32, fontWeight: '600', color: '#000000' },
 
   avatarWrapper: { width: 64, alignItems: 'center' },

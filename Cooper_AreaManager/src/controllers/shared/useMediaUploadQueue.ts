@@ -4,6 +4,7 @@ import { isNetworkError } from '../../utils/syncEngine';
 import { subscribeToMediaSyncSuccess } from '../../utils/mediaSyncEngine';
 import { PendingMediaItem } from '../../utils/pendingMediaQueue';
 import { logLocationForAction } from '../../utils/locationLogger';
+import { devLog } from '../../utils/devLog';
 
 export type QueueItemKind = 'photo' | 'video' | 'pdf';
 // Every item's outcome is shown as its own row, all at once (not one
@@ -189,7 +190,7 @@ export function useMediaUploadQueue(
           // Couldn't even save it locally (disk full, etc.) — falls
           // through to a normal, non-retrying error row below instead of
           // silently pretending it's safely queued.
-          console.log('[Media Queue] Failed to persist item for offline retry:', persistError);
+          devLog('[Media Queue] Failed to persist item for offline retry:', persistError);
         }
         setState((prev) => ({
           ...prev,

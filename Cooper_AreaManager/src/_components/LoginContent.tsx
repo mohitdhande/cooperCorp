@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet, useWindowDimensions, ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, Platform, Alert, Keyboard } from 'react-native';
-import Constants from 'expo-constants';
 import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import Animated, {
@@ -306,10 +305,8 @@ export function LoginContent({ skipInitialHold = false }: Props) {
                 }
               </TouchableOpacity>
 
-              {/* Reads app.json's own "version" field directly — the same
-                  single number you bump by hand before each release, not a
-                  separately-tracked copy that could drift out of sync. */}
-              <Text style={styles.versionText}>v{Constants.expoConfig?.version}</Text>
+              {/* Version display moved to the Profile screen, below Logout
+                  — no longer shown here. */}
 
               {/* Extra padding so button stays visible above keyboard */}
               <View style={{ height: 40 }} />
@@ -442,10 +439,4 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: '#FFF', fontSize: 18, fontWeight: '400' },
   buttonDisabled: { opacity: 0.7 },
-  versionText: {
-    marginTop: 16,
-    textAlign: 'center',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.35)',
-  },
 });

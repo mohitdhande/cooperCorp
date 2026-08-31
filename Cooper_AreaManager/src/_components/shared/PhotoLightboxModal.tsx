@@ -1,5 +1,8 @@
 import React, { useRef } from 'react';
-import { Modal, View, TouchableOpacity, StyleSheet, FlatList, Image, useWindowDimensions } from 'react-native';
+import { Modal, View, TouchableOpacity, StyleSheet, FlatList, useWindowDimensions } from 'react-native';
+// expo-image (not RN's own Image) — disk-caches by URL, so swiping back to
+// a photo already viewed in this lightbox doesn't re-download it.
+import { Image } from 'expo-image';
 import { Text } from '@/_components/AppText';
 import { X } from 'lucide-react-native';
 
@@ -72,7 +75,7 @@ export function PhotoLightboxModal({ visible, photos, initialIndex, onClose }: P
           }}
           renderItem={({ item }) => (
             <View style={{ width, height }}>
-              <Image source={{ uri: item }} style={styles.fullImage} resizeMode="contain" />
+              <Image source={{ uri: item }} style={styles.fullImage} contentFit="contain" />
             </View>
           )}
         />

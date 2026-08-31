@@ -354,7 +354,7 @@ export default function SrTaskFormScreen() {
                         />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>Engine Number</Text>
+                        <Text style={styles.fieldLabel}>Engine SR Number</Text>
                         <TextInput
                           ref={register('engineNumber')}
                           style={styles.fieldInput} value={vm.engineNumber} onChangeText={vm.setEngineNumber}
@@ -389,6 +389,17 @@ export default function SrTaskFormScreen() {
                       </View>
                       <View style={styles.fieldHalf}>
                         <DropdownField plainLabel label="CPCB Norm" value={vm.cpcbNorm} options={vm.CPCB_NORM_OPTIONS} onSelect={vm.setCpcbNorm} />
+                      </View>
+                    </View>
+                    {/* ATS S/N — moved here from Alternator & Panel. */}
+                    <View style={styles.fieldRow}>
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabel}>ATS S/N</Text>
+                        <TextInput
+                          ref={register('atsSn')}
+                          style={styles.fieldInput} value={vm.atsSn} onChangeText={vm.setAtsSn}
+                          returnKeyType="done"
+                        />
                       </View>
                     </View>
 
@@ -436,27 +447,40 @@ export default function SrTaskFormScreen() {
                         <TextInput
                           ref={register('altSn')}
                           style={styles.fieldInput} value={vm.altSn} onChangeText={vm.setAltSn}
-                          returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('atsSn')}
+                          returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batteryType')}
                         />
                       </View>
+                      {/* Was a single "Battery S/N" field — now Battery Type
+                          plus two separate serial numbers, since a genset
+                          can have 2 batteries. */}
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>ATS S/N</Text>
+                        <Text style={styles.fieldLabel}>Battery Type</Text>
                         <TextInput
-                          ref={register('atsSn')}
-                          style={styles.fieldInput} value={vm.atsSn} onChangeText={vm.setAtsSn}
+                          ref={register('batteryType')}
+                          style={styles.fieldInput} value={vm.batteryType} onChangeText={vm.setBatteryType}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batterySn')}
                         />
                       </View>
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>Battery S/N</Text>
+                        <Text style={styles.fieldLabel}>Battery 1 S/N</Text>
                         <TextInput
                           ref={register('batterySn')}
                           style={styles.fieldInput} value={vm.batterySn} onChangeText={vm.setBatterySn}
+                          returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('battery2Sn')}
+                        />
+                      </View>
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabel}>Battery 2 S/N</Text>
+                        <TextInput
+                          ref={register('battery2Sn')}
+                          style={styles.fieldInput} value={vm.battery2Sn} onChangeText={vm.setBattery2Sn}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('kva')}
                         />
                       </View>
+                    </View>
+                    <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>KVA Rating</Text>
                         <TextInput
@@ -465,24 +489,69 @@ export default function SrTaskFormScreen() {
                           returnKeyType="done"
                         />
                       </View>
-                    </View>
-                    <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
                         <DropdownField plainLabel label="Phase" value={vm.phase} options={vm.PHASE_OPTIONS} onSelect={vm.setPhase} />
                       </View>
+                    </View>
+                    <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
                         <DropdownField plainLabel label="Panel Type" value={vm.panelType} options={vm.PANEL_TYPE_OPTIONS} onSelect={vm.setPanelType} />
+                      </View>
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabel}>Panel S/N</Text>
+                        <TextInput
+                          ref={register('panelSn')}
+                          style={styles.fieldInput} value={vm.panelSn} onChangeText={vm.setPanelSn}
+                          returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerType')}
+                        />
                       </View>
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>Panel S/N</Text>
-                        <TextInput style={styles.fieldInput} value={vm.panelSn} onChangeText={vm.setPanelSn} />
+                        <Text style={styles.fieldLabel}>Controller Type</Text>
+                        <TextInput
+                          ref={register('controllerType')}
+                          style={styles.fieldInput} value={vm.controllerType} onChangeText={vm.setControllerType}
+                          returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerSr')}
+                        />
+                      </View>
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabel}>Controller S/R</Text>
+                        <TextInput
+                          ref={register('controllerSr')}
+                          style={styles.fieldInput} value={vm.controllerSr} onChangeText={vm.setControllerSr}
+                          returnKeyType="done"
+                        />
                       </View>
                     </View>
 
+                    {vm.sectionError['alternator'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['alternator']}</Text> : null}
+                    <SectionSaveButton
+                      onPress={() => vm.handleSaveAssetSection('alternator')}
+                      saving={vm.sectionSaving['alternator']}
+                      done={vm.sectionSuccess['alternator']}
+                    />
+                  </>
+                )}
+              </View>
+
+              {/* Load Unbalance — its own section now, below Alternator &
+                  Panel (was embedded inside that card). Its own Save
+                  button still sends the whole asset record like every
+                  other section here (see buildAssetPayload's own comment)
+                  — 'loadUnbalance' is just this card's own independent
+                  loading/success/error tracking key. */}
+              <View style={styles.sectionCard}>
+                <GroupHeader
+                  title="Load Unbalance"
+                  saved={!!vm.sectionSuccess['loadUnbalance']}
+                  onPress={() => toggleSectionReopen('loadUnbalance')}
+                  expanded={isSectionExpanded('loadUnbalance')}
+                />
+
+                {isSectionExpanded('loadUnbalance') && (
+                  <>
                     <View style={styles.fieldFull}>
-                      <Text style={styles.fieldLabel}>Load Unbalance</Text>
                       <View style={styles.toggleRow}>
                         <TouchableOpacity style={[styles.toggleOption, vm.loadUnbalance === 'Yes' && styles.toggleOptionActive]} onPress={() => vm.setLoadUnbalance('Yes')}>
                           <Text style={[styles.toggleText, vm.loadUnbalance === 'Yes' && styles.toggleTextActive]}>Yes</Text>
@@ -505,11 +574,11 @@ export default function SrTaskFormScreen() {
                       )}
                     </View>
 
-                    {vm.sectionError['alternator'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['alternator']}</Text> : null}
+                    {vm.sectionError['loadUnbalance'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['loadUnbalance']}</Text> : null}
                     <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('alternator')}
-                      saving={vm.sectionSaving['alternator']}
-                      done={vm.sectionSuccess['alternator']}
+                      onPress={() => vm.handleSaveAssetSection('loadUnbalance')}
+                      saving={vm.sectionSaving['loadUnbalance']}
+                      done={vm.sectionSuccess['loadUnbalance']}
                     />
                   </>
                 )}
@@ -520,7 +589,7 @@ export default function SrTaskFormScreen() {
                   swaps in the input fields below. */}
               <View style={styles.sectionCard}>
                 <ReadingsSectionHeader
-                  title="Electrical Readings"
+                  title="Genset Electrical Readings"
                   expanded={electricalExpanded}
                   onToggleExpanded={() => setElectricalExpanded((v) => !v)}
                   editing={electricalEditing}
@@ -534,7 +603,6 @@ export default function SrTaskFormScreen() {
                       [['AC VOLT BR', vm.acVoltBR, vm.setAcVoltBR, 'V'], ['AC AMP R', vm.acAmpR, vm.setAcAmpR, 'A']],
                       [['AC AMP Y', vm.acAmpY, vm.setAcAmpY, 'A'], ['AC AMP B', vm.acAmpB, vm.setAcAmpB, 'A']],
                       [['LOAD KW R', vm.loadKwR, vm.setLoadKwR, undefined], ['LOAD KW Y', vm.loadKwY, vm.setLoadKwY, undefined]],
-                      [['LOAD KW B', vm.loadKwB, vm.setLoadKwB, undefined], ['TOTAL KW', vm.totalKw, vm.setTotalKw, undefined]],
                     ] as const).map((row, i) => (
                       <View key={i} style={[styles.fieldRow, { marginTop: i === 0 ? 0 : 14 }]}>
                         {row.map(([label, value, setter, unit]) => (
@@ -543,8 +611,15 @@ export default function SrTaskFormScreen() {
                       </View>
                     ))}
                     <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="LOAD %" value={vm.loadPercent} onChangeValue={vm.setLoadPercent} unit="%" />
+                      <NumberStepperField label="LOAD KW B" value={vm.loadKwB} onChangeValue={vm.setLoadKwB} />
                       <View style={{ flex: 1 }} />
+                    </View>
+                    {/* Total Load KW / Load % — both read-only now, both
+                    computed off other fields (see useSrTaskForm.ts's own
+                    effects), neither separately typed in. */}
+                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
+                      <NumberStepperField label="TOTAL LOAD KW" value={vm.totalKw} onChangeValue={() => {}} readOnly />
+                      <NumberStepperField label="LOAD %" value={vm.loadPercent} onChangeValue={() => {}} unit="%" readOnly />
                     </View>
 
                     {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
@@ -561,8 +636,8 @@ export default function SrTaskFormScreen() {
                       [{ kind: 'value', label: 'AC Volt BR', value: vm.acVoltBR, unit: 'V' }, { kind: 'value', label: 'AC Amp R', value: vm.acAmpR, unit: 'A' }],
                       [{ kind: 'value', label: 'AC Amp Y', value: vm.acAmpY, unit: 'A' }, { kind: 'value', label: 'AC Amp B', value: vm.acAmpB, unit: 'A' }],
                       [{ kind: 'value', label: 'Load KW R', value: vm.loadKwR }, { kind: 'value', label: 'Load KW Y', value: vm.loadKwY }],
-                      [{ kind: 'value', label: 'Load KW B', value: vm.loadKwB }, { kind: 'value', label: 'Total KW', value: vm.totalKw }],
-                      [{ kind: 'value', label: 'Load %', value: vm.loadPercent, unit: '%' }],
+                      [{ kind: 'value', label: 'Load KW B', value: vm.loadKwB }],
+                      [{ kind: 'value', label: 'Total Load KW', value: vm.totalKw }, { kind: 'value', label: 'Load %', value: vm.loadPercent, unit: '%' }],
                     ] as const).map((row, i) => (
                       <View key={i} style={[styles.readingsDisplayRow, i === 0 && { marginTop: 4 }]}>
                         {row.map((item) => (
@@ -598,7 +673,17 @@ export default function SrTaskFormScreen() {
                     </View>
                     <View style={[styles.fieldRow, { marginTop: 14 }]}>
                       <NumberStepperField label="COOLANT TEMP" value={vm.coolantTemp} onChangeValue={vm.setCoolantTemp} unit="°C" />
-                      <NumberStepperField label="DEF LEVEL" value={vm.defLevel} onChangeValue={vm.setDefLevel} unit="%" />
+                      {/* DEF Level only applies to gensets rated 75 KVA or
+                      above — locked (not just hidden, so a value entered
+                      before a later KVA edit dropped it below 75 isn't
+                      silently lost) until that threshold is met. */}
+                      <NumberStepperField
+                        label="DEF LEVEL"
+                        value={vm.defLevel}
+                        onChangeValue={vm.setDefLevel}
+                        unit="%"
+                        readOnly={(parseFloat(vm.kva) || 0) < 75}
+                      />
                     </View>
 
                     {([
@@ -729,6 +814,8 @@ export default function SrTaskFormScreen() {
                 parts={vm.apiParts}
                 loading={vm.partsLoading}
                 onSelectPart={vm.handleSelectPart}
+                assetEngineFamily={vm.engineFamily}
+                assetCpcbNorm={vm.cpcbNorm}
               />
             </>
           )}

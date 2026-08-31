@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { UserProfile } from '../models/Login';
 import { DashboardSummary } from '../models/dashboard.types';
 import { TeamMember } from '../models/myTeam.types';
@@ -132,11 +132,19 @@ export function useDashboardHomeController() {
     setSummary({ ...data, summaryCounts });
     const allActive = [...commissioning, ...service];
     setRawActiveTasks(allActive);
-    setCarouselIndex(0);
-    setRawRecentCompletedTasks([...completedCommissioning, ...completedService]);
-    setCompletedCarouselIndex(0);
+    // Was an unconditional setCarouselIndex(0) — reset to card 1 on every
+    // single refresh, including the silent background poll (every 5s —
+    // see fetchSummary's own comment). That meant swiping to card 3/4 and
+    // just waiting a few seconds snapped straight back to card 1. Only
+    // clamp down when the list actually got shorter than the current
+    // position (e.g. a task completed and dropped off), otherwise leave
+    // wherever the user is browsing alone.
+    setCarouselIndex((i) => Math.min(i, Math.max(0, allActive.length - 1)));
+    const allCompleted = [...completedCommissioning, ...completedService];
+    setRawRecentCompletedTasks(allCompleted);
+    setCompletedCarouselIndex((i) => Math.min(i, Math.max(0, allCompleted.length - 1)));
     setRawClosedTasks([...closedCommissioning, ...closedService]);
-    setApprovalIndex(0);
+    setApprovalIndex((i) => Math.min(i, Math.max(0, (data.approvalList?.length || 0) - 1)));
 
     const queuedOverrides = await deriveQueuedTaskStatusOverrides(allActive);
     if (Object.keys(queuedOverrides).length > 0) {
@@ -229,36 +237,61 @@ export function useDashboardHomeController() {
     if (!ok) Alert.alert('Error', 'Failed to refresh dashboard. Please try again.');
   }, [fetchSummary]);
 
-  useEffect(() => {
-    fetchSummary();
-  }, [fetchSummary]);
-
   // Re-checks connectivity on its own, without waiting for the user to do
-  // anything — same cadence _layout.tsx already uses for the offline sync
-  // engines (once on foreground, every 20s while the app stays open).
-  // Without this, showingCachedDashboard only ever got set right when the
-  // screen first mounted; if the network dropped later while someone was
-  // already sitting on this screen, nothing would notice until they
-  // manually pulled to refresh or left and came back — the switch into the
-  // simplified offline dashboard (dashboard.tsx) would lag behind reality.
-  // `silent: true` keeps this invisible when it succeeds — no loading
-  // spinner flicker every 20 seconds while everything's fine.
+  // anything. Without this, showingCachedDashboard only ever got set right
+  // when the screen first mounted; if the network dropped later while
+  // someone was already sitting on this screen, nothing would notice until
+  // they manually pulled to refresh or left and came back — the switch
+  // into the simplified offline dashboard (dashboard.tsx) would lag behind
+  // reality.
+  //
+  // 5s, not the 20s cadence _layout.tsx's offline sync engines use — this
+  // app has no OS-level "connectivity changed" listener (no NetInfo), so
+  // the only way to notice the signal dropped is to actually try a request
+  // and see it fail. 5s keeps that gap small enough to read as "automatic"
+  // rather than "stuck until I refresh", without polling so often it costs
+  // meaningfully more battery/data than the old 20s cadence did.
+  //
+  // useFocusEffect (not a plain useEffect) — everything below only runs
+  // while this screen is actually the one on screen. A plain useEffect
+  // would keep the AppState listener/interval alive for as long as this
+  // controller stayed *mounted*, which in an expo-router Stack is well
+  // past the point the user has navigated away (previous screens stay
+  // mounted in the background) — silently polling the dashboard API every
+  // 5s from a screen nobody's looking at. useFocusEffect's own cleanup
+  // (returned below) tears it down the moment focus is lost, and the same
+  // setup runs again next time this screen regains focus.
+  //
+  // Also folds in what used to be a separate mount-only effect
+  // (fetchSummary() once) — now it also re-fetches every time the screen
+  // regains focus (e.g. coming back from a task form after saving
+  // something), not just the very first time this screen ever mounted.
+  // `hasFetchedOnceRef` keeps the very first load's normal full-screen
+  // spinner (the expected first-load experience) while every later
+  // refocus fetches silently, so switching back to this tab doesn't flash
+  // a spinner over data that's probably still perfectly fine.
   const appState = useRef(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-      if (appState.current.match(/inactive|background/) && nextState === 'active') {
-        fetchSummary({ silent: true });
-      }
-      appState.current = nextState;
-    });
-    const interval = setInterval(() => {
-      if (appState.current === 'active') fetchSummary({ silent: true });
-    }, 20000);
-    return () => {
-      subscription.remove();
-      clearInterval(interval);
-    };
-  }, [fetchSummary]);
+  const hasFetchedOnceRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      fetchSummary(hasFetchedOnceRef.current ? { silent: true } : undefined);
+      hasFetchedOnceRef.current = true;
+
+      const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+        if (appState.current.match(/inactive|background/) && nextState === 'active') {
+          fetchSummary({ silent: true });
+        }
+        appState.current = nextState;
+      });
+      const interval = setInterval(() => {
+        if (appState.current === 'active') fetchSummary({ silent: true });
+      }, 5000);
+      return () => {
+        subscription.remove();
+        clearInterval(interval);
+      };
+    }, [fetchSummary])
+  );
 
   // "You have N active Tasks" — commissioning.active + service.active,
   // exactly the pair the backend's own `counts` block reports. Deliberately

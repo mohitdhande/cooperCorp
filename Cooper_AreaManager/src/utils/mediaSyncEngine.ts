@@ -5,6 +5,7 @@ import {
 } from '../viewModel/commisionAPi';
 import { getPendingMediaQueue, getPendingMediaCount, removePendingMedia, PendingMediaItem } from './pendingMediaQueue';
 import { isNetworkError, isServerError } from './syncEngine';
+import { devLog } from './devLog';
 
 // The persistent-media counterpart to syncEngine.ts's runSync/pending-count
 // pub-sub, replaying pendingMediaQueue.ts instead of the plain-JSON write
@@ -85,7 +86,7 @@ export async function runMediaSync(): Promise<{ synced: number }> {
         notifySuccessListeners(item);
       } catch (error: any) {
         if (isNetworkError(error) || error?.name === 'NetworkError' || isServerError(error)) break;
-        console.log('[Media Sync] Server rejected a queued upload, dropping it:', item.fileName, error?.response?.data || error?.message);
+        devLog('[Media Sync] Server rejected a queued upload, dropping it:', item.fileName, error?.response?.data || error?.message);
         await removePendingMedia(item.id);
       }
     }

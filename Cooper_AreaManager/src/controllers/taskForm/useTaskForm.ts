@@ -225,11 +225,20 @@ export function useTaskForm() {
   const [altModel, setAltModel] = useState('');
   const [altSn, setAltSn] = useState('');
   const [atsSn, setAtsSn] = useState('');
+  // Was a single "Battery S/N" field — now Battery Type plus two separate
+  // serial numbers (a genset can have 2 batteries). Confirmed backend keys:
+  // batteryType, battery1SerialNumber (batterySn — "Battery 1 S/N"),
+  // battery2SerialNumber (battery2Sn).
+  const [batteryType, setBatteryType] = useState('');
   const [batterySn, setBatterySn] = useState('');
+  const [battery2Sn, setBattery2Sn] = useState('');
   const [kva, setKva] = useState('');
   const [phase, setPhase] = useState('');
   const [panelType, setPanelType] = useState('');
   const [panelSn, setPanelSn] = useState('');
+  // Confirmed backend keys: controllerType, controllerSerialNumber (controllerSr).
+  const [controllerType, setControllerType] = useState('');
+  const [controllerSr, setControllerSr] = useState('');
   const [cpcbNorm, setCpcbNorm] = useState('');
   const [loadUnbalance, setLoadUnbalance] = useState<'Yes' | 'No' | null>(null);
   const [loadUnbalancePercentage, setLoadUnbalancePercentage] = useState('');
@@ -266,11 +275,15 @@ export function useTaskForm() {
     if (data.alternatorModel) setAltModel(data.alternatorModel);
     if (data.alternatorSerialNumber) setAltSn(data.alternatorSerialNumber);
     if (data.atsSerialNumber) setAtsSn(data.atsSerialNumber);
-    if (data.batterySerialNumber) setBatterySn(data.batterySerialNumber);
+    if (data.batteryType) setBatteryType(data.batteryType);
+    if (data.battery1SerialNumber) setBatterySn(data.battery1SerialNumber);
+    if (data.battery2SerialNumber) setBattery2Sn(data.battery2SerialNumber);
     if (data.kva) setKva(data.kva);
     if (data.phase) setPhase(data.phase);
     if (data.panelType) setPanelType(data.panelType);
     if (data.controlPanelSerialNumber) setPanelSn(data.controlPanelSerialNumber);
+    if (data.controllerType) setControllerType(data.controllerType);
+    if (data.controllerSerialNumber) setControllerSr(data.controllerSerialNumber);
     if (data.cpcb) setCpcbNorm(data.cpcb);
     // data.loadUnbalance is a plain boolean on the backend, defaulting to
     // false for a genset that's never actually had this asked — treating
@@ -356,26 +369,30 @@ export function useTaskForm() {
   const handleSaveGensetIdentification = useCallback(() => saveAssetSection('genset', {
     gensetModel, gensetNumber: gensetSrNumber, engineModel, engineNumber,
     kw: engineKw, engineType, engineFamily, fuelType, applicationMaterial: application, cpcb: cpcbNorm,
-  }), [saveAssetSection, gensetModel, gensetSrNumber, engineModel, engineNumber, engineKw, engineType, engineFamily, fuelType, application, cpcbNorm]);
+    atsSerialNumber: atsSn,
+  }), [saveAssetSection, gensetModel, gensetSrNumber, engineModel, engineNumber, engineKw, engineType, engineFamily, fuelType, application, cpcbNorm, atsSn]);
 
   const handleSaveAlternatorPanel = useCallback(() => saveAssetSection('alternator', {
     alternatorMake: altMake, alternatorModel: altModel, alternatorSerialNumber: altSn,
-    atsSerialNumber: atsSn, batterySerialNumber: batterySn, kva, phase, panelType,
+    batteryType, battery1SerialNumber: batterySn, battery2SerialNumber: battery2Sn,
+    kva, phase, panelType,
     controlPanelSerialNumber: panelSn,
+    controllerType, controllerSerialNumber: controllerSr,
     // loadUnbalance itself (the Yes/No answer) was never actually included
     // here before — only the percentage was, so the backend had no way to
     // tell "balanced" apart from "unbalanced but no % entered yet".
     loadUnbalance: loadUnbalance === 'Yes',
     loadUnbalancePercentage: loadUnbalance === 'Yes' && loadUnbalancePercentage ? Number(loadUnbalancePercentage) : null,
     loadUnbalanceComment: loadUnbalance === 'No' ? (loadUnbalanceComment || null) : null,
-  }), [saveAssetSection, altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, loadUnbalance, loadUnbalancePercentage, loadUnbalanceComment]);
+  }), [saveAssetSection, altMake, altModel, altSn, batteryType, batterySn, battery2Sn, kva, phase, panelType, panelSn, controllerType, controllerSr, loadUnbalance, loadUnbalancePercentage, loadUnbalanceComment]);
 
-  // cpcbNorm moved here from Alternator & Panel — the field itself now
-  // lives on the Genset Identification card (beside Application), so its
-  // "missing" count and save payload moved with it.
-  const gensetMissingCount = [gensetModel, engineModel, engineFamily, fuelType, application, cpcbNorm].filter(v => !v).length;
+  // cpcbNorm and atsSn moved here from Alternator & Panel — both fields now
+  // live on the Genset Identification card, so their "missing" count and
+  // save payload moved with them.
+  const gensetMissingCount = [gensetModel, engineModel, engineFamily, fuelType, application, cpcbNorm, atsSn].filter(v => !v).length;
   const altMissingCount = [
-    altMake, altModel, altSn, atsSn, batterySn, kva, phase, panelType, panelSn, loadUnbalance,
+    altMake, altModel, altSn, batteryType, batterySn, battery2Sn, kva, phase, panelType, panelSn,
+    controllerType, controllerSr, loadUnbalance,
   ].filter(v => !v).length;
 
   // ── Step 2 — commissioning checks (Group A/B/C/D/E) ──
@@ -529,6 +546,17 @@ export function useTaskForm() {
     () => saveGroupChecks('groupB', buildGroupPayload(GROUP_B_FIELDS, GROUP_B_COMMENT_FIELDS)),
     [saveGroupChecks, commissioningChecks]
   );
+  // The "Load & Phase Check" card's single Save button — it shows Load
+  // Unbalance (part of Alternator & Panel's payload) and Phase Difference
+  // Genset A (part of Group B's payload) together, so pressing it has to
+  // fire both underlying saves. Each still tracks its own saving/success/
+  // error under its own key ('alternator'/'groupB') — this just runs them
+  // together; the Alternator & Panel and Group B cards elsewhere keep
+  // showing the same saved state either save updates.
+  const handleSaveLoadAndPhaseCheck = useCallback(
+    () => Promise.all([handleSaveAlternatorPanel(), handleSaveGroupB()]),
+    [handleSaveAlternatorPanel, handleSaveGroupB]
+  );
   const handleSaveGroupC = useCallback(
     () => saveGroupChecks('groupC', buildGroupPayload(GROUP_C_FIELDS, GROUP_C_COMMENT_FIELDS)),
     [saveGroupChecks, commissioningChecks]
@@ -672,10 +700,15 @@ export function useTaskForm() {
     setSelectedParts(prev => {
       const existing = prev.find(p => p.partId === part._id);
       const next = existing
-        ? prev.map(p => (p.partId === part._id ? { ...p, quantity: p.quantity + 1 } : p))
+        // Capped at maxQty (if set) — same soft client-side guardrail as
+        // the +/- stepper below, so re-picking an already-added part can't
+        // silently bypass the cap.
+        ? prev.map(p => (p.partId === part._id
+            ? { ...p, quantity: p.maxQty ? Math.min(p.quantity + 1, p.maxQty) : p.quantity + 1 }
+            : p))
         : [...prev, {
-            partId: part._id, code: part.code, name: part.name, unit: part.unit,
-            category: part.category, subCategory: part.subCategory, quantity: 1,
+            partId: part._id, componentNumber: part.componentNumber, description: part.description,
+            engineFamily: part.engineFamily, cpcbNorm: part.cpcbNorm, maxQty: part.maxQty, quantity: 1,
           }];
       debouncedSaveParts(next);
       return next;
@@ -684,7 +717,11 @@ export function useTaskForm() {
 
   const handleIncreaseQty = useCallback((partId: string) => {
     setSelectedParts(prev => {
-      const next = prev.map(p => (p.partId === partId ? { ...p, quantity: p.quantity + 1 } : p));
+      // maxQty is a soft cap, not enforced server-side — see
+      // SelectedPartCard's own comment for the full reasoning.
+      const next = prev.map(p => (p.partId === partId
+        ? { ...p, quantity: p.maxQty ? Math.min(p.quantity + 1, p.maxQty) : p.quantity + 1 }
+        : p));
       debouncedSaveParts(next);
       return next;
     });
@@ -713,6 +750,38 @@ export function useTaskForm() {
   const updateReading = useCallback((key: string, value: string) => {
     setReadings(prev => ({ ...prev, [key]: value }));
   }, []);
+  // Total Load KW (was its own manually-typed field) is now always just
+  // Load KW R + Y + B added together — recomputed live as any of the three
+  // change, including right after loadGensetReadings hydrates a previously
+  // saved reading, so it can never drift from the sum. Written into
+  // `readings` itself (not just derived at render time) so it's still
+  // actually included in handleSaveReadings' payload — READINGS_NUMERIC_
+  // FIELDS reads totalKwLoad from here the same as every other field.
+  useEffect(() => {
+    const { loadKwR, loadKwY, loadKwB } = readings;
+    const allEmpty = !loadKwR && !loadKwY && !loadKwB;
+    const total = allEmpty ? '' : String((parseFloat(loadKwR) || 0) + (parseFloat(loadKwY) || 0) + (parseFloat(loadKwB) || 0));
+    if (readings.totalKwLoad !== total) {
+      setReadings(prev => ({ ...prev, totalKwLoad: total }));
+    }
+  }, [readings.loadKwR, readings.loadKwY, readings.loadKwB]);
+
+  // Load (%) — also read-only now, computed off Total Load KW and the
+  // genset's own KVA Rating (Alternator & Panel card): a genset's rated
+  // real-power output is its KVA × 0.8 (the standard assumed power
+  // factor), so "what % of capacity is it currently loaded to" is
+  // (Total Load KW ÷ (KVA × 0.8)) × 100 — Total Load KW divided by rated
+  // capacity, not the other way round. Left blank rather than 0/NaN
+  // whenever either input is missing or KVA is 0 (can't divide by it).
+  useEffect(() => {
+    const ratedKw = (parseFloat(kva) || 0) * 0.8;
+    const percentage = (!kva || !readings.totalKwLoad || ratedKw === 0)
+      ? ''
+      : String(Math.round(((parseFloat(readings.totalKwLoad) || 0) / ratedKw) * 100 * 100) / 100);
+    if (readings.loadPercentage !== percentage) {
+      setReadings(prev => ({ ...prev, loadPercentage: percentage }));
+    }
+  }, [readings.totalKwLoad, kva]);
   const [readingsSavedBy, setReadingsSavedBy] = useState<{ name: string; role: string } | null>(null);
   const [readingsSavedAt, setReadingsSavedAt] = useState<string | null>(null);
   const [readingsSaving, setReadingsSaving] = useState(false);
@@ -747,7 +816,11 @@ export function useTaskForm() {
   }, [taskId]);
 
   useEffect(() => {
-    if (currentStep === 5 && taskId) loadGensetReadings();
+    // Step 2 now shows Engine Parameters (moved there, above Performance
+    // Trial) while Electrical Readings stays on Step 5 — both read from
+    // this same `readings` state, so it must be loaded by the time either
+    // step is reached, not just on Step 5.
+    if ((currentStep === 2 || currentStep === 5) && taskId) loadGensetReadings();
   }, [currentStep, taskId, loadGensetReadings]);
 
   const handleSaveReadings = useCallback(async () => {
@@ -774,7 +847,7 @@ export function useTaskForm() {
       const { queued } = await putOrQueue(
         `/api/commissioning/${taskId}/readings`,
         { readings: body },
-        `Electrical Readings (${assetLabel})`,
+        `Genset Electrical Readings (${assetLabel})`,
         `readings_${taskId}`,
         isEngineer
       );
@@ -861,8 +934,10 @@ export function useTaskForm() {
     engineNumber, setEngineNumber, engineKw, setEngineKw, engineType, setEngineType, engineFamily, setEngineFamily,
     fuelType, setFuelType, application, setApplication,
     altMake, setAltMake, altModel, setAltModel, altSn, setAltSn, atsSn, setAtsSn,
-    batterySn, setBatterySn, kva, setKva, phase, setPhase, panelType, setPanelType,
-    panelSn, setPanelSn, cpcbNorm, setCpcbNorm, loadUnbalance, setLoadUnbalance,
+    batteryType, setBatteryType, batterySn, setBatterySn, battery2Sn, setBattery2Sn,
+    kva, setKva, phase, setPhase, panelType, setPanelType,
+    panelSn, setPanelSn, controllerType, setControllerType, controllerSr, setControllerSr,
+    cpcbNorm, setCpcbNorm, loadUnbalance, setLoadUnbalance,
     loadUnbalancePercentage, setLoadUnbalancePercentage,
     loadUnbalanceComment, setLoadUnbalanceComment,
     commissioningDate, setCommissioningDate,
@@ -877,6 +952,7 @@ export function useTaskForm() {
     prefillChecks, handleLoadPrefillChecks,
     validationChecks, updateValidationCheck,
     handleSaveGroupA, handleSaveGroupB, handleSaveGroupC, handleSaveGroupD, handleSaveGroupE,
+    handleSaveLoadAndPhaseCheck,
     handleSaveCustomerHandover,
     handleSaveValidationChecks,
 

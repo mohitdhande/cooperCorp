@@ -147,6 +147,167 @@ export default function TaskFormScreen() {
   const readingsExpanded = !vm.readingsSuccess || !!sectionReopened["readings"];
   const toggleReadingsReopen = () => toggleSectionReopen("readings");
 
+  // Engine Parameters — shared JSX, rendered in one of two different spots
+  // depending on the task type, since a plain commissioning/re-commissioning
+  // task and a revalidation task don't share the same Step 2 content:
+  // - Commissioning/re-commissioning/pre-commissioning: stays in Step 2,
+  //   above Performance Trial (unchanged from before).
+  // - Revalidation: Step 2 is the separate validation checklist instead
+  //   (no Performance Trial to sit near), so this renders in Step 5,
+  //   above Genset Electrical Readings.
+  // Still part of the same combined genset-readings payload as Electrical
+  // Readings (which always stays in Step 5) either way — either card's
+  // Save button saves both, regardless of which step this one is on.
+  const engineParametersCard = (
+    <View style={styles.sectionCard}>
+      <GroupHeader
+        title="Engine Parameters"
+        saved={!!vm.readingsSuccess}
+        onPress={toggleReadingsReopen}
+        expanded={readingsExpanded}
+      />
+
+      {readingsExpanded && (
+        <>
+          {(
+            [
+              ["RPM", "rpm"],
+              ["Frequency (HZ)", "frequency"],
+              ["DC Voltage (V)", "dcVoltage"],
+              ["Oil Pressure", "oilPressure"],
+              ["Coolant Temp (°C)", "coolantTemperature"],
+              ["DEF Level (%)", "defLevelPercentage"],
+            ] as const
+          )
+            .reduce(
+              (rows: (readonly [string, string])[][], field, i) => {
+                if (i % 3 === 0) rows.push([]);
+                rows[rows.length - 1].push(field);
+                return rows;
+              },
+              [],
+            )
+            .map((row, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.fieldRow,
+                  i === 0 && { marginTop: 4 },
+                ]}
+              >
+                {row.map(([label, key]) => {
+                  // DEF Level only applies to gensets rated
+                  // 75 KVA or above — locked (not just hidden,
+                  // so a value entered before a later KVA edit
+                  // dropped it below 75 isn't silently lost)
+                  // until that threshold is met.
+                  const isDefLevel = key === "defLevelPercentage";
+                  const defEnabled = (parseFloat(vm.kva) || 0) >= 75;
+                  const locked = isDefLevel && !defEnabled;
+                  return (
+                    <View key={key} style={styles.fieldThird}>
+                      <Text style={styles.fieldLabelStatic}>
+                        {label}
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.fieldInput,
+                          locked && styles.fieldInputReadOnly,
+                        ]}
+                        value={vm.readings[key] || ""}
+                        onChangeText={(v) => vm.updateReading(key, v)}
+                        keyboardType="numeric"
+                        editable={!locked}
+                      />
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
+
+          {(
+            [
+              ["Oil Level", "oilLevel", "oilLevelComment"],
+              [
+                "Coolant Level",
+                "coolantLevel",
+                "coolantLevelComment",
+              ],
+            ] as const
+          ).map(([label, key, commentKey], i) => (
+            <View
+              key={key}
+              style={i === 0 ? { marginTop: 8 } : { marginTop: 16 }}
+            >
+              <Text style={styles.fieldLabelStatic}>{label}</Text>
+              <View style={styles.okNotOkRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.okButton,
+                    vm.readings[key]?.toUpperCase() === "OK" &&
+                      styles.okButtonActive,
+                  ]}
+                  onPress={() => vm.updateReading(key, "OK")}
+                >
+                  <Text
+                    style={[
+                      styles.okButtonText,
+                      vm.readings[key]?.toUpperCase() === "OK" &&
+                        styles.okButtonTextActive,
+                    ]}
+                  >
+                    OK
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.notOkButton,
+                    vm.readings[key]?.toUpperCase() === "NOT OK" &&
+                      styles.notOkButtonActive,
+                  ]}
+                  onPress={() => vm.updateReading(key, "Not OK")}
+                >
+                  <Text
+                    style={[
+                      styles.notOkButtonText,
+                      vm.readings[key]?.toUpperCase() ===
+                        "NOT OK" && styles.notOkButtonTextActive,
+                    ]}
+                  >
+                    Not OK
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {vm.readings[key]?.toUpperCase() === "NOT OK" && (
+                <TextInput
+                  style={styles.issueInput}
+                  placeholder={`Describe ${label.toLowerCase()} issue...`}
+                  placeholderTextColor="#D1A3A3"
+                  value={vm.readings[commentKey] || ""}
+                  onChangeText={(v) =>
+                    vm.updateReading(commentKey, v)
+                  }
+                  multiline
+                />
+              )}
+            </View>
+          ))}
+
+          {vm.readingsError ? (
+            <Text style={styles.sectionErrorText}>
+              {vm.readingsError}
+            </Text>
+          ) : null}
+          <SectionSaveButton
+            onPress={vm.handleSaveReadings}
+            saving={vm.readingsSaving}
+            done={vm.readingsSuccess}
+          />
+        </>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
@@ -378,6 +539,20 @@ export default function TaskFormScreen() {
                         </View>
                       </View>
 
+                      {/* ATS S/N — moved here from Alternator & Panel. */}
+                      <View style={styles.fieldRow}>
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabel}>ATS S/N</Text>
+                          <TextInput
+                            ref={register("atsSn")}
+                            style={styles.fieldInput}
+                            value={vm.atsSn}
+                            onChangeText={vm.setAtsSn}
+                            returnKeyType="done"
+                          />
+                        </View>
+                      </View>
+
                       {vm.sectionError["genset"] ? (
                         <Text style={styles.sectionErrorText}>
                           {vm.sectionError["genset"]}
@@ -440,16 +615,19 @@ export default function TaskFormScreen() {
                             onChangeText={vm.setAltSn}
                             returnKeyType="next"
                             submitBehavior="submit"
-                            onSubmitEditing={() => focusNext("atsSn")}
+                            onSubmitEditing={() => focusNext("batteryType")}
                           />
                         </View>
+                        {/* Was a single "Battery S/N" field — now Battery
+                            Type plus two separate serial numbers, since a
+                            genset can have 2 batteries. */}
                         <View style={styles.fieldHalf}>
-                          <Text style={styles.fieldLabel}>ATS S/N</Text>
+                          <Text style={styles.fieldLabel}>Battery Type</Text>
                           <TextInput
-                            ref={register("atsSn")}
+                            ref={register("batteryType")}
                             style={styles.fieldInput}
-                            value={vm.atsSn}
-                            onChangeText={vm.setAtsSn}
+                            value={vm.batteryType}
+                            onChangeText={vm.setBatteryType}
                             returnKeyType="next"
                             submitBehavior="submit"
                             onSubmitEditing={() => focusNext("batterySn")}
@@ -459,7 +637,7 @@ export default function TaskFormScreen() {
 
                       <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
-                          <Text style={styles.fieldLabel}>Battery S/N</Text>
+                          <Text style={styles.fieldLabel}>Battery 1 S/N</Text>
                           <TextInput
                             ref={register("batterySn")}
                             style={styles.fieldInput}
@@ -467,9 +645,24 @@ export default function TaskFormScreen() {
                             onChangeText={vm.setBatterySn}
                             returnKeyType="next"
                             submitBehavior="submit"
+                            onSubmitEditing={() => focusNext("battery2Sn")}
+                          />
+                        </View>
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabel}>Battery 2 S/N</Text>
+                          <TextInput
+                            ref={register("battery2Sn")}
+                            style={styles.fieldInput}
+                            value={vm.battery2Sn}
+                            onChangeText={vm.setBattery2Sn}
+                            returnKeyType="next"
+                            submitBehavior="submit"
                             onSubmitEditing={() => focusNext("kva")}
                           />
                         </View>
+                      </View>
+
+                      <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
                           <Text style={styles.fieldLabel}>KVA Rating</Text>
                           <TextInput
@@ -481,9 +674,6 @@ export default function TaskFormScreen() {
                             returnKeyType="done"
                           />
                         </View>
-                      </View>
-
-                      <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
                           <DropdownField
                             plainLabel
@@ -493,6 +683,9 @@ export default function TaskFormScreen() {
                             onSelect={vm.setPhase}
                           />
                         </View>
+                      </View>
+
+                      <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
                           <DropdownField
                             plainLabel
@@ -502,15 +695,41 @@ export default function TaskFormScreen() {
                             onSelect={vm.setPanelType}
                           />
                         </View>
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabel}>Panel S/N</Text>
+                          <TextInput
+                            ref={register("panelSn")}
+                            style={styles.fieldInput}
+                            value={vm.panelSn}
+                            onChangeText={vm.setPanelSn}
+                            returnKeyType="next"
+                            submitBehavior="submit"
+                            onSubmitEditing={() => focusNext("controllerType")}
+                          />
+                        </View>
                       </View>
 
                       <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
-                          <Text style={styles.fieldLabel}>Panel S/N</Text>
+                          <Text style={styles.fieldLabel}>Controller Type</Text>
                           <TextInput
+                            ref={register("controllerType")}
                             style={styles.fieldInput}
-                            value={vm.panelSn}
-                            onChangeText={vm.setPanelSn}
+                            value={vm.controllerType}
+                            onChangeText={vm.setControllerType}
+                            returnKeyType="next"
+                            submitBehavior="submit"
+                            onSubmitEditing={() => focusNext("controllerSr")}
+                          />
+                        </View>
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabel}>Controller S/R</Text>
+                          <TextInput
+                            ref={register("controllerSr")}
+                            style={styles.fieldInput}
+                            value={vm.controllerSr}
+                            onChangeText={vm.setControllerSr}
+                            returnKeyType="done"
                           />
                         </View>
                       </View>
@@ -631,7 +850,7 @@ export default function TaskFormScreen() {
                       </Text>
                       <CheckToggleRow
                         index={null}
-                        question="A. 2 Nos. of earthing pits for genset and control panel Body"
+                        question="A. 1 Nos earthing pits for Genset and Control Panel Body"
                         value={vm.commissioningChecks.A6a || ""}
                         comment={vm.commissioningChecks.A6a_comment || ""}
                         onSetValue={(v) =>
@@ -643,7 +862,7 @@ export default function TaskFormScreen() {
                       />
                       <CheckToggleRow
                         index={null}
-                        question="B. 1 Nos. of earthing pit for neutral."
+                        question="B. 2 Nos. of earthing pits for Neutral"
                         value={vm.commissioningChecks.A6b || ""}
                         comment={vm.commissioningChecks.A6b_comment || ""}
                         onSetValue={(v) =>
@@ -655,7 +874,7 @@ export default function TaskFormScreen() {
                       />
                       <CheckToggleRow
                         index={null}
-                        question="C. 1 Nos. of earthing pit for alternator."
+                        question="C. 1 Nos. of earthing pits for Alternator Body"
                         value={vm.commissioningChecks.A6c || ""}
                         comment={vm.commissioningChecks.A6c_comment || ""}
                         onSetValue={(v) =>
@@ -725,7 +944,7 @@ export default function TaskFormScreen() {
                       >
                         <View style={styles.numericFieldThird}>
                           <Text style={styles.numericFieldLabel}>
-                            A. R- Phase
+                            A. R Phase
                           </Text>
                           <TextInput
                             style={[
@@ -741,7 +960,7 @@ export default function TaskFormScreen() {
                         </View>
                         <View style={styles.numericFieldThird}>
                           <Text style={styles.numericFieldLabel}>
-                            B. Y- Phase
+                            A. Y Phase
                           </Text>
                           <TextInput
                             style={[
@@ -757,7 +976,7 @@ export default function TaskFormScreen() {
                         </View>
                         <View style={styles.numericFieldThird}>
                           <Text style={styles.numericFieldLabel}>
-                            C. B- Phase
+                            A. B Phase
                           </Text>
                           <TextInput
                             style={[
@@ -807,7 +1026,7 @@ export default function TaskFormScreen() {
                         </View>
                         <View style={styles.numericFieldThird}>
                           <Text style={styles.numericFieldLabel}>
-                            B. Y-B Phase
+                            A. Y-B Phase
                           </Text>
                           <TextInput
                             style={[
@@ -823,7 +1042,7 @@ export default function TaskFormScreen() {
                         </View>
                         <View style={styles.numericFieldThird}>
                           <Text style={styles.numericFieldLabel}>
-                            C. B-R Phase
+                            A. B-R Phase
                           </Text>
                           <TextInput
                             style={[
@@ -1264,6 +1483,8 @@ export default function TaskFormScreen() {
                   )}
                 </View>
 
+                {engineParametersCard}
+
                 {/* GROUP D — Performance Trial */}
                 <View style={styles.sectionCard}>
                   <GroupHeader
@@ -1477,7 +1698,8 @@ export default function TaskFormScreen() {
                     Alternator & Panel / Group B success state those cards
                     show too. */}
                 <View style={styles.sectionCard}>
-                  <Text style={styles.sectionTitle}>LOAD UNBALANCE</Text>
+                  <GroupHeader title="Load & Phase Check" saved={false} />
+                  <Text style={styles.fieldLabel}>Load Unbalance</Text>
                   <View style={[styles.fieldFull, { marginTop: 10 }]}>
                     <View style={styles.toggleRow}>
                       <TouchableOpacity
@@ -1539,19 +1761,9 @@ export default function TaskFormScreen() {
                       </View>
                     )}
                   </View>
-                  {vm.sectionError["alternator"] ? (
-                    <Text style={styles.sectionErrorText}>
-                      {vm.sectionError["alternator"]}
-                    </Text>
-                  ) : null}
-                  <SectionSaveButton
-                    onPress={vm.handleSaveAlternatorPanel}
-                    saving={vm.sectionSaving["alternator"]}
-                    done={vm.sectionSuccess["alternator"]}
-                  />
 
                   <Text style={[styles.sectionTitle, { marginTop: 20 }]}>
-                    PHASE DIFFERENCE (A)
+                    Phase Difference Genset (A)
                   </Text>
                   <View
                     style={[
@@ -1579,15 +1791,26 @@ export default function TaskFormScreen() {
                       </View>
                     ))}
                   </View>
+
+                  {/* One button saves both halves of this card — Load
+                  Unbalance (Alternator & Panel's payload) and Phase
+                  Difference Genset A (Group B's payload) — via
+                  handleSaveLoadAndPhaseCheck, which fires both underlying
+                  saves together. */}
+                  {vm.sectionError["alternator"] ? (
+                    <Text style={styles.sectionErrorText}>
+                      {vm.sectionError["alternator"]}
+                    </Text>
+                  ) : null}
                   {vm.sectionError["groupB"] ? (
                     <Text style={styles.sectionErrorText}>
                       {vm.sectionError["groupB"]}
                     </Text>
                   ) : null}
                   <SectionSaveButton
-                    onPress={vm.handleSaveGroupB}
-                    saving={vm.sectionSaving["groupB"]}
-                    done={vm.sectionSuccess["groupB"]}
+                    onPress={vm.handleSaveLoadAndPhaseCheck}
+                    saving={vm.sectionSaving["alternator"] || vm.sectionSaving["groupB"]}
+                    done={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
                   />
                 </View>
 
@@ -2150,6 +2373,8 @@ export default function TaskFormScreen() {
                   parts={vm.apiParts}
                   loading={vm.partsLoading}
                   onSelectPart={vm.handleSelectPart}
+                  assetEngineFamily={vm.engineFamily}
+                  assetCpcbNorm={vm.cpcbNorm}
                 />
               </>
             )}
@@ -2157,9 +2382,16 @@ export default function TaskFormScreen() {
             {/* ══════════════ STEP 5 — GENSET COMMISSIONING READINGS ══════════════ */}
             {vm.currentStep === 5 && (
               <>
+                {/* Revalidation only — its Step 2 is the separate
+                validation checklist (no Performance Trial to sit above),
+                so Engine Parameters shows here instead, above Genset
+                Electrical Readings. Every other task type keeps it in
+                Step 2 (see engineParametersCard's own comment). */}
+                {vm.isRevalidation && engineParametersCard}
+
                 <View style={styles.sectionCard}>
                   <GroupHeader
-                    title="Electrical Readings"
+                    title="Genset Electrical Readings"
                     saved={!!vm.readingsSuccess}
                     onPress={toggleReadingsReopen}
                     expanded={readingsExpanded}
@@ -2169,12 +2401,12 @@ export default function TaskFormScreen() {
                     <>
                       {(
                         [
-                          ["AC VOLT R-Y (V)", "acVoltageRY"],
-                          ["AC VOLT Y-B (V)", "acVoltageYB"],
-                          ["AC VOLT B-R (V)", "acVoltageBR"],
-                          ["AC AMP R (A)", "acAmpR"],
-                          ["AC AMP Y (A)", "acAmpY"],
-                          ["AC AMP B (A)", "acAmpB"],
+                          ["AC VOLT R-Y", "acVoltageRY"],
+                          ["AC VOLT Y-B", "acVoltageYB"],
+                          ["AC VOLT B-R", "acVoltageBR"],
+                          ["AC AMP R", "acAmpR"],
+                          ["AC AMP Y", "acAmpY"],
+                          ["AC AMP B", "acAmpB"],
                           ["Load KW R", "loadKwR"],
                           ["Load KW Y", "loadKwY"],
                           ["Load KW B", "loadKwB"],
@@ -2212,152 +2444,33 @@ export default function TaskFormScreen() {
                           </View>
                         ))}
 
-                      <View style={styles.fieldFull}>
-                        <Text style={styles.fieldLabelStatic}>Total KW</Text>
-                        <TextInput
-                          style={styles.fieldInput}
-                          value={vm.readings.totalKwLoad || ""}
-                          onChangeText={(v) =>
-                            vm.updateReading("totalKwLoad", v)
-                          }
-                          keyboardType="numeric"
-                        />
-                      </View>
-                      <View style={styles.fieldFull}>
-                        <Text style={styles.fieldLabelStatic}>Load (%)</Text>
-                        <TextInput
-                          style={styles.fieldInput}
-                          value={vm.readings.loadPercentage || ""}
-                          onChangeText={(v) =>
-                            vm.updateReading("loadPercentage", v)
-                          }
-                          keyboardType="numeric"
-                        />
-                      </View>
-                    </>
-                  )}
-                </View>
-
-                <View style={styles.sectionCard}>
-                  <GroupHeader
-                    title="Engine Parameters"
-                    saved={!!vm.readingsSuccess}
-                    onPress={toggleReadingsReopen}
-                    expanded={readingsExpanded}
-                  />
-
-                  {readingsExpanded && (
-                    <>
-                      {(
-                        [
-                          ["RPM", "rpm"],
-                          ["Frequency (HZ)", "frequency"],
-                          ["DC Voltage (V)", "dcVoltage"],
-                          ["Oil Pressure", "oilPressure"],
-                          ["Coolant Temp (°C)", "coolantTemperature"],
-                          ["DEF Level (%)", "defLevelPercentage"],
-                        ] as const
-                      )
-                        .reduce(
-                          (rows: (readonly [string, string])[][], field, i) => {
-                            if (i % 3 === 0) rows.push([]);
-                            rows[rows.length - 1].push(field);
-                            return rows;
-                          },
-                          [],
-                        )
-                        .map((row, i) => (
-                          <View
-                            key={i}
-                            style={[
-                              styles.fieldRow,
-                              i === 0 && { marginTop: 4 },
-                            ]}
-                          >
-                            {row.map(([label, key]) => (
-                              <View key={key} style={styles.fieldThird}>
-                                <Text style={styles.fieldLabelStatic}>
-                                  {label}
-                                </Text>
-                                <TextInput
-                                  style={styles.fieldInput}
-                                  value={vm.readings[key] || ""}
-                                  onChangeText={(v) => vm.updateReading(key, v)}
-                                  keyboardType="numeric"
-                                />
-                              </View>
-                            ))}
-                          </View>
-                        ))}
-
-                      {(
-                        [
-                          ["Oil Level", "oilLevel", "oilLevelComment"],
-                          [
-                            "Coolant Level",
-                            "coolantLevel",
-                            "coolantLevelComment",
-                          ],
-                        ] as const
-                      ).map(([label, key, commentKey], i) => (
-                        <View
-                          key={key}
-                          style={i === 0 ? { marginTop: 8 } : { marginTop: 16 }}
-                        >
-                          <Text style={styles.fieldLabelStatic}>{label}</Text>
-                          <View style={styles.okNotOkRow}>
-                            <TouchableOpacity
-                              style={[
-                                styles.okButton,
-                                vm.readings[key]?.toUpperCase() === "OK" &&
-                                  styles.okButtonActive,
-                              ]}
-                              onPress={() => vm.updateReading(key, "OK")}
-                            >
-                              <Text
-                                style={[
-                                  styles.okButtonText,
-                                  vm.readings[key]?.toUpperCase() === "OK" &&
-                                    styles.okButtonTextActive,
-                                ]}
-                              >
-                                OK
-                              </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[
-                                styles.notOkButton,
-                                vm.readings[key]?.toUpperCase() === "NOT OK" &&
-                                  styles.notOkButtonActive,
-                              ]}
-                              onPress={() => vm.updateReading(key, "Not OK")}
-                            >
-                              <Text
-                                style={[
-                                  styles.notOkButtonText,
-                                  vm.readings[key]?.toUpperCase() ===
-                                    "NOT OK" && styles.notOkButtonTextActive,
-                                ]}
-                              >
-                                Not OK
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                          {vm.readings[key]?.toUpperCase() === "NOT OK" && (
-                            <TextInput
-                              style={styles.issueInput}
-                              placeholder={`Describe ${label.toLowerCase()} issue...`}
-                              placeholderTextColor="#D1A3A3"
-                              value={vm.readings[commentKey] || ""}
-                              onChangeText={(v) =>
-                                vm.updateReading(commentKey, v)
-                              }
-                              multiline
-                            />
-                          )}
+                      {/* Read-only now — always Load KW R + Y + B added
+                      together (see useTaskForm.ts's own effect), not
+                      separately typed in. */}
+                      <View style={styles.fieldRow}>
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabelStatic}>Total Load KW</Text>
+                          <TextInput
+                            style={[styles.fieldInput, styles.fieldInputReadOnly]}
+                            value={vm.readings.totalKwLoad || ""}
+                            editable={false}
+                          />
                         </View>
-                      ))}
+                        <View style={styles.fieldHalf}>
+                          <Text style={styles.fieldLabelStatic}>Load (%)</Text>
+                          <TextInput
+                            style={[styles.fieldInput, styles.fieldInputReadOnly]}
+                            value={vm.readings.loadPercentage || ""}
+                            editable={false}
+                          />
+                        </View>
+                      </View>
 
+                      {/* Engine Parameters (this section's other half) now
+                      lives in Step 2, above Performance Trial — this button
+                      still saves the same combined readings payload, so
+                      either card can be used to save regardless of which
+                      one the user fills in last. */}
                       {vm.readingsError ? (
                         <Text style={styles.sectionErrorText}>
                           {vm.readingsError}
@@ -2375,7 +2488,10 @@ export default function TaskFormScreen() {
                 {/* Customer Handover — shown with an "E" badge to match the
                 reference design. Confirmed real backend keys: E1-E7, with
                 Yes/No values (not OK/Not-OK) and "c"-suffixed comment
-                fields (E1c, not E1_comment) shown once a row is "No". */}
+                fields (E1c, not E1_comment) shown once a row is "No".
+                Revalidation-only tasks skip this entirely — not needed on
+                a revalidation, only a genuine commissioning. */}
+                {!vm.isRevalidation && (
                 <View style={styles.sectionCard}>
                   <GroupHeader
                     letter="E"
@@ -2449,6 +2565,7 @@ export default function TaskFormScreen() {
                     </>
                   )}
                 </View>
+                )}
 
                 {vm.readingsSavedBy && vm.readingsSavedAt && (
                   <View style={styles.readingsSavedBox}>
@@ -2816,6 +2933,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#1F2937",
     backgroundColor: "#fff",
+  },
+  // Auto-computed fields (e.g. Total Load KW) — same shape as a normal
+  // input, just visibly non-interactive.
+  fieldInputReadOnly: {
+    backgroundColor: "#F3F4F6",
+    color: "#6B7280",
   },
   toggleRow: { flexDirection: "row" },
   toggleOption: {

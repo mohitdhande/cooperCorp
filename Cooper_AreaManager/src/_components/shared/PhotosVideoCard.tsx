@@ -1,5 +1,9 @@
 import React from 'react';
-import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native';
+// expo-image (not RN's own Image) — disk-caches by URL/URI, so a thumbnail
+// already rendered once (local pick or a hydrated signed GCS URL) doesn't
+// get re-decoded/re-fetched every time this list re-renders.
+import { Image } from 'expo-image';
 import { Text } from '@/_components/AppText';
 import { Camera, Image as ImageIcon, Trash2, Video, X } from 'lucide-react-native';
 import { SitePhoto } from '../../models/taskForm.types';

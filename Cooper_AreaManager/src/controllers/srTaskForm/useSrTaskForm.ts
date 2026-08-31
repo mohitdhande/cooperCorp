@@ -116,11 +116,20 @@ export function useSrTaskForm() {
   const [altModel, setAltModel] = useState('');
   const [altSn, setAltSn] = useState('');
   const [atsSn, setAtsSn] = useState('');
+  // Was a single "Battery S/N" field — now Battery Type plus two separate
+  // serial numbers (a genset can have 2 batteries). Confirmed backend keys:
+  // batteryType, battery1SerialNumber (batterySn — "Battery 1 S/N"),
+  // battery2SerialNumber (battery2Sn).
+  const [batteryType, setBatteryType] = useState('');
   const [batterySn, setBatterySn] = useState('');
+  const [battery2Sn, setBattery2Sn] = useState('');
   const [kva, setKva] = useState('');
   const [phase, setPhase] = useState('');
   const [panelType, setPanelType] = useState('');
   const [panelSn, setPanelSn] = useState('');
+  // Confirmed backend keys: controllerType, controllerSerialNumber (controllerSr).
+  const [controllerType, setControllerType] = useState('');
+  const [controllerSr, setControllerSr] = useState('');
   const [cpcbNorm, setCpcbNorm] = useState('');
   const [loadUnbalance, setLoadUnbalance] = useState<'Yes' | 'No' | ''>('');
   const [loadUnbalancePercentage, setLoadUnbalancePercentage] = useState('');
@@ -138,6 +147,30 @@ export function useSrTaskForm() {
   const [loadKwB, setLoadKwB] = useState('');
   const [totalKw, setTotalKw] = useState('');
   const [loadPercent, setLoadPercent] = useState('');
+  // Total Load KW (was its own manually-typed field) is now always just
+  // Load KW R + Y + B added together — recomputed live as any of the three
+  // change, including right after a previously saved reading is hydrated
+  // (loadPreviousData), so it can never drift from the sum.
+  useEffect(() => {
+    const allEmpty = !loadKwR && !loadKwY && !loadKwB;
+    const total = allEmpty ? '' : String((parseFloat(loadKwR) || 0) + (parseFloat(loadKwY) || 0) + (parseFloat(loadKwB) || 0));
+    setTotalKw((prev) => (prev !== total ? total : prev));
+  }, [loadKwR, loadKwY, loadKwB]);
+
+  // Load (%) — also read-only, computed off Total Load KW and the
+  // genset's own KVA Rating: a genset's rated real-power output is its
+  // KVA × 0.8 (the standard assumed power factor), so "what % of capacity
+  // is it currently loaded to" is (Total Load KW ÷ (KVA × 0.8)) × 100 —
+  // Total Load KW divided by rated capacity, not the other way round.
+  // Left blank rather than 0/NaN whenever either input is missing or KVA
+  // is 0 (can't divide by it).
+  useEffect(() => {
+    const ratedKw = (parseFloat(kva) || 0) * 0.8;
+    const percentage = (!kva || !totalKw || ratedKw === 0)
+      ? ''
+      : String(Math.round(((parseFloat(totalKw) || 0) / ratedKw) * 100 * 100) / 100);
+    setLoadPercent((prev) => (prev !== percentage ? percentage : prev));
+  }, [totalKw, kva]);
 
   // ── Step 1: Engine Parameters ──
   const [rpm, setRpm] = useState('');
@@ -166,7 +199,10 @@ export function useSrTaskForm() {
     engineFamily, engineModel, engineType, fuelType, gensetModel,
     kw: engineKw,
     alternatorMake: altMake, alternatorModel: altModel, alternatorSerialNumber: altSn,
-    atsSerialNumber: atsSn, batterySerialNumber: batterySn, controlPanelSerialNumber: panelSn,
+    atsSerialNumber: atsSn,
+    batteryType, battery1SerialNumber: batterySn, battery2SerialNumber: battery2Sn,
+    controlPanelSerialNumber: panelSn,
+    controllerType, controllerSerialNumber: controllerSr,
     cpcb: cpcbNorm, kva,
     loadUnbalanceComment: loadUnbalance === 'No' ? (loadUnbalanceComment || null) : null,
     loadUnbalancePercentage: loadUnbalance === 'Yes' ? toNum(loadUnbalancePercentage) : null,
@@ -182,7 +218,8 @@ export function useSrTaskForm() {
     oilLevelComment: oilLevel === 'Not OK' ? (oilLevelComment || null) : null,
   }), [
     loadUnbalance, gensetSrNumber, engineNumber, application, engineFamily, engineModel, engineType,
-    fuelType, gensetModel, engineKw, altMake, altModel, altSn, atsSn, batterySn, panelSn, cpcbNorm, kva,
+    fuelType, gensetModel, engineKw, altMake, altModel, altSn, atsSn, batteryType, batterySn, battery2Sn,
+    panelSn, controllerType, controllerSr, cpcbNorm, kva,
     loadUnbalanceComment, loadUnbalancePercentage, panelType, phase,
     acAmpB, acAmpR, acAmpY, acVoltBR, acVoltRY, acVoltYB, loadKwB, loadKwR, loadKwY, loadPercent, totalKw,
     coolantLevel, coolantLevelComment, coolantTemp, dcVoltage, defLevel, frequency, oilLevel, oilLevelComment, oilPressure, rpm,
@@ -339,10 +376,15 @@ export function useSrTaskForm() {
     setSelectedParts(prev => {
       const existing = prev.find(p => p.partId === part._id);
       const next = existing
-        ? prev.map(p => (p.partId === part._id ? { ...p, quantity: p.quantity + 1 } : p))
+        // Capped at maxQty (if set) — same soft client-side guardrail as
+        // the +/- stepper below, so re-picking an already-added part can't
+        // silently bypass the cap.
+        ? prev.map(p => (p.partId === part._id
+            ? { ...p, quantity: p.maxQty ? Math.min(p.quantity + 1, p.maxQty) : p.quantity + 1 }
+            : p))
         : [...prev, {
-            partId: part._id, code: part.code, name: part.name, unit: part.unit,
-            category: part.category, subCategory: part.subCategory, quantity: 1,
+            partId: part._id, componentNumber: part.componentNumber, description: part.description,
+            engineFamily: part.engineFamily, cpcbNorm: part.cpcbNorm, maxQty: part.maxQty, quantity: 1,
           }];
       debouncedSaveParts(next);
       return next;
@@ -351,7 +393,11 @@ export function useSrTaskForm() {
   }, [debouncedSaveParts]);
   const handleIncreaseQty = useCallback((partId: string) => {
     setSelectedParts(prev => {
-      const next = prev.map(p => (p.partId === partId ? { ...p, quantity: p.quantity + 1 } : p));
+      // maxQty is a soft cap, not enforced server-side — see
+      // SelectedPartCard's own comment for the full reasoning.
+      const next = prev.map(p => (p.partId === partId
+        ? { ...p, quantity: p.maxQty ? Math.min(p.quantity + 1, p.maxQty) : p.quantity + 1 }
+        : p));
       debouncedSaveParts(next);
       return next;
     });
@@ -956,11 +1002,15 @@ export function useSrTaskForm() {
         setAltModel(assetData.alternatorModel ?? '');
         setAltSn(assetData.alternatorSerialNumber ?? '');
         setAtsSn(assetData.atsSerialNumber ?? '');
-        setBatterySn(assetData.batterySerialNumber ?? '');
+        setBatteryType(assetData.batteryType ?? '');
+        setBatterySn(assetData.battery1SerialNumber ?? '');
+        setBattery2Sn(assetData.battery2SerialNumber ?? '');
         setKva(assetData.kva ?? '');
         setPhase(assetData.phase ?? '');
         setPanelType(assetData.panelType ?? '');
         setPanelSn(assetData.controlPanelSerialNumber ?? '');
+        setControllerType(assetData.controllerType ?? '');
+        setControllerSr(assetData.controllerSerialNumber ?? '');
         setCpcbNorm(assetData.cpcb ?? '');
         setLoadUnbalance(assetData.loadUnbalance ? 'Yes' : 'No');
         setLoadUnbalancePercentage(assetData.loadUnbalancePercentage != null ? String(assetData.loadUnbalancePercentage) : '');
@@ -1103,8 +1153,10 @@ export function useSrTaskForm() {
     engineNumber, setEngineNumber, engineKw, setEngineKw, engineType, setEngineType, engineFamily, setEngineFamily,
     fuelType, setFuelType, application, setApplication,
     altMake, setAltMake, altModel, setAltModel, altSn, setAltSn, atsSn, setAtsSn,
-    batterySn, setBatterySn, kva, setKva, phase, setPhase, panelType, setPanelType,
-    panelSn, setPanelSn, cpcbNorm, setCpcbNorm, loadUnbalance, setLoadUnbalance,
+    batteryType, setBatteryType, batterySn, setBatterySn, battery2Sn, setBattery2Sn,
+    kva, setKva, phase, setPhase, panelType, setPanelType,
+    panelSn, setPanelSn, controllerType, setControllerType, controllerSr, setControllerSr,
+    cpcbNorm, setCpcbNorm, loadUnbalance, setLoadUnbalance,
     loadUnbalancePercentage, setLoadUnbalancePercentage, loadUnbalanceComment, setLoadUnbalanceComment,
     acVoltRY, setAcVoltRY, acVoltYB, setAcVoltYB, acVoltBR, setAcVoltBR,
     acAmpR, setAcAmpR, acAmpY, setAcAmpY, acAmpB, setAcAmpB,

@@ -2,6 +2,7 @@ import axiosClient from '../viewModel/axiosClient';
 import { getToken } from './tokenStore';
 import { enqueueAction, getQueue, getQueueCount, removeFromQueue, recordSyncFailure, getSyncFailures, clearSyncFailures } from './offlineQueue';
 import { logLocationForAction } from './locationLogger';
+import { devLog } from './devLog';
 
 // True only for a genuine connectivity failure (the request never reached
 // the server, or never got a response back) — axios sets `request` but
@@ -154,7 +155,7 @@ export async function runSync(): Promise<{ synced: number; failed: number }> {
       } catch (error: any) {
         if (isNetworkError(error) || isServerError(error)) break;
         const message = error.response?.data?.message || error.message || 'Rejected by server';
-        console.log('[Sync] Server rejected a queued action, dropping it:', action.description, message);
+        devLog('[Sync] Server rejected a queued action, dropping it:', action.description, message);
         // Recorded, not just logged — this used to be invisible: the
         // pending-changes banner would clear (removeFromQueue) as if the
         // edit had synced, when it had actually just been discarded.

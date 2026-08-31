@@ -12,7 +12,7 @@ export const FUEL_TYPE_OPTIONS = ['Diesel', 'CNG', 'LNG', 'LPG', 'PNG', 'Biogas'
 
 export const APPLICATION_OPTIONS = [
   'Genset', 'G-Drive', 'Fire Pump', 'Marine', 'APU',
-  'Pump Set', 'Tractor', 'Compressor', 'Lighting Tower', 'Other'
+  'Pump Set', 'Compressor', 'Lighting Tower', 'Other'
 ];
 
 export const PHASE_OPTIONS = ['Single Phase', 'Three Phase'];

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, TouchableOpacity, FlatList, ActivityIndicator, Modal, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TextInput } from '@/_components/AppTextInput';
@@ -12,32 +12,56 @@ type Props = {
   parts: ApiPart[];
   loading: boolean;
   onSelectPart: (part: ApiPart) => void;
+  // The asset's own Genset Identification values (Step 1) — single values,
+  // unlike a part's own engineFamily (array) — used to narrow the list to
+  // parts compatible with this specific genset. Optional: an asset that
+  // hasn't had these filled in yet just shows the full list.
+  assetEngineFamily?: string;
+  assetCpcbNorm?: string;
 };
 
-// Part picker grouped by category › subCategory, filtered by the live
-// /api/parts list. Genuinely full-screen (not a percentage-height bottom
-// sheet) — same reasoning as ComplaintCodePickerModal: a fixed height
-// tuned to one phone doesn't scale across different screen sizes/aspect
-// ratios, while SafeAreaView + flex:1 fills whatever space is actually
-// available on any device. Not anchored to the "+ Add Part" button.
-export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart }: Props) {
+// Part picker, filtered by the live /api/parts list. Genuinely full-screen
+// (not a percentage-height bottom sheet) — same reasoning as
+// ComplaintCodePickerModal: a fixed height tuned to one phone doesn't scale
+// across different screen sizes/aspect ratios, while SafeAreaView + flex:1
+// fills whatever space is actually available on any device. Not anchored
+// to the "+ Add Part" button.
+//
+// Flat list, not grouped — the old category/subCategory grouping was
+// removed along with those fields in the 2026-08-29 Part schema change
+// (see models/taskForm.types.ts's ApiPart comment). Nothing replaced them.
+export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart, assetEngineFamily, assetCpcbNorm }: Props) {
   const [searchText, setSearchText] = useState('');
 
-  const filtered = parts.filter(p =>
-    p.code.toLowerCase().includes(searchText.toLowerCase()) ||
-    p.name.toLowerCase().includes(searchText.toLowerCase())
-  );
+  // Genset-compatibility filtering (mirrors the web app's parts picker,
+  // per the Parts API reference doc — not enforced by the API itself).
+  // A part's engineFamily is a list (empty/unset = "universal", fits any
+  // engine); cpcbNorm is a single value (unset = "universal" there too).
+  // Only narrows on whichever of the asset's two fields is actually set.
+  const hasAssetInfo = !!assetEngineFamily || !!assetCpcbNorm;
+  const compatibleParts = useMemo(() => {
+    if (!hasAssetInfo) return parts;
+    return parts.filter(p => {
+      const familyOk = !assetEngineFamily || !p.engineFamily?.length || p.engineFamily.includes(assetEngineFamily);
+      const cpcbOk = !assetCpcbNorm || !p.cpcbNorm || p.cpcbNorm === assetCpcbNorm;
+      return familyOk && cpcbOk;
+    });
+  }, [parts, hasAssetInfo, assetEngineFamily, assetCpcbNorm]);
 
-  const grouped: { category: string; subCategory: string; parts: ApiPart[] }[] = [];
-  filtered.forEach(part => {
-    const key = `${part.category} › ${part.subCategory}`;
-    let group = grouped.find(g => `${g.category} › ${g.subCategory}` === key);
-    if (!group) {
-      group = { category: part.category, subCategory: part.subCategory, parts: [] };
-      grouped.push(group);
-    }
-    group.parts.push(part);
-  });
+  // If the compatibility filter would leave nothing to pick from, fall
+  // back to the full list rather than stranding the user with an empty
+  // picker — the banner below reflects which of the two happened.
+  const zeroMatches = hasAssetInfo && compatibleParts.length === 0;
+  const basisList = zeroMatches ? parts : compatibleParts;
+
+  // Guard against a part missing componentNumber/description from the
+  // API — a bare p.componentNumber.toLowerCase() crashes the whole screen
+  // (caught only by the app's one top-level ErrorBoundary, which resets
+  // the nav stack) instead of just silently not matching that one part.
+  const filtered = basisList.filter(p =>
+    (p.componentNumber || '').toLowerCase().includes(searchText.toLowerCase()) ||
+    (p.description || '').toLowerCase().includes(searchText.toLowerCase())
+  );
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -52,11 +76,43 @@ export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart
           </TouchableOpacity>
         </View>
 
+        {hasAssetInfo && !zeroMatches && (
+          <View style={styles.compatBanner}>
+            <Text style={styles.compatBannerText}>
+              {!!assetEngineFamily && (
+                <>Engine Family: <Text style={styles.compatBannerValue}>{assetEngineFamily}</Text></>
+              )}
+              {!!assetEngineFamily && !!assetCpcbNorm && '  ·  '}
+              {!!assetCpcbNorm && (
+                <>CPCB Norm: <Text style={styles.compatBannerValue}>{assetCpcbNorm}</Text></>
+              )}
+            </Text>
+          </View>
+        )}
+        {zeroMatches && (
+          <View style={styles.compatBanner}>
+            <Text style={styles.compatBannerText}>
+              No parts match this genset's
+              {!!assetEngineFamily && ` Engine Family (${assetEngineFamily})`}
+              {!!assetEngineFamily && !!assetCpcbNorm && ' /'}
+              {!!assetCpcbNorm && ` CPCB Norm (${assetCpcbNorm})`}
+              {' — showing all parts instead.'}
+            </Text>
+          </View>
+        )}
+        {!hasAssetInfo && (
+          <View style={styles.compatBanner}>
+            <Text style={styles.compatBannerText}>
+              Showing all parts — this genset's Engine Family / CPCB Norm isn't set.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.searchBox}>
           <Search size={16} color="#9CA3AF" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search code or name..."
+            placeholder="Search component number or description..."
             placeholderTextColor="#9CA3AF"
             value={searchText}
             onChangeText={setSearchText}
@@ -67,8 +123,8 @@ export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart
           <ActivityIndicator style={{ marginTop: 30 }} color="#F26722" />
         ) : (
           <FlatList
-            data={grouped}
-            keyExtractor={(g) => `${g.category}-${g.subCategory}`}
+            data={filtered}
+            keyExtractor={(part) => part._id}
             style={styles.list}
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
@@ -76,27 +132,23 @@ export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart
                 {parts.length === 0 ? 'No parts available.' : 'No matching parts'}
               </Text>
             }
-            renderItem={({ item: group }) => (
-              <View>
-                <Text style={styles.categoryLabel}>{group.category} › {group.subCategory}</Text>
-                {group.parts.map(part => (
-                  <TouchableOpacity key={part._id} style={styles.partRow} onPress={() => { onSelectPart(part); onClose(); }}>
-                    <View style={styles.codeBox}>
-                      <Text style={styles.codeText}>{part.code}</Text>
-                    </View>
-                    <View style={[
-                      styles.unitBadge,
-                      ['Litre', 'Roll', 'Pkt'].includes(part.unit) ? styles.unitBadgeOrange : styles.unitBadgeRed,
-                    ]}>
-                      <Text style={[
-                        styles.unitBadgeText,
-                        ['Litre', 'Roll', 'Pkt'].includes(part.unit) ? styles.unitBadgeTextOrange : styles.unitBadgeTextRed,
-                      ]}>{part.unit}</Text>
-                    </View>
-                    <Text style={styles.partName}>{part.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+            renderItem={({ item: part }) => (
+              <TouchableOpacity style={styles.partRow} onPress={() => { onSelectPart(part); onClose(); }}>
+                <View style={styles.codeBox}>
+                  <Text style={styles.codeText}>{part.componentNumber}</Text>
+                </View>
+                <Text style={styles.partDescription} numberOfLines={1} ellipsizeMode="tail">
+                  {part.description}
+                </Text>
+                {/* cpcbNorm deliberately NOT shown here — it's already
+                covered by the compatibility banner above (or, when a part
+                doesn't match the asset at all, by the selected-part card
+                once picked). Purely a UI guardrail (not enforced
+                server-side) — Max N shown only when the part has a cap. */}
+                {!!part.maxQty && (
+                  <Text style={styles.maxQtyText}>Max {part.maxQty}</Text>
+                )}
+              </TouchableOpacity>
             )}
           />
         )}
@@ -127,6 +179,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     justifyContent: 'center', alignItems: 'center',
   },
+  compatBanner: {
+    backgroundColor: '#FEF0E6',
+    marginHorizontal: 20,
+    marginBottom: 14,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  compatBannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#EA580C',
+  },
+  compatBannerValue: {
+    fontWeight: '800',
+  },
   searchBox: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     marginHorizontal: 20,
@@ -145,26 +213,24 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: 20,
   },
+  // SafeAreaView's bottom edge accounts for gesture-nav devices, but a
+  // classic 3-button Android nav bar isn't reported as a safe-area inset
+  // at all — without extra padding here, the last row sits right behind
+  // those system buttons.
   listContent: {
-    paddingBottom: 24,
+    paddingBottom: 120,
   },
   emptyText: {
     textAlign: 'center',
     color: '#9CA3AF',
     marginTop: 20,
   },
-  categoryLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#9CA3AF',
-    marginTop: 14,
-    marginBottom: 6,
-    letterSpacing: 0.3,
-  },
   partRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
   codeBox: {
     backgroundColor: '#F3F4F6',
@@ -178,20 +244,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#374151',
   },
-  unitBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    marginRight: 10,
-  },
-  unitBadgeOrange: { backgroundColor: '#FFEDD5' },
-  unitBadgeRed: { backgroundColor: '#FEE2E2' },
-  unitBadgeText: { fontSize: 10, fontWeight: '700' },
-  unitBadgeTextOrange: { color: '#C2410C' },
-  unitBadgeTextRed: { color: '#DC2626' },
-  partName: {
+  partDescription: {
     flex: 1,
     fontSize: 13,
     color: '#1F2937',
+  },
+  maxQtyText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    marginLeft: 8,
   },
 });

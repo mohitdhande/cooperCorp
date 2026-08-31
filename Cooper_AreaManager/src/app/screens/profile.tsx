@@ -2,6 +2,7 @@ import React from 'react';
 import { View, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal, Pressable, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Bell, Camera, User, Mail, Phone, MapPin, Key, LogOut, ChevronRight } from 'lucide-react-native';
@@ -279,6 +280,12 @@ export default function ProfileScreen() {
             <ChevronRight size={18} color="#DC2626" />
           </TouchableOpacity>
         </View>
+
+        {/* Moved here from the login screen. Reads app.json's own "version"
+        field directly (via EAS's remote-managed, auto-incrementing build
+        version — see eas.json) rather than a separately hardcoded copy
+        that could drift out of sync. */}
+        <Text style={styles.versionText}>v{Constants.expoConfig?.version}</Text>
       </ScrollView>
 
       <Modal visible={optionsVisible} transparent animationType="fade" onRequestClose={() => setOptionsVisible(false)}>
@@ -413,6 +420,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 14,
   },
   actionText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#1F2937' },
+  versionText: {
+    marginTop: 20,
+    marginBottom: 8,
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   optionsSheet: {

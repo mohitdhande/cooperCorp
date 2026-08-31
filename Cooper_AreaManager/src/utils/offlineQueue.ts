@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { devLog } from './devLog';
 
 // A persisted list of writes that couldn't reach the backend (no network),
 // replayed later by syncEngine.ts once connectivity comes back. Only PUT is
@@ -31,7 +32,7 @@ async function readQueue(): Promise<PendingAction[]> {
     const raw = await AsyncStorage.getItem(QUEUE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (error) {
-    console.log('[Offline Queue] Failed to read queue:', error);
+    devLog('[Offline Queue] Failed to read queue:', error);
     return [];
   }
 }
@@ -97,7 +98,7 @@ async function readFailures(): Promise<SyncFailure[]> {
     const raw = await AsyncStorage.getItem(FAILURES_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (error) {
-    console.log('[Offline Queue] Failed to read sync failures:', error);
+    devLog('[Offline Queue] Failed to read sync failures:', error);
     return [];
   }
 }

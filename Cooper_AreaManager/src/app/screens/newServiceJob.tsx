@@ -20,7 +20,6 @@ import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeade
 import { AnchoredPanel } from '../../_components/shared/AnchoredPanel';
 import { FreeServiceItem, ServiceCategory } from '../../controllers/newServiceJobController';
 import { FINANCING_BANK_OPTIONS } from '../../_components/srTaskForm/srDropdownOptions';
-import { DateField } from '../../_components/shared/DateField';
 
 // "03 Aug" (no year) or "03 Feb 2027" (withYear) — the compact window-range
 // display under a selected Free Service sub-category, distinct from
@@ -285,7 +284,7 @@ export default function NewServiceJobScreen() {
     freeServiceItems, freeServiceLoading, freeServiceError,
     selectedAssignee, handleSelectAssignee,
     assigneePickerVisible, openAssigneePicker, closeAssigneePicker,
-    dueDate, setDueDate, notes, setNotes, performedBy, setPerformedBy,
+    notes, setNotes, performedBy, setPerformedBy,
     handleCreateJob, creating, createError,
   } = useNewServiceJobController();
 
@@ -557,10 +556,6 @@ export default function NewServiceJobScreen() {
 
 
 
-                <View style={{ marginTop: 16 }}>
-                  <DateField label="Due Date" required labelStyle={styles.formLabel} value={dueDate} onChangeText={setDueDate} placeholder="dd/mm/yyyy" />
-                </View>
-
                 <View style={[styles.formField, { marginTop: 16 }]}>
                   <Text style={styles.formLabel}>Assign To <Text style={styles.requiredStar}>*</Text></Text>
                   <TouchableOpacity style={styles.assignToField} onPress={openAssigneePicker}>
@@ -579,9 +574,9 @@ export default function NewServiceJobScreen() {
                 )}
 
                 <TouchableOpacity
-                  style={[styles.createButton, { marginTop: 20 }, (!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || !dueDate.trim() || (needsSubCategoryNow && !subCategory)) && styles.createButtonDisabled]}
+                  style={[styles.createButton, { marginTop: 20 }, (!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || (needsSubCategoryNow && !subCategory)) && styles.createButtonDisabled]}
                   onPress={handleCreateJob}
-                  disabled={!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || !dueDate.trim() || (needsSubCategoryNow && !subCategory) || creating}
+                  disabled={!selectedAssignee || !jobTitle.trim() || !category || !notes.trim() || (needsSubCategoryNow && !subCategory) || creating}
                 >
                   <Text style={styles.createButtonText}>{creating ? 'Creating…' : 'Create Service Request'}</Text>
                 </TouchableOpacity>

@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { Platform, ToastAndroid } from 'react-native';
+import { devLog } from './devLog';
 
 // Also shown as an on-device toast (see showOnScreen below) — testing this
 // over a USB/Metro console connection turned out to be unreliable (Metro's
@@ -39,7 +40,7 @@ async function storeLocationLocally(entry: Omit<LocationLogEntry, 'id' | 'captur
     list.unshift({ ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, capturedAt: Date.now() });
     await AsyncStorage.setItem(LOCATION_LOG_KEY, JSON.stringify(list.slice(0, MAX_LOCATION_LOG_ENTRIES)));
   } catch (error) {
-    console.log('[Location] Failed to store location locally:', error);
+    devLog('[Location] Failed to store location locally:', error);
   }
 }
 
@@ -49,7 +50,7 @@ export async function getStoredLocationLog(): Promise<LocationLogEntry[]> {
     const raw = await AsyncStorage.getItem(LOCATION_LOG_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (error) {
-    console.log('[Location] Failed to read stored location log:', error);
+    devLog('[Location] Failed to read stored location log:', error);
     return [];
   }
 }
@@ -61,11 +62,11 @@ export async function getStoredLocationLog(): Promise<LocationLogEntry[]> {
 // awaiting it, so a slow/denied location request never delays or blocks
 // the real action it's attached to.
 export async function logLocationForAction(actionLabel: string): Promise<void> {
-  console.log(`[Location] Fetching location for "${actionLabel}"...`);
+  devLog(`[Location] Fetching location for "${actionLabel}"...`);
   try {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      console.log(`[Location] Permission not granted — no location captured for: ${actionLabel}`);
+      devLog(`[Location] Permission not granted — no location captured for: ${actionLabel}`);
       showOnScreen('Location permission not granted');
       return;
     }
@@ -78,7 +79,7 @@ export async function logLocationForAction(actionLabel: string): Promise<void> {
     // instead of looking like a random failure.
     const servicesEnabled = await Location.hasServicesEnabledAsync();
     if (!servicesEnabled) {
-      console.log(`[Location] Location services are off — no location captured for: ${actionLabel}`);
+      devLog(`[Location] Location services are off — no location captured for: ${actionLabel}`);
       showOnScreen('Please turn on GPS / Location to capture your position');
       return;
     }
@@ -115,19 +116,19 @@ export async function logLocationForAction(actionLabel: string): Promise<void> {
         ? [place.name, place.street, place.city, place.region, place.postalCode, place.country].filter(Boolean).join(', ')
         : 'not found for these coordinates';
 
-      console.log(`[Location] "${actionLabel}" — lat: ${latitude}, lng: ${longitude} -- — address: ${addressLine}`);
+      devLog(`[Location] "${actionLabel}" — lat: ${latitude}, lng: ${longitude} -- — address: ${addressLine}`);
       showOnScreen(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}\n${addressLine}`);
       await storeLocationLocally({ actionLabel, latitude, longitude, address: addressLine });
     } catch {
       // Offline (or reverse geocoding failed for some other reason) —
       // skip the address entirely rather than showing a placeholder for
       // it. Just the coordinates: stored, then confirmed with a popup.
-      console.log(`[Location] "${actionLabel}" — offline, storing coordinates only: lat: ${latitude}, lng: ${longitude}`);
+      devLog(`[Location] "${actionLabel}" — offline, storing coordinates only: lat: ${latitude}, lng: ${longitude}`);
       await storeLocationLocally({ actionLabel, latitude, longitude, address: '' });
       showOnScreen(`📍 Location saved (offline)\nlat: ${latitude.toFixed(5)}, lng: ${longitude.toFixed(5)}`);
     }
   } catch (error) {
-    console.log(`[Location] Failed to get location for "${actionLabel}":`, error);
+    devLog(`[Location] Failed to get location for "${actionLabel}":`, error);
     showOnScreen('Could not get location (see console for details)');
   }
 }

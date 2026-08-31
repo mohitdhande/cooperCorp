@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+// expo-image (not RN's own Image) for these report photo thumbnails —
+// disk-caches by URL, so reopening a report or scrolling back to a photo
+// you've already loaded doesn't re-download the same signed GCS URL again.
+import { Image } from 'expo-image';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -393,6 +397,10 @@ export default function ServiceTaskReportScreen() {
               <View style={styles.reportCatBadgeCircle}>
                 <Text style={styles.reportCatBadgeLetter}>{category}</Text>
               </View>
+              {/* Was letter-only — Approval Status further down already
+              shows the category name next to its own badge, this matches
+              that (falls back to subCategory the same way). */}
+              <Text style={styles.reportCatName}>{(categoryColor as any).name || subCategory}</Text>
               <View style={[styles.statusPill, { backgroundColor: statusColor.bg }]}>
                 <Text style={[styles.statusPillText, { color: statusColor.text }]}>
                   {val(task.status).split('_').map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}
@@ -675,10 +683,23 @@ export default function ServiceTaskReportScreen() {
               <Text style={styles.fieldValue}>{val(a.atsSerialNumber)}</Text>
             </View>
           </View>
+          {/* Battery S/N was a single field — now Battery Type plus two
+          separate serial numbers (battery1SerialNumber/battery2SerialNumber
+          — the old batterySerialNumber key is no longer what's saved). */}
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>BATTERY S/N</Text>
-              <Text style={styles.fieldValue}>{val(a.batterySerialNumber)}</Text>
+              <Text style={styles.fieldLabel}>BATTERY TYPE</Text>
+              <Text style={styles.fieldValue}>{val(a.batteryType)}</Text>
+            </View>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>BATTERY 1 S/N</Text>
+              <Text style={styles.fieldValue}>{val(a.battery1SerialNumber)}</Text>
+            </View>
+          </View>
+          <View style={styles.fieldRow}>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>BATTERY 2 S/N</Text>
+              <Text style={styles.fieldValue}>{val(a.battery2SerialNumber)}</Text>
             </View>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>KVA</Text>
@@ -705,6 +726,16 @@ export default function ServiceTaskReportScreen() {
               <Text style={styles.fieldValue}>{val(a.cpcb)}</Text>
             </View>
           </View>
+          <View style={styles.fieldRow}>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>CONTROLLER TYPE</Text>
+              <Text style={styles.fieldValue}>{val(a.controllerType)}</Text>
+            </View>
+            <View style={styles.fieldHalf}>
+              <Text style={styles.fieldLabel}>CONTROLLER S/R</Text>
+              <Text style={styles.fieldValue}>{val(a.controllerSerialNumber)}</Text>
+            </View>
+          </View>
           <View style={styles.fieldFull}>
             <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
             <Text style={styles.fieldValue}>{a.loadUnbalance === true ? 'Yes' : a.loadUnbalance === false ? 'No' : '--'}</Text>
@@ -724,17 +755,17 @@ export default function ServiceTaskReportScreen() {
 
  
 
-        <ReportSectionCard title="Electrical Readings" expanded={readingsExpanded} onToggle={() => setReadingsExpanded(!readingsExpanded)}>
-          <InfoRow label="AC Volt R-Y (V)" value={a.acVoltageRY} />
-          <InfoRow label="AC Volt Y-B (V)" value={a.acVoltageYB} />
-          <InfoRow label="AC Volt B-R (V)" value={a.acVoltageBR} />
-          <InfoRow label="AC Amp R (A)" value={a.acAmpR} />
-          <InfoRow label="AC Amp Y (A)" value={a.acAmpY} />
-          <InfoRow label="AC Amp B (A)" value={a.acAmpB} />
+        <ReportSectionCard title="Genset Electrical Readings" expanded={readingsExpanded} onToggle={() => setReadingsExpanded(!readingsExpanded)}>
+          <InfoRow label="AC Volt R-Y" value={a.acVoltageRY} />
+          <InfoRow label="AC Volt Y-B" value={a.acVoltageYB} />
+          <InfoRow label="AC Volt B-R" value={a.acVoltageBR} />
+          <InfoRow label="AC Amp R" value={a.acAmpR} />
+          <InfoRow label="AC Amp Y" value={a.acAmpY} />
+          <InfoRow label="AC Amp B" value={a.acAmpB} />
           <InfoRow label="Load kW R" value={a.loadKwR} />
           <InfoRow label="Load kW Y" value={a.loadKwY} />
           <InfoRow label="Load kW B" value={a.loadKwB} />
-          <InfoRow label="Total kW" value={a.totalKwLoad} />
+          <InfoRow label="Total Load KW" value={a.totalKwLoad} />
           <InfoRow label="Load %" value={a.loadPercentage} />
         </ReportSectionCard>
 
@@ -804,22 +835,28 @@ export default function ServiceTaskReportScreen() {
             <Text style={styles.emptyText}>No parts recorded.</Text>
           ) : (
             partsUsed.map((p: any, i: number) => {
+              // partId populates as null (not an error) if the part it
+              // references was since deleted — `|| {}` keeps every field
+              // read below safe (shows "--" via val()) instead of crashing,
+              // per the Parts API reference doc's null-partId warning.
               const partInfo = p.partId || {};
+              // category/subCategory/unit were removed in the 2026-08-29
+              // Part schema change — cpcbNorm/engineFamily are their closest
+              // replacement for "extra info about this part", shown only
+              // when actually set.
+              const partSubtitle = [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · ');
               return (
                 <View key={p._id || i} style={styles.partReportCard}>
                   <View style={styles.partReportTop}>
                     <View style={styles.partCodeBadgeReport}>
-                      <Text style={styles.partCodeTextReport}>{val(partInfo.code)}</Text>
+                      <Text style={styles.partCodeTextReport}>{val(partInfo.componentNumber)}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.partNameReport}>{val(partInfo.name)}</Text>
-                      <Text style={styles.partCategoryReport}>
-                        {val(partInfo.category)} {partInfo.subCategory ? `› ${partInfo.subCategory}` : ''}
-                      </Text>
+                      <Text style={styles.partNameReport}>{val(partInfo.description)}</Text>
+                      {!!partSubtitle && <Text style={styles.partCategoryReport}>{partSubtitle}</Text>}
                     </View>
                   </View>
                   <View style={styles.partReportBottom}>
-                    <Text style={styles.partUnitReport}>{val(partInfo.unit)}</Text>
                     <Text style={styles.partQtyReport}>Qty: {val(p.quantity)}</Text>
                   </View>
                 </View>
@@ -1132,6 +1169,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   reportCatBadgeLetter: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  reportCatName: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
 
   fieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
   fieldHalf: { width: '48%' },
@@ -1274,16 +1312,9 @@ const styles = StyleSheet.create({
   partCodeTextReport: { fontSize: 12, fontWeight: '700', color: '#374151' },
   partNameReport: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   partCategoryReport: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
-  partReportBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  partUnitReport: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#F26722',
-    backgroundColor: '#FFEDD5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
+  // unit was removed in the 2026-08-29 Part schema change — no replacement,
+  // so this row now only ever holds Qty, right-aligned.
+  partReportBottom: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
   partQtyReport: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
 
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
