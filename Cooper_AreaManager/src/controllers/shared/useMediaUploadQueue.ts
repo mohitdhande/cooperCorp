@@ -3,8 +3,9 @@ import { validateItemSize } from '../../utils/photoValidation';
 import { isNetworkError } from '../../utils/syncEngine';
 import { subscribeToMediaSyncSuccess } from '../../utils/mediaSyncEngine';
 import { PendingMediaItem } from '../../utils/pendingMediaQueue';
-import { logLocationForAction } from '../../utils/locationLogger';
+import { logLocationForAction, resolveUploadLocation } from '../../utils/locationLogger';
 import { devLog } from '../../utils/devLog';
+import { MediaType, MediaLocation, MediaSource, resolveMediaType } from '../../models/taskForm.types';
 
 export type QueueItemKind = 'photo' | 'video' | 'pdf';
 // Every item's outcome is shown as its own row, all at once (not one
@@ -21,6 +22,7 @@ export type QueueItem = {
   fileName: string;
   fileSize?: number;
   kind: QueueItemKind;
+  source: MediaSource;
   status: QueueItemStatus;
   itemProgress: number;
   // Only set when status is 'error' — the size-limit message or the real
@@ -37,6 +39,20 @@ export type QueueItem = {
   // reports that this exact item finally uploaded, so it can flip to
   // 'done' live instead of only showing up next time the task reopens.
   pendingMediaId?: string;
+  // Set once the upload actually confirms — the real backend media key
+  // (gcsUrl) and the exact MediaType it confirmed as. onItemSucceeded only
+  // ever fires with both populated; they're on the type as optional purely
+  // because the item doesn't have them yet while pending/uploading.
+  gcsUrl?: string;
+  type?: MediaType;
+  // The location actually resolved (and sent) for this item's batch — see
+  // MediaLocationButton, which shows this back to the user. Undefined if
+  // GPS/permission wasn't available at capture time.
+  location?: MediaLocation;
+  // The tags actually sent at confirm time — see this hook's own
+  // defaultTags param (e.g. Running Hours always confirms pre-tagged
+  // 'Running Hours', not left for the user to pick afterward).
+  tags?: string[];
 };
 
 export type UploadQueueState = {
@@ -49,11 +65,15 @@ export type PickedAsset = {
   fileName: string;
   fileSize?: number;
   kind: QueueItemKind;
+  source: MediaSource;
 };
 
 type Uploaders = {
-  uploadPhoto: (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => Promise<void>;
-  uploadVideoOrPdf: (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => Promise<void>;
+  // Both return the confirmed gcsUrl — callers need it as the item's own
+  // stable key for tagging afterward (MediaTagPicker's PATCH matches by
+  // gcsUrl).
+  uploadPhoto: (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => Promise<string>;
+  uploadVideoOrPdf: (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => Promise<string>;
 };
 
 const INITIAL_STATE: UploadQueueState = { visible: false, items: [] };
@@ -104,7 +124,12 @@ export function useMediaUploadQueue(
   uploaders: Uploaders,
   onItemSucceeded: (item: QueueItem) => void,
   offlineEnabled: boolean = true,
-  persistOnFailure: (item: QueueItem) => Promise<PendingMediaItem>
+  persistOnFailure: (item: QueueItem) => Promise<PendingMediaItem>,
+  // Applied to every item confirmed through this queue instance — e.g. the
+  // Running Hours queue passes ['Running Hours'] so every photo it uploads
+  // is pre-tagged at confirm time, never left for the user to pick
+  // afterward. Undefined/omitted (every other queue) sends no tags.
+  defaultTags?: string[]
 ) {
   const [state, setState] = useState<UploadQueueState>(INITIAL_STATE);
   const stateRef = useRef(state);
@@ -122,6 +147,15 @@ export function useMediaUploadQueue(
   const itemCancelRequestedRef = useRef(false);
   const runningRef = useRef(false);
   const queueRef = useRef<QueueItem[]>([]);
+  // One location *promise* shared by every item in a given startBatch call
+  // (not per file, per §9.5), keyed by each item's own localId. A promise,
+  // not the resolved value — attemptItem actually awaits it, so the first
+  // item genuinely waits on the real GPS/geocode resolution (capped by
+  // resolveUploadLocation's own timeouts) while every later item in that
+  // same batch awaits the identical already-settled promise, effectively
+  // instant. Not part of QueueItem's own public shape (MediaUploadOverlay
+  // never needs to display it) — discarded from this map once read.
+  const pendingLocationsRef = useRef<Map<string, Promise<MediaLocation | undefined>>>(new Map());
 
   // Uploads one already-tracked item (by localId) and updates its row's
   // status as it goes.
@@ -166,14 +200,25 @@ export function useMediaUploadQueue(
     };
 
     try {
+      const type = resolveMediaType(item.kind, item.source);
+      const locationPromise = pendingLocationsRef.current.get(item.localId);
+      pendingLocationsRef.current.delete(item.localId);
+      const location = locationPromise ? await locationPromise : undefined;
       const uploader = item.kind === 'photo' ? uploaders.uploadPhoto : uploaders.uploadVideoOrPdf;
-      await uploader({ uri: item.uri, fileName: item.fileName }, onProgress, controller.signal);
+      const gcsUrl = await uploader({ uri: item.uri, fileName: item.fileName }, type, location, defaultTags, onProgress, controller.signal);
 
+      // The confirmed gcsUrl/type — not on the stale `item` closure param,
+      // only just resolved above — is what onItemSucceeded's caller needs
+      // to build a SitePhoto that can actually be tagged afterward
+      // (MediaTagPicker's PATCH matches by gcsUrl). tags mirrors whatever
+      // was actually sent (defaultTags), so the local list reflects the
+      // real saved tag immediately, without a separate re-fetch.
+      const succeededItem: QueueItem = { ...item, status: 'done', itemProgress: 100, gcsUrl, type, location, tags: defaultTags };
       setState((prev) => ({
         ...prev,
-        items: prev.items.map((it) => (it.localId === item.localId ? { ...it, status: 'done' as const, itemProgress: 100 } : it)),
+        items: prev.items.map((it) => (it.localId === item.localId ? succeededItem : it)),
       }));
-      onItemSucceeded(item);
+      onItemSucceeded(succeededItem);
     } catch (error: any) {
       if (isCancelError(error)) {
         if (fullCancelRef.current) return;
@@ -218,7 +263,7 @@ export function useMediaUploadQueue(
     }
     activeControllerRef.current = null;
     activeLocalIdRef.current = null;
-  }, [uploaders, onItemSucceeded, offlineEnabled, persistOnFailure]);
+  }, [uploaders, onItemSucceeded, offlineEnabled, persistOnFailure, defaultTags]);
 
   const pump = useCallback(async () => {
     if (runningRef.current) return;
@@ -252,9 +297,16 @@ export function useMediaUploadQueue(
       fileName: asset.fileName,
       fileSize: asset.fileSize,
       kind: asset.kind,
+      source: asset.source,
       status: 'pending',
       itemProgress: 0,
     }));
+    // Started once here, not awaited — every item in this batch shares the
+    // exact same promise (§9.5's "one location reading per batch, not per
+    // file"). Kicking it off now (rather than inside attemptItem, per
+    // item) is what makes that sharing possible.
+    const locationPromise = resolveUploadLocation();
+    items.forEach((it) => pendingLocationsRef.current.set(it.localId, locationPromise));
     // Adds to whatever's already showing (done items from a previous batch
     // in the same sitting stay visible) rather than replacing — picking
     // "Add More" mid-review shouldn't wipe out rows the user is still

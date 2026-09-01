@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { completeCommissioningTask, generateCommissioningOtp, verifyCommissioningOtp } from '@/viewModel/commisionAPi';
+import { parseApiError } from '@/utils/apiError';
 
 type UseTaskFormOtpArgs = {
   taskId: string;
@@ -31,7 +32,8 @@ export function useTaskFormOtp({ taskId, showToast }: UseTaskFormOtpArgs) {
       setCustomerOtp(['', '', '', '']);
       setOtpGenerated(true);
     } catch (error: any) {
-      setOtpError(error.response?.data?.message || 'Failed to generate OTP. Please try again.');
+      const { message } = parseApiError(error, 'Failed to generate OTP. Please try again.');
+      setOtpError(message);
     } finally {
       setOtpLoading(false);
     }
@@ -77,7 +79,15 @@ export function useTaskFormOtp({ taskId, showToast }: UseTaskFormOtpArgs) {
       setTaskCompleted(true);
       showToast('Task completed successfully!', 'success');
     } catch (error: any) {
-      setOtpError(error.response?.data?.message || 'Verification failed. Please try again.');
+      const { code: errorCode, message } = parseApiError(error, 'Verification failed. Please try again.');
+      if (errorCode === 'OTP_LOCKED') {
+        // Too many failed attempts — force the customer-facing OTP back to
+        // "not generated" so the only way forward is a fresh code.
+        setOtpGenerated(false);
+        setCustomerOtp(['', '', '', '']);
+        setGeneratedOtp(['', '', '', '']);
+      }
+      setOtpError(message);
     } finally {
       setOtpLoading(false);
     }

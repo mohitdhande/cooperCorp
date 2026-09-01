@@ -7,7 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   getAssetById, getServiceTaskById, getFaultCodes, getParts,
-  uploadServicePhotos, uploadOneServiceVideoOrPdf, getGcsSignedUrls,
+  uploadOneServiceMedia, updateServiceMediaTag, getGcsSignedUrls,
   getServiceCategoryConfig, finishServiceTask, getFreeServiceAvailability,
 } from '../../viewModel/commisionAPi';
 import { cacheData, getCachedData } from '../../utils/offlineCache';
@@ -15,7 +15,7 @@ import { putOrQueue, isNetworkError } from '../../utils/syncEngine';
 import { getPendingBody } from '../../utils/offlineQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
 import { logLocationForAction } from '../../utils/locationLogger';
-import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto } from '../../models/taskForm.types';
+import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto, MediaType, MediaLocation } from '../../models/taskForm.types';
 import { UserProfile } from '../../models/Login';
 import { getRole } from '../../constants/permissions';
 import {
@@ -53,7 +53,7 @@ const CATEGORY_CONFIG_CACHE_KEY = 'serviceCategoryConfig';
 
 const FALLBACK_CATEGORY_META = { bg: '#F3F4F6', border: '#D1D5DB', text: '#374151', description: '' };
 
-export const SR_STEP_SEQUENCE = [1, 2, 3, 4, 5];
+export const SR_STEP_SEQUENCE = [1, 2, 3, 4, 5, 6];
 
 const toNum = (val: string): number | null => (val === '' || val === undefined ? null : Number(val));
 
@@ -183,6 +183,13 @@ export function useSrTaskForm() {
   const [coolantLevelComment, setCoolantLevelComment] = useState('');
   const [coolantTemp, setCoolantTemp] = useState('');
   const [defLevel, setDefLevel] = useState('');
+  // Confirmed real backend shape: NOT part of the Asset record — it's
+  // { commissioningChecks: { runningHours: "<string>" } } on the service
+  // task itself (same key/wrapper as Commissioning's own Running Hours
+  // field, sent as a string like every other commissioningChecks value,
+  // not a number), saved via its own handleSaveRunningHours below rather
+  // than folded into buildAssetPayload/handleSaveAssetSection.
+  const [runningHours, setRunningHours] = useState('');
 
   const [sectionSaving, setSectionSaving] = useState<Record<string, boolean>>({});
   const [sectionSuccess, setSectionSuccess] = useState<Record<string, boolean>>({});
@@ -245,6 +252,40 @@ export function useSrTaskForm() {
     }
   }, [assetId, buildAssetPayload, isEngineer, gensetSrNumber, engineNumber]);
 
+  // Running Hours' own save — confirmed to NOT live on the Asset record
+  // (unlike every other Step-1 field above). It's part of the service
+  // task's own progress, under the same commissioningChecks.runningHours
+  // key/shape Commissioning uses, sent as a string like every other
+  // commissioningChecks value (not a number) — hence taskId/save-progress
+  // here, not assetId/buildAssetPayload.
+  const handleSaveRunningHours = useCallback(async () => {
+    const sectionKey = 'runningHours';
+    setSectionSaving(prev => ({ ...prev, [sectionKey]: true }));
+    setSectionError(prev => ({ ...prev, [sectionKey]: '' }));
+    setSectionSuccess(prev => ({ ...prev, [sectionKey]: false }));
+    try {
+      if (!taskId) return;
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      const payload = { commissioningChecks: { runningHours } };
+      console.log('[Service] handleSaveRunningHours sending:', JSON.stringify(payload));
+      const { queued } = await putOrQueue(
+        `/api/service/${taskId}/save-progress`,
+        payload,
+        `Running Hours (${assetLabel})`,
+        `sr_runninghours_${taskId}`,
+        isEngineer
+      );
+      console.log('[Service] handleSaveRunningHours result — queued:', queued);
+      setSectionSuccess(prev => ({ ...prev, [sectionKey]: true }));
+    } catch (error: any) {
+      console.log('[Service] handleSaveRunningHours FAILED:', error?.message || error);
+      const { message } = parseApiError(error, 'Failed to save. Please try again.');
+      setSectionError(prev => ({ ...prev, [sectionKey]: message }));
+    } finally {
+      setSectionSaving(prev => ({ ...prev, [sectionKey]: false }));
+    }
+  }, [taskId, runningHours, isEngineer, gensetSrNumber, engineNumber]);
+
   // ── Step 2: Complaint / Fault Codes ──
   const [apiFaultCodes, setApiFaultCodes] = useState<ApiFaultCode[]>([]);
   const [faultCodesLoading, setFaultCodesLoading] = useState(false);
@@ -284,6 +325,10 @@ export function useSrTaskForm() {
     setSelectedComplaintCodes(prev => prev.map(item => (item.uid === uid ? { ...item, correctiveAction: text } : item)));
   }, []);
 
+  // Clears isNew on every code once the save actually succeeds — see the
+  // matching comment on useTaskForm.ts's own handleSaveFaultCodes for why
+  // (without this, ComplaintCodeCard re-opens an already-saved code
+  // editable every time this step remounts).
   const handleSaveFaultCodes = useCallback(async () => {
     setStep2Saving(true);
     setStep2Error('');
@@ -306,6 +351,7 @@ export function useSrTaskForm() {
         isEngineer
       );
       setStep2Success(true);
+      setSelectedComplaintCodes(prev => prev.map(item => (item.isNew ? { ...item, isNew: false } : item)));
     } catch (error: any) {
       setStep2Error(parseApiError(error, 'Failed to save. Please try again.').message);
     } finally {
@@ -421,26 +467,43 @@ export function useSrTaskForm() {
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
 
+  // gcsUrl/type only ever missing if onItemSucceeded somehow fired before
+  // they were resolved — shouldn't happen (see the matching comment on
+  // taskForm/useTaskFormPhotos.ts's own toSitePhoto), fallback kept anyway.
   function toSitePhoto(item: QueueItem): SitePhoto {
-    return { id: item.localId, uri: item.uri, fileName: item.fileName, mediaType: item.kind === 'photo' ? 'image' : item.kind, fileSize: item.fileSize };
+    return {
+      id: item.gcsUrl || item.localId,
+      uri: item.uri,
+      fileName: item.fileName,
+      mediaType: item.kind === 'photo' ? 'image' : item.kind,
+      fileSize: item.fileSize,
+      gcsUrl: item.gcsUrl,
+      type: item.type,
+      tags: item.tags || [],
+      location: item.location,
+    };
   }
 
+  // Every media type now rides the same uploadOneServiceMedia call
+  // (unified media[] model) — see its own comment in commisionAPi.ts for
+  // why this is unconfirmed against a real Service dev guide, mirrored
+  // exactly from Commissioning's confirmed shape regardless.
   const mediaUploaders = useMemo(() => ({
-    uploadPhoto: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+    uploadPhoto: async (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => {
       const token = await getToken();
       if (!token || !taskId) throw new Error('Not authenticated.');
-      await uploadServicePhotos(token, taskId, [file], onProgress, signal);
+      return uploadOneServiceMedia(token, taskId, file, type, location, tags, onProgress, signal);
     },
-    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => {
       const token = await getToken();
       if (!token || !taskId) throw new Error('Not authenticated.');
-      await uploadOneServiceVideoOrPdf(token, taskId, file, onProgress, signal);
+      return uploadOneServiceMedia(token, taskId, file, type, location, tags, onProgress, signal);
     },
   }), [taskId]);
 
   const persistMediaFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
     sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
-    mediaKind: item.kind, formKind: 'service', taskId, target: 'site',
+    mediaKind: item.kind, source: item.source, formKind: 'service', taskId, target: 'site',
   }), [taskId]);
 
   const mediaQueue = useMediaUploadQueue(
@@ -490,6 +553,7 @@ export function useSrTaskForm() {
           fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`,
           fileSize: asset.fileSize,
           kind: isVideo ? 'video' : 'photo',
+          source: 'camera',
         };
         mediaQueue.startBatch([picked]);
       }
@@ -540,6 +604,7 @@ export function useSrTaskForm() {
             fileName: asset.fileName || `${isVideo ? 'video' : 'photo'}_${Date.now()}_${i}.${isVideo ? 'mp4' : 'jpg'}`,
             fileSize: asset.fileSize,
             kind: isVideo ? 'video' as const : 'photo' as const,
+            source: 'gallery' as const,
           };
         });
         if (picked.length > 0) mediaQueue.startBatch(picked);
@@ -553,8 +618,8 @@ export function useSrTaskForm() {
 
   // Documents card's own picker — device storage only (no camera option;
   // a PDF can't be "captured"). No dedicated document endpoint exists on
-  // the backend, so picked PDFs are tagged mediaType: 'pdf' and ride the
-  // same GCS-sign + confirm flow as videos (uploadOneServiceVideoOrPdf).
+  // the backend, so picked PDFs are tagged type: 'pdf' and ride the same
+  // GCS-sign + confirm flow as everything else (uploadOneServiceMedia).
   const handlePickPdf = useCallback(async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -576,6 +641,7 @@ export function useSrTaskForm() {
         fileName: asset.name || `document_${i + 1}.pdf`,
         fileSize: asset.size,
         kind: 'pdf',
+        source: 'gallery',
       }));
       if (picked.length > 0) mediaQueue.startBatch(picked);
 
@@ -593,41 +659,185 @@ export function useSrTaskForm() {
     setSitePhotos(prev => prev.filter(p => p.id !== id));
   }, []);
 
+  // Running Hours' own photo — same pairing taskForm.tsx's commissioning
+  // form has for its Running Hours step (one photo, uploaded through the
+  // exact same generic photo endpoint as every other site photo — there's
+  // no dedicated "running hours" field on the backend for either form, so
+  // this is a client-side-only grouping, same known limitation already
+  // flagged and accepted for commissioning: once saved, it rides the same
+  // flat photosUrls array as everything else and can't be told apart from
+  // a regular site photo on reload). Reuses mediaUploaders (same
+  // upload endpoints) — only which local list a successful item lands in
+  // differs, same pattern as commissioning's siteQueue/runningHoursQueue
+  // split.
+  const [runningHoursPhotos, setRunningHoursPhotos] = useState<SitePhoto[]>([]);
+  const [runningHoursPhotoOptionsVisible, setRunningHoursPhotoOptionsVisible] = useState(false);
+
+  const persistRunningHoursFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, source: item.source, formKind: 'service', taskId, target: 'runningHours',
+  }), [taskId]);
+
+  // Confirms pre-tagged 'Running Hours' by default — see the matching
+  // comment on taskForm/useTaskFormPhotos.ts's own runningHoursQueue.
+  const runningHoursQueue = useMediaUploadQueue(
+    mediaUploaders,
+    useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), []),
+    isEngineer,
+    persistRunningHoursFailure,
+    ['Running Hours']
+  );
+
+  // Exactly one running-hours photo — PhotosVideoCard's own maxItems={1}
+  // hides its Add trigger once one exists, but these are guarded directly
+  // too, same as taskForm.tsx's own handleTakeRunningHoursPhoto/
+  // handleChooseRunningHoursPhotos.
+  const handleTakeRunningHoursPhoto = useCallback(async () => {
+    setRunningHoursPhotoOptionsVisible(false);
+    if (runningHoursPhotos.length >= 1) {
+      Alert.alert('Only one photo allowed', 'Remove the current running-hours photo before adding a different one.');
+      return;
+    }
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const validationError = getPhotoValidationError(asset);
+        if (validationError) {
+          Alert.alert('Photo not allowed', validationError);
+          return;
+        }
+        const picked: PickedAsset = {
+          uri: asset.uri,
+          fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+          fileSize: asset.fileSize,
+          kind: 'photo',
+          source: 'camera',
+        };
+        runningHoursQueue.startBatch([picked]);
+      }
+    } catch (error) {
+      console.log('[SR Task Form Photos] Running-hours camera failed:', error);
+      Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
+    }
+  }, [runningHoursQueue, runningHoursPhotos]);
+
+  const handleChooseRunningHoursPhotos = useCallback(async () => {
+    setRunningHoursPhotoOptionsVisible(false);
+    if (runningHoursPhotos.length >= 1) {
+      Alert.alert('Only one photo allowed', 'Remove the current running-hours photo before adding a different one.');
+      return;
+    }
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Gallery access is required to choose a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,
+        allowsMultipleSelection: false,
+      });
+      if (!result.canceled) {
+        const { valid, skippedMessage } = partitionValidPhotos(result.assets);
+        const picked: PickedAsset[] = valid.slice(0, 1).map((asset, index) => ({
+          uri: asset.uri,
+          fileName: asset.uri.split('/').pop() || `photo_${Date.now()}_${index}.jpg`,
+          fileSize: asset.fileSize,
+          kind: 'photo',
+          source: 'gallery',
+        }));
+        if (picked.length > 0) runningHoursQueue.startBatch(picked);
+        if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
+      }
+    } catch (error) {
+      console.log('[SR Task Form Photos] Running-hours gallery picker failed:', error);
+      Alert.alert('Gallery unavailable', 'Could not open the photo gallery. Please try again.');
+    }
+  }, [runningHoursQueue, runningHoursPhotos]);
+
+  const handleRemoveRunningHoursPhoto = useCallback((id: string) => {
+    setRunningHoursPhotos(prev => prev.filter(photo => photo.id !== id));
+  }, []);
+
   // Shows whatever was already uploaded in an earlier session — called once
   // when the task detail first loads (see loadPreviousData below), so
   // reopening a task you'd already added photos/videos/PDFs to doesn't look
   // empty just because this session's own sitePhotos state starts fresh.
-  // Unlike commissioning, service keeps photos and videos in two separate
-  // server fields already (photosUrls/videosUrls) — PDFs still ride the
-  // videos field, split out by their .pdf extension, same as
-  // srTaskReportController.ts's own read-side split. Photos need a signed
-  // URL to actually render as a thumbnail (private GCS bucket); video/PDF
-  // rows only ever show a filename/icon, so the raw URL is fine for those.
-  const hydrateSitePhotos = useCallback(async (photosUrls: string[], videosUrls: string[]) => {
-    if (photosUrls.length === 0 && videosUrls.length === 0) return;
-    const realVideoUrls = videosUrls.filter((url) => !url.toLowerCase().split('?')[0].endsWith('.pdf'));
-    const pdfUrls = videosUrls.filter((url) => url.toLowerCase().split('?')[0].endsWith('.pdf'));
+  // Reads the unified task.media array directly and filters by each item's
+  // own .type — replaces the old two-separate-fields (photosUrls/
+  // videosUrls) + extension-guessing read. An item tagged 'Running Hours'
+  // (the fixed default runningHoursQueue always confirms with) hydrates
+  // into runningHoursPhotos instead of the general site list — see the
+  // matching comment on taskForm/useTaskFormPhotos.ts's own
+  // hydrateSitePhotos. Photos need a signed URL to actually render as a
+  // thumbnail (private GCS bucket); video/PDF rows only ever show a
+  // filename/icon, so the raw gcsUrl is fine for those.
+  const hydrateSitePhotos = useCallback(async (media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]) => {
+    if (!media || media.length === 0) return;
+    const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+    const runningHoursItems = media.filter(isRunningHours);
+    const siteMedia = media.filter((m) => !isRunningHours(m));
 
+    const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
+    const videoItems = siteMedia.filter((m) => m.type === 'video');
+    const pdfItems = siteMedia.filter((m) => m.type === 'pdf');
+    const runningHoursPhotoItems = runningHoursItems.filter((m) => m.type === 'photo' || m.type === 'image');
+
+    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems].map((m) => m.gcsUrl);
     let signedPhotoUrls: Record<string, string> = {};
-    if (photosUrls.length > 0) {
+    if (allPhotoUrls.length > 0) {
       try {
         const token = await getToken();
-        if (token) signedPhotoUrls = await getGcsSignedUrls(token, photosUrls);
+        if (token) signedPhotoUrls = await getGcsSignedUrls(token, allPhotoUrls);
       } catch (error) {
         console.log('[SR Task Form Photos] Failed to sign previously-uploaded photo URLs:', error);
       }
     }
 
     const hydrated: SitePhoto[] = [
-      ...photosUrls.map((url) => ({ id: url, uri: signedPhotoUrls[url] || url, fileName: videoFileName(url), mediaType: 'image' as const })),
-      ...realVideoUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'video' as const })),
-      ...pdfUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'pdf' as const })),
+      ...photoItems.map((m) => ({ id: m.gcsUrl, uri: signedPhotoUrls[m.gcsUrl] || m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'image' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
+      ...videoItems.map((m) => ({ id: m.gcsUrl, uri: m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'video' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
+      ...pdfItems.map((m) => ({ id: m.gcsUrl, uri: m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'pdf' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
     ];
     setSitePhotos((prev) => {
       const existingIds = new Set(prev.map((p) => p.id));
       return [...prev, ...hydrated.filter((p) => !existingIds.has(p.id))];
     });
+
+    const hydratedRunningHours: SitePhoto[] = runningHoursPhotoItems.map((m) => ({
+      id: m.gcsUrl, uri: signedPhotoUrls[m.gcsUrl] || m.gcsUrl, fileName: videoFileName(m.gcsUrl),
+      mediaType: 'image' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location,
+    }));
+    if (hydratedRunningHours.length > 0) {
+      setRunningHoursPhotos((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        return [...prev, ...hydratedRunningHours.filter((p) => !existingIds.has(p.id))];
+      });
+    }
   }, []);
+
+  // Updates the tag(s) on an already-uploaded item, matched by gcsUrl.
+  const handleUpdateMediaTag = useCallback(async (gcsUrl: string, tags: string[]) => {
+    try {
+      const token = await getToken();
+      if (!token || !taskId) return;
+      await updateServiceMediaTag(token, taskId, gcsUrl, tags);
+      const applyTag = (photos: SitePhoto[]) => photos.map((p) => (p.gcsUrl === gcsUrl ? { ...p, tags } : p));
+      setSitePhotos(applyTag);
+      setRunningHoursPhotos(applyTag);
+    } catch (error) {
+      console.log('[SR Task Form Photos] Failed to update media tag:', error);
+      Alert.alert('Failed to update tag', 'Please try again.');
+    }
+  }, [taskId]);
 
   // ── Step 5: Notes ──
   const [notes, setNotes] = useState('');
@@ -860,8 +1070,8 @@ export function useSrTaskForm() {
   // applicable. Only category/subCategory go in the body; fault codes and
   // parts were already persisted earlier via save-progress in Steps 2-3.
   // Photos and videos (Step 4) have no save button of their own — they
-  // upload here, right before completing, same as the commissioning form's
-  // pattern.
+  // upload immediately when picked (MediaUploadOverlay), same as the
+  // commissioning form's pattern, so there's nothing left to upload here.
   const handleFinishService = useCallback(async () => {
     if (!selectedCategoryLetter || !selectedSubCategory) return;
     // Billing Type is only required for category B (Warranty Repair) once
@@ -890,6 +1100,9 @@ export function useSrTaskForm() {
       // else. Matches useTaskFormOtp.ts's handleMarkComplete on the
       // commissioning side exactly.
       const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      // Location is captured only at Start, photo upload, and Complete —
+      // see the same note in syncEngine.ts's own putOrQueue.
+      logLocationForAction(`Complete Service (${assetLabel})`);
       await putOrQueue(
         `/api/service/${taskId}/finish`,
         {
@@ -960,18 +1173,19 @@ export function useSrTaskForm() {
         if (serviceData.category) setSelectedCategoryLetter(serviceData.category);
         if (serviceData.subCategory) setSelectedSubCategory(serviceData.subCategory);
         // Shows whatever was already uploaded in an earlier session — see
-        // hydrateSitePhotos's own comment above.
-        if (serviceData.photos?.length || serviceData.videos?.length) {
-          hydrateSitePhotos(serviceData.photos || [], serviceData.videos || []);
+        // hydrateSitePhotos's own comment above. serviceData.media replaces
+        // the old separate photos/videos fields (unified media[] model).
+        if (serviceData.media?.length) {
+          hydrateSitePhotos(serviceData.media);
         }
         // Reopening a task that's already COMPLETED — this form no longer
         // has anything to show once past that point (OTP sign-off/Approval
         // Status/Close Ticket all live on srTaskReport.tsx now), but the
         // dashboard/list arrow-press routing already sends COMPLETED tasks
-        // there directly. Landing on Step 5's read-only category display
+        // there directly. Landing on Step 6's read-only category display
         // instead of Step 1 is still the more sensible fallback if this
         // screen is ever reached with one some other way.
-        if (serviceData.status === 'COMPLETED') setCurrentStep(5);
+        if (serviceData.status === 'COMPLETED') setCurrentStep(6);
       }
 
       // A section saved while offline (buildAssetPayload sends the whole
@@ -984,6 +1198,19 @@ export function useSrTaskForm() {
       if (assetData) {
         const pendingAsset = await getPendingBody(`sr_asset_${assetId}`);
         if (pendingAsset) assetData = { ...assetData, ...pendingAsset };
+      }
+
+      // Running Hours lives on the service task's own commissioningChecks,
+      // not the Asset record (see handleSaveRunningHours) — same "don't
+      // revert an unsynced offline edit" overlay as assetData above, just
+      // keyed to its own dedupeKey since it saves through a different call.
+      {
+        let runningHoursValue = serviceData?.commissioningChecks?.runningHours;
+        const pendingRunningHours = await getPendingBody(`sr_runninghours_${taskId}`);
+        if (pendingRunningHours?.commissioningChecks?.runningHours != null) {
+          runningHoursValue = pendingRunningHours.commissioningChecks.runningHours;
+        }
+        setRunningHours(runningHoursValue != null ? String(runningHoursValue) : '');
       }
 
       if (assetData) {
@@ -1134,7 +1361,7 @@ export function useSrTaskForm() {
 
   // ── Navigation ──
   const handleBack = useCallback(() => setCurrentStep(prev => Math.max(1, prev - 1)), []);
-  const handleNext = useCallback(() => setCurrentStep(prev => Math.min(5, prev + 1)), []);
+  const handleNext = useCallback(() => setCurrentStep(prev => Math.min(6, prev + 1)), []);
   // OTP verification (and the special-cased "force a fresh list reload"
   // this used to need once it happened mid-session) both moved to
   // srTaskReport.tsx — this screen never changes the task's status past
@@ -1166,6 +1393,7 @@ export function useSrTaskForm() {
     oilLevel, setOilLevel, oilLevelComment, setOilLevelComment,
     coolantLevel, setCoolantLevel, coolantLevelComment, setCoolantLevelComment,
     coolantTemp, setCoolantTemp, defLevel, setDefLevel,
+    runningHours, setRunningHours, handleSaveRunningHours,
     sectionSaving, sectionSuccess, sectionError, handleSaveAssetSection,
     ENGINE_TYPE_OPTIONS, ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS,
     PHASE_OPTIONS, PANEL_TYPE_OPTIONS, CPCB_NORM_OPTIONS,
@@ -1185,6 +1413,11 @@ export function useSrTaskForm() {
     sitePhotos, photoOptionsVisible, setPhotoOptionsVisible, handleTakePhoto, handleRecordVideo, handleChoosePhotos, handlePickPdf, handleRemovePhoto,
     // Real-time upload state/controls for MediaUploadOverlay, see useMediaUploadQueue.
     mediaUploadQueue: mediaQueue,
+    // Running Hours' own single photo — see its own comment above.
+    runningHoursPhotos, runningHoursPhotoOptionsVisible, setRunningHoursPhotoOptionsVisible,
+    handleTakeRunningHoursPhoto, handleChooseRunningHoursPhotos, handleRemoveRunningHoursPhoto,
+    runningHoursUploadQueue: runningHoursQueue,
+    handleUpdateMediaTag,
 
     // Step 5
     notes, setNotes, step5Saving, step5Success, step5Error, handleSaveNotes,

@@ -190,14 +190,21 @@ export function useSrTaskReportController(initialTask: any) {
     setVideoError('');
   }, []);
 
-  // PDFs from the SR form's Documents card ride the exact same GCS
-  // sign+confirm flow as videos (see uploadServiceVideos / SitePhoto.mediaType)
-  // — there's no dedicated document endpoint, so they land in this same
-  // task.videos array and are only distinguishable by their .pdf extension.
-  // Split back out here so the screen can render two separate sections.
-  const allVideoUrls: string[] = task?.videos || [];
-  const videos = allVideoUrls.filter((url) => !url.toLowerCase().split('?')[0].endsWith('.pdf'));
-  const documents = allVideoUrls.filter((url) => url.toLowerCase().split('?')[0].endsWith('.pdf'));
+  // Unified media[] model (Sep 2026 backend migration) — replaces the old
+  // separate photos/videos fields (PDFs used to ride the videos array,
+  // distinguished only by their .pdf extension). Each item now carries its
+  // own .type directly. An item tagged 'Running Hours' (the fixed default
+  // useSrTaskForm.ts's runningHoursQueue always confirms with) is pulled
+  // out into its own runningHoursPhotoUrl instead of the general photos
+  // list — same distinction the commissioning report makes, see its own
+  // comment in taskReportController.ts.
+  const media: { type: string; gcsUrl: string; tags?: string[] }[] = task?.media || [];
+  const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+  const siteMedia = media.filter((m) => !isRunningHours(m));
+  const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
+
+  const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
+  const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
 
   const [documentOpeningUrl, setDocumentOpeningUrl] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState('');
@@ -229,10 +236,14 @@ export function useSrTaskReportController(initialTask: any) {
   // up without re-deriving the bucket path.
   const [signedPhotoUrls, setSignedPhotoUrls] = useState<Record<string, string>>({});
   const [photosSigning, setPhotosSigning] = useState(false);
-  const photosKey = JSON.stringify(task?.photos || []);
+  const photoUrls = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
+  // Signed in the same batch as the general gallery (below) so the
+  // Running Hours section's own thumbnail resolves too.
+  const photosToSign = runningHoursPhotoUrl ? [...photoUrls, runningHoursPhotoUrl] : photoUrls;
+  const photosKey = JSON.stringify(photosToSign);
 
   useEffect(() => {
-    const photos: string[] = task?.photos || [];
+    const photos: string[] = photosToSign;
     if (photos.length === 0) { setSignedPhotoUrls({}); return; }
     let cancelled = false;
     (async () => {
@@ -440,7 +451,8 @@ export function useSrTaskReportController(initialTask: any) {
     detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
-    signedPhotoUrls, photosSigning,
+    photos: photoUrls, signedPhotoUrls, photosSigning,
+    runningHoursPhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     otpVerified, partsDone, workDone,
     isOtpPending,

@@ -11,7 +11,6 @@ import {
 } from '../viewModel/commisionAPi';
 import { getRole, Role } from '../constants/permissions';
 import { parseApiError } from '../utils/apiError';
-import { splitMediaByExtension } from '../utils/reportFormatters';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
 import { API_URL } from '../constants/StringConstants';
@@ -182,30 +181,46 @@ export function useTaskReportController(initialTask: any) {
 
   const task = detail ? { ...initialTask, ...detail } : initialTask;
 
-  // Commissioning has no separate videos/documents field — every media type
-  // (photo/video/PDF) rides the one `photos` array (see the confirm-endpoint
-  // note in commisionAPi.ts's uploadCommissioningVideos), so split it back
-  // out by extension before rendering three separate sections.
-  const allMediaUrls: string[] = task?.photos || [];
-  const { photos, videos, documents } = splitMediaByExtension(allMediaUrls);
+  // Unified media[] model (Sep 2026 backend migration) — replaces the old
+  // flat `photos` array this used to split back out by file extension.
+  // Each item now carries its own .type directly, so filtering is exact
+  // instead of guessed from the URL's extension. An item tagged 'Running
+  // Hours' (the fixed default the form's own runningHoursQueue confirms
+  // every Running Hours photo with) is pulled out of the general
+  // photos/videos/documents lists and shown in the Running Hours section
+  // instead — this is the same distinction taskForm.tsx's own
+  // hydrateSitePhotos makes, now available for the first time because the
+  // tag itself is what makes "which step this came from" recoverable at
+  // all. Downstream rendering still just wants plain gcsUrl arrays, same
+  // shape as before this migration — only how they're derived changed.
+  const media: { type: string; gcsUrl: string; tags?: string[] }[] = task?.media || [];
+  const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+  const siteMedia = media.filter((m) => !isRunningHours(m));
+  const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
+
+  const photos = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
+  const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
+  const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
 
   // Photos are raw GCS URLs (private bucket) — batch-sign just the photo
-  // subset in one /gcs/sign call, same pattern as the SR report/detail
-  // controllers, keyed by the original raw url. Videos/documents are signed
-  // on tap instead (below), not up front.
+  // subset (plus the Running Hours photo, signed the same way) in one
+  // /gcs/sign call, same pattern as the SR report/detail controllers,
+  // keyed by the original raw url. Videos/documents are signed on tap
+  // instead (below), not up front.
   const [signedPhotoUrls, setSignedPhotoUrls] = useState<Record<string, string>>({});
   const [photosSigning, setPhotosSigning] = useState(false);
-  const photosKey = JSON.stringify(photos);
+  const photosToSign = runningHoursPhotoUrl ? [...photos, runningHoursPhotoUrl] : photos;
+  const photosKey = JSON.stringify(photosToSign);
 
   useEffect(() => {
-    if (photos.length === 0) { setSignedPhotoUrls({}); return; }
+    if (photosToSign.length === 0) { setSignedPhotoUrls({}); return; }
     let cancelled = false;
     (async () => {
       setPhotosSigning(true);
       try {
         const token = await getToken();
         if (!token) return;
-        const signed = await getGcsSignedUrls(token, photos);
+        const signed = await getGcsSignedUrls(token, photosToSign);
         if (!cancelled) setSignedPhotoUrls(signed);
       } catch (error) {
         console.log('[Task Report] Failed to sign photos:', error);
@@ -485,6 +500,7 @@ export function useTaskReportController(initialTask: any) {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
     detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
+    runningHoursPhotoUrl,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,

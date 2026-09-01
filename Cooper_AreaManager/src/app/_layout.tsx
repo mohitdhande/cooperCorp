@@ -3,7 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/_components/ErrorBoundary';
 import { TeamProvider } from '../context/TeamContext';
 import * as SplashScreen from 'expo-splash-screen';
-import { View, AppState, AppStateStatus } from 'react-native';
+import { View, AppState, AppStateStatus, StyleSheet } from 'react-native';
 import { useEffect, useRef } from 'react';
 import { useFonts } from 'expo-font';
 import {
@@ -68,8 +68,6 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!fontsLoaded) return null;
-
   return (
      <View style={{ flex: 1, backgroundColor: '#11101C' }}>
     <SafeAreaProvider>
@@ -102,6 +100,22 @@ export default function RootLayout() {
         </TeamProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
+    {/* Covers the screen instead of the old `if (!fontsLoaded) return null`
+        (which used to skip mounting <Stack> entirely until fonts were
+        ready). That gate caused a real bug: expo-router resolves the
+        initial deep-link URL independently of when <Stack> itself mounts,
+        and if that resolution finished before fontsLoaded flipped true,
+        it tried to dispatch a navigation state update to a navigator that
+        didn't exist in the tree yet — "Can't perform a React state update
+        on a component that hasn't mounted yet." <Stack> (and index.tsx
+        beneath it) now always mounts immediately; this same-color overlay
+        gives the identical seamless dark-to-dark cover the old `return
+        null` did, without ever un-mounting the navigator. */}
+    {!fontsLoaded && (
+      <View style={StyleSheet.absoluteFill} pointerEvents="none" testID="font-load-cover">
+        <View style={{ flex: 1, backgroundColor: '#11101C' }} />
+      </View>
+    )}
     </View>
   );
 }

@@ -41,9 +41,12 @@ const GROUP_C_COMMENT_FIELDS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 
 const LOAD_STAGE_PREFIXES = ['D0', 'D25', 'D50', 'D75', 'D100'];
 const LOAD_STAGE_SUFFIXES = ['LR', 'LY', 'LB', 'VR', 'VY', 'VB', 'F', 'BV', 'REM'];
 const GROUP_D_FIELDS = LOAD_STAGE_PREFIXES.flatMap(p => LOAD_STAGE_SUFFIXES.map(s => `${p}${s}`));
-const GROUP_E_FIELDS = ['E_runHrs'];
+// Confirmed real backend key: commissioningChecks.runningHours (a string,
+// same as every other check field in this object) — sent for both plain
+// Commissioning and Revalidation task types alike.
+const GROUP_E_FIELDS = ['runningHours'];
 // Customer Handover (Step 5) — confirmed real backend keys, E1-E7. Doesn't
-// collide with Running Hours' own E_runHrs key above (different literal
+// collide with Running Hours' own runningHours key above (different literal
 // strings), even though both live under the same "E" letter. Comment
 // fields use a "c" suffix (E1c, not E1_comment) — a different convention
 // from every other group's own "_comment" suffix, so this section keeps
@@ -159,8 +162,10 @@ export function useTaskForm() {
           setTask(detail);
           // Shows whatever was already uploaded in an earlier session —
           // see hydrateSitePhotos's own comment in useTaskFormPhotos.ts.
-          if (Array.isArray(detail?.photos) && detail.photos.length > 0) {
-            photos.hydrateSitePhotos(detail.photos);
+          // detail.media replaces the old detail.photos (unified media[]
+          // model, Sep 2026 backend migration).
+          if (Array.isArray(detail?.media) && detail.media.length > 0) {
+            photos.hydrateSitePhotos(detail.media);
           }
         }
       } catch (error) {
@@ -492,8 +497,18 @@ export function useTaskForm() {
 
   useEffect(() => {
     if (currentStep === 2 && taskId) {
-      if (isRevalidation) loadValidationChecks();
-      else loadCommissioningChecks();
+      if (isRevalidation) {
+        loadValidationChecks();
+        // Running Hours lives under commissioningChecks.runningHours even
+        // for a Revalidation task (same backend key as plain Commissioning,
+        // just shown on Step 5 instead of Step 2 — see runningHoursCard's
+        // own comment in taskForm.tsx) — without this, commissioningChecks
+        // never gets fetched at all for this task type, so a previously
+        // saved Running Hours value would never show up again on reload.
+        loadCommissioningChecks();
+      } else {
+        loadCommissioningChecks();
+      }
     }
   }, [currentStep, taskId, isRevalidation, loadCommissioningChecks, loadValidationChecks]);
 
@@ -515,7 +530,11 @@ export function useTaskForm() {
     setSectionSaving(prev => ({ ...prev, [groupKey]: true }));
     setSectionError(prev => ({ ...prev, [groupKey]: '' }));
     try {
-      if (!taskId) return;
+      if (!taskId) {
+        console.log(`[Commissioning] saveGroupChecks(${groupKey}) aborted — no taskId yet`);
+        return;
+      }
+      console.log(`[Commissioning] saveGroupChecks(${groupKey}) sending:`, JSON.stringify({ commissioningChecks: payload }));
       // Same shape saveCommissioningProgress sends — replicated directly
       // here (instead of calling that function) so a network failure can
       // fall through to putOrQueue's own queueing instead of throwing.
@@ -527,9 +546,11 @@ export function useTaskForm() {
         `checks_${groupKey}_${taskId}`,
         isEngineer
       );
+      console.log(`[Commissioning] saveGroupChecks(${groupKey}) result — queued:`, queued);
       showToast(queued ? 'Saved on this device — will sync later' : 'Saved successfully!', 'success');
       setSectionSuccess(prev => ({ ...prev, [groupKey]: true }));
     } catch (error: any) {
+      console.log(`[Commissioning] saveGroupChecks(${groupKey}) FAILED:`, error?.message || error);
       const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       showToast(msg, 'error');
       setSectionError(prev => ({ ...prev, [groupKey]: msg }));
@@ -567,10 +588,11 @@ export function useTaskForm() {
     return saveGroupChecks('groupD', payload);
   }, [saveGroupChecks, commissioningChecks]);
   const handleSaveGroupE = useCallback(() => {
+    console.log('[Commissioning] handleSaveGroupE tapped, isRevalidation =', isRevalidation, 'commissioningChecks.runningHours =', JSON.stringify(commissioningChecks.runningHours));
     const payload: Record<string, string> = {};
     GROUP_E_FIELDS.forEach(key => { if (commissioningChecks[key]) payload[key] = commissioningChecks[key]; });
     return saveGroupChecks('groupE', payload);
-  }, [saveGroupChecks, commissioningChecks]);
+  }, [saveGroupChecks, commissioningChecks, isRevalidation]);
   const handleSaveCustomerHandover = useCallback(() => {
     const payload: Record<string, string> = {};
     GROUP_F_FIELDS.forEach(key => {
@@ -660,10 +682,19 @@ export function useTaskForm() {
     setSelectedComplaintCodes(prev => prev.map(item => (item.uid === uid ? { ...item, correctiveAction: text } : item)));
   }, []);
 
-  const handleSaveFaultCodes = useCallback(
-    () => apiData.saveFaultCodes(selectedComplaintCodes),
-    [apiData, selectedComplaintCodes]
-  );
+  // Clears isNew on every code once the save actually succeeds — without
+  // this, a freshly-added code's isNew stays stuck true forever (nothing
+  // else ever resets it), so ComplaintCodeCard's own
+  // useState(!!item.isNew) re-opens it editable every time this step
+  // remounts (e.g. leaving for a later step and coming back), even though
+  // it was already saved and should show its read-only summary until the
+  // pencil is tapped.
+  const handleSaveFaultCodes = useCallback(async () => {
+    const success = await apiData.saveFaultCodes(selectedComplaintCodes);
+    if (success) {
+      setSelectedComplaintCodes(prev => prev.map(item => (item.isNew ? { ...item, isNew: false } : item)));
+    }
+  }, [apiData, selectedComplaintCodes]);
 
   // ── Step 4 — parts used ──
   const [partPickerVisible, setPartPickerVisible] = useState(false);
@@ -823,12 +854,21 @@ export function useTaskForm() {
     if ((currentStep === 2 || currentStep === 5) && taskId) loadGensetReadings();
   }, [currentStep, taskId, loadGensetReadings]);
 
-  const handleSaveReadings = useCallback(async () => {
+  // Returns whether the save actually succeeded — Engine Parameters and
+  // Genset Electrical Readings are two halves of this same combined save
+  // (one call saves both), but they sit on different steps and the screen
+  // needs to know when ITS OWN card's Save button specifically succeeded,
+  // to collapse only that one rather than both (see taskForm.tsx's own
+  // engineParamsCollapsed/readingsCollapsed — this used to be a single
+  // shared readingsExpanded, which collapsed both cards together the
+  // moment either was saved, even one on a step the user hadn't reached
+  // yet).
+  const handleSaveReadings = useCallback(async (): Promise<boolean> => {
     setReadingsSaving(true);
     setReadingsError('');
     setReadingsSuccess(false);
     try {
-      if (!taskId) return;
+      if (!taskId) return false;
 
       const now = new Date().toISOString();
       const oilLevel = readings.oilLevel || '';
@@ -856,10 +896,12 @@ export function useTaskForm() {
       setReadingsSavedAt(now);
       setReadingsSuccess(true);
       showToast(queued ? 'Saved on this device — will sync later' : 'Readings saved successfully!', 'success');
+      return true;
     } catch (error: any) {
       const msg = parseApiError(error, 'Failed to save readings. Please try again.').message;
       setReadingsError(msg);
       showToast(msg, 'error');
+      return false;
     } finally {
       setReadingsSaving(false);
     }
@@ -988,6 +1030,7 @@ export function useTaskForm() {
     handleTakeRunningHoursPhoto: photos.handleTakeRunningHoursPhoto,
     handleChooseRunningHoursPhotos: photos.handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto: photos.handleRemoveRunningHoursPhoto,
+    handleUpdateMediaTag: photos.handleUpdateMediaTag,
     // Real-time upload state/controls for MediaUploadOverlay — one queue
     // per list (Step 2 running-hours, Step 6 site), see useMediaUploadQueue.
     siteUploadQueue: photos.siteQueue, runningHoursUploadQueue: photos.runningHoursQueue,

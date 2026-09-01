@@ -50,6 +50,7 @@ export const uploadProfilePic = async (userId: string, token: string, imageUri: 
         },
       }
     );
+    
     return response.data;
   } catch (error: any) {
     console.log('Upload Profile Pic Error:', error.response?.data || error.message);

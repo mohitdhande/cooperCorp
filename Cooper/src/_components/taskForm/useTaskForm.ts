@@ -13,6 +13,7 @@ import { makeCheckItem, makeLoadStage } from './helpers';
 import { useTaskFormApiData } from './hooks/useTaskFormApiData';
 import { useTaskFormPhotos } from './hooks/useTaskFormPhotos';
 import { useTaskFormOtp } from './hooks/useTaskFormOtp';
+import { parseApiError } from '@/utils/apiError';
 
 const TOTAL_STEPS = 8;
 
@@ -399,7 +400,7 @@ const handleSaveValidationChecks = async () => {
     setSectionSuccess(prev => ({ ...prev, [section]: true }));
   } catch (error: any) {
     console.log('[VALIDATION] ❌ Save FAILED:', error.response?.status, JSON.stringify(error.response?.data) || error.message);
-    const msg = error.response?.data?.message || 'Failed to save. Please try again.';
+    const msg = parseApiError(error, 'Failed to save. Please try again.').message;
     showToast(msg, 'error');
     setSectionError(prev => ({ ...prev, [section]: msg }));
   } finally {
@@ -417,7 +418,7 @@ const saveGroupChecks = async (groupKey: string, checks: Record<string, string>)
     showToast('Saved successfully!', 'success');
     setSectionSuccess(prev => ({ ...prev, [groupKey]: true }));
   } catch (error: any) {
-    const msg = error.response?.data?.message || 'Failed to save. Please try again.';
+    const msg = parseApiError(error, 'Failed to save. Please try again.').message;
     showToast(msg, 'error');
     setSectionError(prev => ({ ...prev, [groupKey]: msg }));
   } finally {
@@ -691,7 +692,7 @@ const handleSaveReadings = async () => {
     showToast('Readings saved successfully!', 'success');
 
   } catch (error: any) {
-    const msg = error.response?.data?.message || 'Failed to save readings. Please try again.';
+    const msg = parseApiError(error, 'Failed to save readings. Please try again.').message;
     setReadingsError(msg);
     showToast(msg, 'error');
   } finally {
@@ -791,7 +792,7 @@ const handleSaveGensetIdentification = async () => {
   } catch (error: any) {
     setSectionError(prev => ({
       ...prev,
-      [section]: error.response?.data?.message || 'Failed to save. Please try again.',
+      [section]: parseApiError(error, 'Failed to save. Please try again.').message,
     }));
   } finally {
     setSectionSaving(prev => ({ ...prev, [section]: false }));
@@ -826,7 +827,7 @@ const handleSaveAlternatorPanel = async () => {
   } catch (error: any) {
     setSectionError(prev => ({
       ...prev,
-      [section]: error.response?.data?.message || 'Failed to save. Please try again.',
+      [section]: parseApiError(error, 'Failed to save. Please try again.').message,
     }));
   } finally {
     setSectionSaving(prev => ({ ...prev, [section]: false }));
@@ -851,7 +852,7 @@ const handleSaveService = async () => {
   } catch (error: any) {
     setSectionError(prev => ({
       ...prev,
-      [section]: error.response?.data?.message || 'Failed to save. Please try again.',
+      [section]: parseApiError(error, 'Failed to save. Please try again.').message,
     }));
   } finally {
     setSectionSaving(prev => ({ ...prev, [section]: false }));

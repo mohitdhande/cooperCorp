@@ -3,5 +3,12 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+  "java.import.exclusions": [
+    "**/node_modules/**"
+  ],
+  "gradle.nestedProjects": false,
+  "files.watcherExclude": {
+    "**/node_modules/**": true
   }
 }

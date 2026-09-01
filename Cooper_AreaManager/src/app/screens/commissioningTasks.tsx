@@ -199,7 +199,11 @@ export default function CommissioningTasksScreen() {
         </View>
       </ScrollView>
 
+      {/* Keyed on the target task (or 'closed') so every open is a fresh
+          picker instance — see the matching comment in newServiceJob.tsx
+          for why. */}
       <AssignEngineerModal
+        key={assignPickerTask?._id || 'closed'}
         visible={!!assignPickerTask}
         onClose={closeAssignPicker}
         engineers={engineers}

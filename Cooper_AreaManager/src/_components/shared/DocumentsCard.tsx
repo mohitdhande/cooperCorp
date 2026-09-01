@@ -5,6 +5,8 @@ import { FileText, Plus, Trash2 } from 'lucide-react-native';
 import { SitePhoto } from '../../models/taskForm.types';
 import { formatFileSize } from '../../utils/reportFormatters';
 import { MAX_PDF_SIZE_BYTES } from '../../utils/photoValidation';
+import { MediaTagPicker } from './MediaTagPicker';
+import { MediaLocationButton } from './MediaLocationButton';
 
 const MAX_PDF_MB = MAX_PDF_SIZE_BYTES / (1024 * 1024);
 
@@ -12,6 +14,9 @@ type Props = {
   pdfs: SitePhoto[];
   onPickPdf: () => void;
   onRemove: (id: string) => void;
+  // Fires MediaTagPicker's picked/cleared tags up to the caller, which owns
+  // the actual PATCH call (Commissioning/Service each have their own).
+  onUpdateTag?: (gcsUrl: string, tags: string[]) => void;
 };
 
 // PDF-only Documents card — shared by the Commissioning (taskForm.tsx) and
@@ -25,7 +30,7 @@ type Props = {
 // here once its own upload has already succeeded (see
 // useMediaUploadQueue), so this card is never rendered mid-upload in the
 // first place; MediaUploadOverlay is the single place that shows progress.
-export function DocumentsCard({ pdfs, onPickPdf, onRemove }: Props) {
+export function DocumentsCard({ pdfs, onPickPdf, onRemove, onUpdateTag }: Props) {
   return (
     <View style={styles.card}>
       <View style={styles.headerBlock}>
@@ -52,9 +57,20 @@ export function DocumentsCard({ pdfs, onPickPdf, onRemove }: Props) {
                 <View style={styles.rowIconChip}>
                   <FileText size={18} color="#374151" />
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, gap: 4 }}>
                   <Text style={styles.fileName} numberOfLines={1}>{pdf.fileName}</Text>
                   {!!sizeLabel && <Text style={styles.meta}>{sizeLabel}</Text>}
+                  <View style={styles.rowActionsRow}>
+                    {!!onUpdateTag && (
+                      <MediaTagPicker
+                        type={pdf.type}
+                        tags={pdf.tags}
+                        disabled={!pdf.gcsUrl}
+                        onSelectTag={(tags) => onUpdateTag(pdf.gcsUrl!, tags)}
+                      />
+                    )}
+                    <MediaLocationButton location={pdf.location} variant="inline" />
+                  </View>
                 </View>
                 <TouchableOpacity style={styles.deleteButton} onPress={() => onRemove(pdf.id)}>
                   <Trash2 size={16} color="#DC2626" />
@@ -69,6 +85,13 @@ export function DocumentsCard({ pdfs, onPickPdf, onRemove }: Props) {
         <Plus size={18} color="#374151" />
         <Text style={styles.uploadButtonText}>Upload PDF</Text>
       </TouchableOpacity>
+
+      {/* What documents to actually attach — same guidance regardless of
+      which screen/step this card is rendered in, since it's one shared
+      component. */}
+      <Text style={styles.guidanceNote}>
+        Document - Delivery Challan/EDO for warranty parts/AMC CAMC part Requirement format/Quotation/Approval Copy
+      </Text>
     </View>
   );
 }
@@ -109,6 +132,7 @@ const styles = StyleSheet.create({
   },
   fileName: { fontSize: 15, fontWeight: '700', color: '#000000' },
   meta: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
+  rowActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
   deleteButton: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: '#FEE2E2',
@@ -121,4 +145,5 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   uploadButtonText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  guidanceNote: { fontSize: 12, fontWeight: '500', color: '#9CA3AF', lineHeight: 17 },
 });

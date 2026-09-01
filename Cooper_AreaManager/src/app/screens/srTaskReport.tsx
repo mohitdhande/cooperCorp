@@ -282,7 +282,8 @@ export default function ServiceTaskReportScreen() {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
-    signedPhotoUrls, photosSigning,
+    photos, signedPhotoUrls, photosSigning,
+    runningHoursPhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     otpVerified, partsDone, workDone,
     isOtpPending,
@@ -297,6 +298,7 @@ export default function ServiceTaskReportScreen() {
   const [serviceExpanded, setServiceExpanded] = useState(false);
   const [readingsExpanded, setReadingsExpanded] = useState(false);
   const [engineParamsExpanded, setEngineParamsExpanded] = useState(false);
+  const [runningHoursExpanded, setRunningHoursExpanded] = useState(false);
   const [complaintExpanded, setComplaintExpanded] = useState(false);
   const [partsExpanded, setPartsExpanded] = useState(false);
   const [photosExpanded, setPhotosExpanded] = useState(false);
@@ -316,7 +318,6 @@ export default function ServiceTaskReportScreen() {
 
   const faultCodes = task.faultCodes || [];
   const partsUsed = task.partsUsed || [];
-  const photos = task.photos || [];
   const notes = task.notes || '';
   const category = task.category || '';
   const subCategory = task.subCategory || '';
@@ -755,6 +756,39 @@ export default function ServiceTaskReportScreen() {
 
  
 
+        {/* Running Hours — its own standalone section rather than folded
+            into Engine Parameters below. Confirmed real backend shape:
+            task.commissioningChecks.runningHours (same wrapper/key
+            Commissioning uses, a string, saved via srTaskForm.tsx's own
+            handleSaveRunningHours to /api/service/:id/save-progress) — NOT
+            an asset-level field, despite living alongside Step 1's other
+            asset fields in the form. Also shows the photo taken during
+            that same step — recoverable here because the form always
+            confirms it pre-tagged 'Running Hours' (see useSrTaskForm.ts's
+            runningHoursQueue), so srTaskReportController.ts can pull it
+            out of the general media[] array instead of it landing in the
+            plain Photos section below. */}
+        <ReportSectionCard title="Running Hours" expanded={runningHoursExpanded} onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}>
+          <InfoRow label="Running Hours" value={task?.commissioningChecks?.runningHours} />
+          {!!runningHoursPhotoUrl && (
+            <Image
+              source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
+              style={[styles.reportPhotoThumb, { marginTop: 12 }]}
+            />
+          )}
+        </ReportSectionCard>
+
+        <ReportSectionCard title="Engine Parameters" expanded={engineParamsExpanded} onToggle={() => setEngineParamsExpanded(!engineParamsExpanded)}>
+          <InfoRow label="RPM" value={a.rpm} />
+          <InfoRow label="Frequency (Hz)" value={a.frequency} />
+          <InfoRow label="DC Voltage (V)" value={a.dcVoltage} />
+          <InfoRow label="Oil Pressure" value={a.oilPressure} />
+          <InfoRow label="Coolant Temp (°C)" value={a.coolantTemperature} />
+          <InfoRow label="DEF Level (%)" value={a.defLevelPercentage} />
+          <CheckRow label="Oil Level" value={a.oilLevel} />
+          <CheckRow label="Coolant Level" value={a.coolantLevel} />
+        </ReportSectionCard>
+
         <ReportSectionCard title="Genset Electrical Readings" expanded={readingsExpanded} onToggle={() => setReadingsExpanded(!readingsExpanded)}>
           <InfoRow label="AC Volt R-Y" value={a.acVoltageRY} />
           <InfoRow label="AC Volt Y-B" value={a.acVoltageYB} />
@@ -767,17 +801,6 @@ export default function ServiceTaskReportScreen() {
           <InfoRow label="Load kW B" value={a.loadKwB} />
           <InfoRow label="Total Load KW" value={a.totalKwLoad} />
           <InfoRow label="Load %" value={a.loadPercentage} />
-        </ReportSectionCard>
-
-        <ReportSectionCard title="Engine Parameters" expanded={engineParamsExpanded} onToggle={() => setEngineParamsExpanded(!engineParamsExpanded)}>
-          <InfoRow label="RPM" value={a.rpm} />
-          <InfoRow label="Frequency (Hz)" value={a.frequency} />
-          <InfoRow label="DC Voltage (V)" value={a.dcVoltage} />
-          <InfoRow label="Oil Pressure" value={a.oilPressure} />
-          <InfoRow label="Coolant Temp (°C)" value={a.coolantTemperature} />
-          <InfoRow label="DEF Level (%)" value={a.defLevelPercentage} />
-          <CheckRow label="Oil Level" value={a.oilLevel} />
-          <CheckRow label="Coolant Level" value={a.coolantLevel} />
         </ReportSectionCard>
 
         <ReportSectionCard title="Complaint Codes" expanded={complaintExpanded} onToggle={() => setComplaintExpanded(!complaintExpanded)}>

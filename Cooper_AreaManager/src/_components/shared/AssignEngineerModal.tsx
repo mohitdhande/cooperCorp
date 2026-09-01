@@ -7,6 +7,17 @@ import { TeamMember } from '../../models/myTeam.types';
 import { UserAvatar } from './UserAvatar';
 import { getRole } from '../../constants/permissions';
 
+// A dealer row's own company name is the meaningful primary label (that's
+// who the job is really going to), with the contact person's name as the
+// secondary detail — the reverse of an engineer/self row, where the person
+// themselves is who's being assigned. Exported so every screen that shows
+// "who did I just pick" (New Job/New Service Job's own Assign To field)
+// renders the exact same label the picker row showed for that same person,
+// instead of each place separately re-deriving it and risking a mismatch.
+export function getAssigneeDisplayName(member: TeamMember): string {
+  return getRole(member.role) === 'dealer' ? (member.dealerName || member.name) : member.name;
+}
+
 type Props = {
   visible: boolean;
   onClose: () => void;
@@ -45,25 +56,40 @@ export function AssignEngineerModal({
   visible, onClose, engineers, loading, assigning, error, subtitle, onConfirm, title = 'Assign to Engineer', confirmLabel = 'Assign',
 }: Props) {
   const insets = useSafeAreaInsets();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The picked TeamMember object itself, not just its id — removes the
+  // extra engineers.find(id) lookup that used to sit between "which row
+  // was tapped" and "what onConfirm actually receives". That indirection
+  // was never proven to be the cause of picks not sticking, but storing
+  // the object directly is strictly simpler and removes it as a
+  // possibility entirely, rather than one more theory to test.
+  const [selected, setSelected] = useState<TeamMember | null>(null);
 
   // Fresh selection every time the sheet opens for a (possibly different)
   // task.
   useEffect(() => {
-    if (visible) setSelectedId(null);
+    if (visible) setSelected(null);
   }, [visible]);
-
-  const selected = engineers.find((e) => e._id === selectedId) || null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        {/* Plain View, not a nested Pressable — matches every other
-            bottom-sheet modal in the app (profile.tsx's photo-options
-            sheet, taskForm.tsx/srTaskForm.tsx's own option sheets). A
-            second Pressable here made the outer/inner overlay negotiate
-            for the touch on Android, which is what made the Select/Assign
-            button below need two taps instead of one. */}
+      {/* Two earlier attempts here both fought Android's touch-responder
+          negotiation instead of sidestepping it: nesting a Pressable
+          inside the backdrop Pressable made every tap on Select/Assign
+          need two presses; claiming onStartShouldSetResponder on the
+          sheet made it need three. Both were the sheet's content living
+          INSIDE the backdrop Pressable, so every tap had to be negotiated
+          between parent and child.
+          This is the standard bulletproof shape instead: the backdrop
+          Pressable is a plain, non-nested sibling that absolutely fills
+          the overlay, and the sheet is a separate sibling rendered after
+          it. Since RN hit-tests by on-screen position/z-order, a tap
+          inside the sheet's own bounds always lands on the sheet (it's
+          drawn on top there) and never reaches the backdrop underneath —
+          no parent/child negotiation happens at all, so there's nothing
+          left to need a second or third tap. Only a tap in the backdrop's
+          actually-visible area (outside the sheet) reaches onClose. */}
+      <View style={styles.overlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
           <View style={styles.dragHandle} />
 
@@ -81,21 +107,22 @@ export function AssignEngineerModal({
           ) : (
             <ScrollView style={styles.list} showsVerticalScrollIndicator keyboardShouldPersistTaps="handled">
               {engineers.map((engineer) => {
-                const isSelected = engineer._id === selectedId;
-                // A dealer row's own company name is the meaningful primary
-                // label (that's who the job is really going to) with the
-                // contact person's name as the sublabel — the reverse of an
-                // engineer row, where the person themselves is who's being
-                // assigned and dealerName is just which dealer they're
-                // under. Matches the reference design's own row convention.
+                const isSelected = selected?._id === engineer._id;
+                // Primary/secondary label split matches the reference
+                // design's own row convention — see getAssigneeDisplayName's
+                // comment above for why (and why it's shared with the
+                // Assign To field that shows the confirmed pick).
                 const isDealerRow = getRole(engineer.role) === 'dealer';
-                const primaryLabel = isDealerRow ? (engineer.dealerName || engineer.name) : engineer.name;
+                const primaryLabel = getAssigneeDisplayName(engineer);
                 const secondaryLabel = isDealerRow ? engineer.name : engineer.dealerName;
                 return (
                   <TouchableOpacity
                     key={engineer._id}
                     style={[styles.row, isSelected && styles.rowSelected]}
-                    onPress={() => setSelectedId(engineer._id)}
+                    onPress={() => {
+                      console.log('[AssignEngineerModal] row tapped:', engineer._id, primaryLabel);
+                      setSelected(engineer);
+                    }}
                   >
                     <UserAvatar userId={engineer._id} name={engineer.name} size={40} />
                     <View style={{ flex: 1 }}>
@@ -131,7 +158,10 @@ export function AssignEngineerModal({
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.assignButton, (!selected || assigning) && styles.assignButtonDisabled]}
-              onPress={() => selected && onConfirm(selected)}
+              onPress={() => {
+                console.log('[AssignEngineerModal] confirm tapped, selected =', selected?._id, selected ? getAssigneeDisplayName(selected) : null);
+                if (selected) onConfirm(selected);
+              }}
               disabled={!selected || assigning}
             >
               {assigning ? (
@@ -155,7 +185,7 @@ export function AssignEngineerModal({
             </TouchableOpacity>
           </View>
         </View>
-      </Pressable>
+      </View>
     </Modal>
   );
 }

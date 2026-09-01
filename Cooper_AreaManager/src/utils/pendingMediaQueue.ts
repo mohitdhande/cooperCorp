@@ -25,6 +25,14 @@ export type PendingMediaItem = {
   // useTaskFormPhotos.ts's two lists; the SR form only ever uses 'site'.
   target: 'site' | 'runningHours';
   mediaKind: 'photo' | 'video' | 'pdf';
+  // Camera vs. gallery/file-picker — needed to resolve the correct
+  // MediaType (photo vs image) when this item finally replays through
+  // mediaSyncEngine.ts, same as useMediaUploadQueue.ts's own QueueItem.
+  // location/capturedAt are deliberately NOT persisted here — by the time a
+  // queued item finally uploads (possibly after an app restart, long after
+  // the original capture), the original location would be misleading, and
+  // the guide's own location field is fully optional.
+  source: 'camera' | 'gallery';
   fileUri: string;
   fileName: string;
   fileSize?: number;

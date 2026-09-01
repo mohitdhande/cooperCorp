@@ -1,4 +1,5 @@
 import axiosClient from './axiosClient';
+import { MediaType, MediaLocation } from '../models/taskForm.types';
 
 // event.loaded can end up slightly ABOVE event.total near the end of a raw
 // file upload on Android — the native networking layer's own progress
@@ -778,78 +779,88 @@ export const getCommissioningSapPreview = async (token: string, assetId: string)
   }
 };
 
-// Save GCS photo URLs after a direct upload — the primary upload path per
-// the backend dev guide (uploadCommissioningPhotos below is the multipart
-// fallback, kept as the app's currently-wired path since it already works
-// end-to-end; this exists so the direct-GCS route is available too).
-export const confirmCommissioningPhotos = async (token: string, taskId: string, gcsUrls: string[]) => {
+// Unified media[] model (backend migration, Sep 2026) — replaces the old
+// photos: string[]/attachments: string[] fields entirely. The old
+// POST /:id/photos (multipart) and POST /:id/photos/confirm endpoints this
+// function and uploadCommissioningPhotos used to call no longer exist on
+// the backend; confirming an uploaded file against the entry is now this
+// one call regardless of media type (photo/image/video/pdf), taking a
+// batch of items. Per the dev guide, `items` may contain one entry (every
+// call site in this app confirms immediately after each single file's own
+// GCS upload finishes) or several.
+export type MediaConfirmItem = {
+  gcsUrl: string;
+  type: MediaType;
+  tags?: string[];
+  location?: MediaLocation;
+  capturedAt?: string;
+};
+
+export const confirmCommissioningMedia = async (token: string, taskId: string, items: MediaConfirmItem[]) => {
   try {
     const response = await axiosClient.post(
-      `/api/commissioning/${taskId}/photos/confirm`,
-      { gcsUrls },
+      `/api/commissioning/${taskId}/media/confirm`,
+      { items },
       { headers: { Authorization: `Bearer ${token}` } }
     );
-    return response.data; // { photos: [...] }
+    return response.data; // { media: MediaItem[] }
   } catch (error: any) {
-    console.log('Confirm Commissioning Photos Error:', error.response?.data || error.message);
+    console.log('Confirm Commissioning Media Error:', error.response?.data || error.message);
     throw error;
   }
 };
 
-export const uploadCommissioningPhotos = async (
-  token: string,
-  taskId: string,
-  photos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void,
-  signal?: AbortSignal
-) => {
-  const formData = new FormData();
+// Updates the tag(s) on an already-confirmed media item, matched by its
+// gcsUrl (there's no per-item id — each upload gets a fresh GCS path, so
+// gcsUrl is already unique). tags is [] to clear, or exactly one tag from
+// MediaTagPicker's fixed per-type list.
+export const updateCommissioningMediaTag = async (token: string, taskId: string, gcsUrl: string, tags: string[]) => {
+  try {
+    const response = await axiosClient.patch(
+      `/api/commissioning/${taskId}/media`,
+      { gcsUrl, tags },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data; // { media: MediaItem[] }
+  } catch (error: any) {
+    console.log('Update Commissioning Media Tag Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
 
-  photos.forEach((photo, index) => {
-    const fileName = photo.fileName || `photo_${index}.jpg`;
-    const extMatch = fileName.match(/\.(\w+)$/);
-    const ext = extMatch ? extMatch[1].toLowerCase() : 'jpg';
-    // iOS HEIC captures (and any other extension we don't explicitly know)
-    // fall back to a generic binary type rather than lying and calling them
-    // image/jpeg — the bytes aren't actually JPEG, and mislabeling them can
-    // trip content-type validation or corrupt downstream image processing.
-    const mimeType =
-      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-      ext === 'png' ? 'image/png' :
-      ext === 'webp' ? 'image/webp' :
-      'application/octet-stream';
-
-    // React Native FormData expects this exact shape (uri/name/type)
-    formData.append('photos', {
-      uri: photo.uri,
-      name: fileName,
-      type: mimeType,
-    } as any);
-  });
-
+// Service counterpart — mirrors Commissioning's confirmed shape exactly
+// (same items[] body, same PATCH-by-gcsUrl tagging), but this is NOT
+// confirmed against an actual Service-side dev guide the way Commissioning
+// is above. Service's current schema keeps photos/videos as two separate
+// fields (photosUrls/videosUrls), a different starting shape than
+// Commissioning's one flat `photos` array had — migrating it to one
+// media[] field is a bigger structural jump than Commissioning's. Built
+// this way because it was explicitly asked for, but treat any 404/failure
+// here as "needs backend confirmation," not a bug in this code.
+export const confirmServiceMedia = async (token: string, taskId: string, items: MediaConfirmItem[]) => {
   try {
     const response = await axiosClient.post(
-      `/api/commissioning/${taskId}/photos`,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: onProgress
-          ? (event) => onProgress(event.total ? clampPercent(Math.round((event.loaded / event.total) * 100)) : 0)
-          : undefined,
-        signal,
-      }
+      `/api/service/${taskId}/media/confirm`,
+      { items },
+      { headers: { Authorization: `Bearer ${token}` } }
     );
-    return response.data; // { photos: ["https://storage..."] }
+    return response.data; // { media: MediaItem[] }
   } catch (error: any) {
-    // A user-initiated cancel (AbortSignal) isn't a real failure — don't log
-    // it as one. Callers distinguish this via error.code, same check used
-    // throughout the media-upload path (see useMediaUploadQueue.ts).
-    if (error.code !== 'ERR_CANCELED') {
-      console.log('Upload Photos Error:', error.response?.data || error.message);
-    }
+    console.log('Confirm Service Media Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const updateServiceMediaTag = async (token: string, taskId: string, gcsUrl: string, tags: string[]) => {
+  try {
+    const response = await axiosClient.patch(
+      `/api/service/${taskId}/media`,
+      { gcsUrl, tags },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data; // { media: MediaItem[] }
+  } catch (error: any) {
+    console.log('Update Service Media Tag Error:', error.response?.data || error.message);
     throw error;
   }
 };
@@ -960,64 +971,12 @@ export const reviewServiceParts = async (
   }
 };
 
-export const uploadServicePhotos = async (
-  token: string,
-  taskId: string,
-  photos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void,
-  signal?: AbortSignal
-) => {
-  const formData = new FormData();
-
-  photos.forEach((photo, index) => {
-    const fileName = photo.fileName || `photo_${index}.jpg`;
-    const extMatch = fileName.match(/\.(\w+)$/);
-    const ext = extMatch ? extMatch[1].toLowerCase() : 'jpg';
-    // Same HEIC/unknown-extension fallback as uploadCommissioningPhotos —
-    // don't mislabel non-JPEG bytes as image/jpeg.
-    const mimeType =
-      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-      ext === 'png' ? 'image/png' :
-      ext === 'webp' ? 'image/webp' :
-      'application/octet-stream';
-
-    formData.append('photos', {
-      uri: photo.uri,
-      name: fileName,
-      type: mimeType,
-    } as any);
-  });
-
-  try {
-    const response = await axiosClient.post(
-      `/api/service/${taskId}/photos`,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: onProgress
-          ? (event) => onProgress(event.total ? clampPercent(Math.round((event.loaded / event.total) * 100)) : 0)
-          : undefined,
-        signal,
-      }
-    );
-    return response.data;
-  } catch (error: any) {
-    if (error.code !== 'ERR_CANCELED') {
-      console.log('Upload Service Photos Error:', error.response?.data || error.message);
-    }
-    throw error;
-  }
-};
-
-// Videos have no multipart fallback endpoint (unlike photos' POST
-// /service/:id/photos) — per the backend dev guide, they only go through
-// the two-step GCS direct-upload flow: get a signed uploadUrl, PUT the raw
-// file bytes straight to GCS, then confirm the resulting gcsUrl with the
-// backend. getGcsUploadUrl + putFileToGcsUrl + confirmServiceVideos below
-// are that flow's three steps.
+// Every commissioning/service media type (photo/image/video/pdf) now goes
+// through the same two-step GCS direct-upload flow: get a signed
+// uploadUrl, PUT the raw file bytes straight to GCS, then confirm the
+// resulting gcsUrl against the entry via confirmCommissioningMedia/
+// confirmServiceMedia. getGcsUploadUrl + putFileToGcsUrl + uploadOneMedia
+// below are that flow's three steps.
 export const getGcsUploadUrl = async (
   token: string,
   folder: 'commissioning' | 'service' | 'service-videos' | 'profiles',
@@ -1115,41 +1074,50 @@ const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string
   });
 };
 
-const videoMimeType = (fileName: string): string => {
-  const ext = (fileName.match(/\.(\w+)$/)?.[1] || 'mp4').toLowerCase();
-  // PDFs from the SR form's Documents card deliberately ride this same
-  // GCS-sign + confirm call as videos (same array, same URL mechanism —
-  // not the photos multipart endpoint), so this needs to tag them
-  // correctly too instead of mislabeling them video/mp4.
+const mediaMimeType = (fileName: string): string => {
+  const ext = (fileName.match(/\.(\w+)$/)?.[1] || 'jpg').toLowerCase();
+  // Every media type now rides the same GCS-sign + confirm flow (see
+  // uploadOneMedia below) — this covers photo/image content types too, not
+  // just video/pdf, so mislabeling any of them can trip content-type
+  // validation or corrupt downstream processing.
   if (ext === 'pdf') return 'application/pdf';
-  return ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : 'video/mp4';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'webm') return 'video/webm';
+  if (ext === 'mp4') return 'video/mp4';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  // iOS HEIC captures (and any other extension not explicitly known) fall
+  // back to a generic binary type rather than lying and calling them
+  // image/jpeg — the bytes aren't actually JPEG.
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
 };
 
-// Uploads one file (video or PDF, either can ride this call — see
-// videoMimeType) straight to GCS (folder: "service-videos"/"commissioning")
-// and confirms it immediately after its own upload finishes — per the dev
-// guide's own pitfall warning: confirming only on a final button tap loses
-// URLs if the user exits mid-upload. Called once per item, directly by
-// useMediaUploadQueue (each picked photo/video/PDF uploads immediately,
-// not batched) — see uploadOneServiceVideoOrPdf/
-// uploadOneCommissioningVideoOrPdf below, the thin per-kind wrappers around
-// this. onProgress (0-100) covers just this one file. Logs its own outcome
-// either way, so a failure shows WHICH file (a video? a PDF?) and WHICH of
-// the 3 steps (get signed URL / PUT to GCS / confirm) actually failed.
-async function uploadOneMediaFile(
+// Uploads one file (photo/image/video/pdf, any of them can ride this call
+// — see mediaMimeType) straight to GCS and confirms it against the entry
+// immediately after its own upload finishes, via confirmUrl (commissioning
+// or service's own media/confirm endpoint) — per the dev guide's own
+// pitfall warning: confirming only on a final button tap loses URLs if the
+// user exits mid-upload. Called once per item, directly by
+// useMediaUploadQueue (each picked file uploads immediately, not batched)
+// — see uploadOneCommissioningMedia/uploadOneServiceMedia below, the thin
+// per-entry-kind wrappers around this. onProgress (0-100) covers just this
+// one file. Returns the confirmed gcsUrl — callers need it as the item's
+// own stable key for tagging (MediaTagPicker's PATCH matches by gcsUrl).
+async function uploadOneMedia(
   token: string,
   confirmUrl: string,
-  folder: 'service-videos' | 'commissioning',
+  folder: 'commissioning' | 'service',
   file: { uri: string; fileName: string },
-  index: number,
-  total: number,
+  type: MediaType,
+  location: MediaLocation | undefined,
+  tags: string[] | undefined,
   logLabel: string,
   onFileProgress?: (percent: number) => void,
   signal?: AbortSignal,
 ): Promise<string> {
-  const contentType = videoMimeType(file.fileName);
-  const kind = file.fileName.toLowerCase().endsWith('.pdf') ? 'PDF' : 'video';
-  console.log(`[${logLabel}] ${index + 1}/${total} starting (${kind}):`, file.fileName);
+  const contentType = mediaMimeType(file.fileName);
+  console.log(`[${logLabel}] starting (${type}):`, file.fileName);
   try {
     const { uploadUrl, gcsUrl } = await getGcsUploadUrl(token, folder, file.fileName, contentType, signal);
     await putFileToGcsUrl(uploadUrl, file.uri, contentType, file.fileName, onFileProgress, signal);
@@ -1161,12 +1129,16 @@ async function uploadOneMediaFile(
       err.name = 'AbortError';
       throw err;
     }
-    await axiosClient.post(confirmUrl, { gcsUrls: [gcsUrl] }, { headers: { Authorization: `Bearer ${token}` }, signal });
-    console.log(`[${logLabel}] ${index + 1}/${total} succeeded (${kind}):`, file.fileName);
+    // tags set at confirm time — e.g. the Running Hours picker always
+    // uploads pre-tagged 'Running Hours' (see useMediaUploadQueue.ts's own
+    // defaultTags), so it never needs a separate PATCH afterward.
+    const item: MediaConfirmItem = { gcsUrl, type, ...(location ? { location } : {}), ...(tags && tags.length ? { tags } : {}) };
+    await axiosClient.post(confirmUrl, { items: [item] }, { headers: { Authorization: `Bearer ${token}` }, signal });
+    console.log(`[${logLabel}] succeeded (${type}):`, file.fileName);
     return gcsUrl;
   } catch (error: any) {
     if (error.name !== 'AbortError' && error.code !== 'ERR_CANCELED') {
-      console.log(`[${logLabel}] ${index + 1}/${total} FAILED (${kind}):`, file.fileName, '— status:', error.response?.status, '— data:', error.response?.data || error.message);
+      console.log(`[${logLabel}] FAILED (${type}):`, file.fileName, '— status:', error.response?.status, '— data:', error.response?.data || error.message);
     }
     throw error;
   }
@@ -1174,67 +1146,19 @@ async function uploadOneMediaFile(
 
 // Single-item wrappers — used by useMediaUploadQueue.ts, which uploads one
 // picked file at a time (not a batch) so real per-item progress and
-// mid-batch cancellation both work. Replaces the old uploadServiceVideos/
-// uploadCommissioningVideos batch-loop functions (which buried per-file
-// failures inside an aggregate failedFileNames array — the queue hook needs
-// to react between items, not after the whole batch finishes).
-export const uploadOneServiceVideoOrPdf = (
-  token: string, taskId: string, file: { uri: string; fileName: string },
-  onProgress?: (percent: number) => void, signal?: AbortSignal
-) => uploadOneMediaFile(token, `/api/service/${taskId}/videos/confirm`, 'service-videos', file, 0, 1, 'Service Media Upload', onProgress, signal);
+// mid-batch cancellation both work.
+export const uploadOneCommissioningMedia = (
+  token: string, taskId: string, file: { uri: string; fileName: string }, type: MediaType,
+  location: MediaLocation | undefined, tags: string[] | undefined, onProgress?: (percent: number) => void, signal?: AbortSignal
+) => uploadOneMedia(token, `/api/commissioning/${taskId}/media/confirm`, 'commissioning', file, type, location, tags, 'Commissioning Media Upload', onProgress, signal);
 
-// Commissioning has no dedicated videos/confirm route (confirmed via a live
-// 404) — its one /photos/confirm endpoint accepts photo AND video/PDF
-// gcsUrls both, which is why this still targets that URL despite the name.
-export const uploadOneCommissioningVideoOrPdf = (
-  token: string, taskId: string, file: { uri: string; fileName: string },
-  onProgress?: (percent: number) => void, signal?: AbortSignal
-) => uploadOneMediaFile(token, `/api/commissioning/${taskId}/photos/confirm`, 'commissioning', file, 0, 1, 'Commissioning Media Upload', onProgress, signal);
-
-const photoMimeType = (fileName: string): string => {
-  const ext = (fileName.match(/\.(\w+)$/)?.[1] || 'jpg').toLowerCase();
-  // Same HEIC/unknown-extension fallback as the multipart upload helpers
-  // above — don't mislabel non-JPEG bytes as image/jpeg.
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  return 'application/octet-stream';
-};
-
-// The primary photo-upload path per the backend dev guide (direct-to-GCS,
-// then confirm) — not currently wired into the commissioning form's Save
-// Photos action, which uses the multipart fallback (uploadCommissioningPhotos
-// above) since that already works end-to-end. Available for either
-// commissioning or service (folder is a parameter, unlike the
-// video/photo-specific helpers above) so callers don't need a near-duplicate
-// per entry kind. Same per-file-confirm-immediately pattern as
-// uploadServiceVideos, for the same reason (don't lose already-uploaded
-// URLs if the user exits mid-batch).
-export const uploadPhotosViaGcs = async (
-  token: string,
-  kind: 'commissioning' | 'service',
-  taskId: string,
-  photos: { uri: string; fileName: string }[],
-  onProgress?: (percent: number) => void
-) => {
-  const confirmedUrls: string[] = [];
-  for (let i = 0; i < photos.length; i++) {
-    const photo = photos[i];
-    const fileName = photo.fileName || `photo_${confirmedUrls.length}.jpg`;
-    const contentType = photoMimeType(fileName);
-    const { uploadUrl, gcsUrl } = await getGcsUploadUrl(token, kind, fileName, contentType);
-    await putFileToGcsUrl(uploadUrl, photo.uri, contentType, fileName, onProgress
-      ? (filePercent) => onProgress(Math.round(((i * 100) + filePercent) / photos.length))
-      : undefined);
-    await axiosClient.post(
-      `/api/${kind}/${taskId}/photos/confirm`,
-      { gcsUrls: [gcsUrl] },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    confirmedUrls.push(gcsUrl);
-  }
-  return { photos: confirmedUrls };
-};
+// Mirrors Commissioning's call exactly — see confirmServiceMedia's own
+// comment above for why this is unconfirmed against a real Service dev
+// guide.
+export const uploadOneServiceMedia = (
+  token: string, taskId: string, file: { uri: string; fileName: string }, type: MediaType,
+  location: MediaLocation | undefined, tags: string[] | undefined, onProgress?: (percent: number) => void, signal?: AbortSignal
+) => uploadOneMedia(token, `/api/service/${taskId}/media/confirm`, 'service', file, type, location, tags, 'Service Media Upload', onProgress, signal);
 
 // GCS is a private bucket — task.videos/task.photos come back as raw
 // storage.googleapis.com URLs that 403 if rendered/played directly. This

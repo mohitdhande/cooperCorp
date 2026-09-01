@@ -252,6 +252,7 @@ export function useNewServiceJobController() {
   const closeAssigneePicker = useCallback(() => setAssigneePickerVisible(false), []);
 
   const handleSelectAssignee = useCallback((member: TeamMember) => {
+    console.log('[NewServiceJob] handleSelectAssignee called with:', member._id, member.name);
     setSelectedAssignee(member);
     setAssigneePickerVisible(false);
   }, []);

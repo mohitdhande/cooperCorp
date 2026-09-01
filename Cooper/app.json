@@ -12,8 +12,9 @@
     },
     "android": {
       "package": "com.coopercorp.cooper",
+       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
-      "foregroundImage": "./assets/android_icon_foreground.png",
+        "foregroundImage": "./assets/android_icon_foreground.png",
         "backgroundImage": "./assets/android_icon_background.png",
         "monochromeImage": "./assets/android_icon_monochrome.png"
       },
@@ -25,7 +26,7 @@
     },
     "plugins": [
       "expo-router",
-     [
+      [
         "expo-splash-screen",
         {
           "image": "./assets/splash_logo.png",
@@ -44,7 +45,11 @@
           "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to set a profile picture.",
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to take a profile picture."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

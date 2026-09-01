@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,14 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getCommissioningTaskDetail, getAssetById } from '@/viewModel/commisionAPi';
+import { useRouter } from 'expo-router';
+import { useTaskReportScreenController } from '@/controllers/taskReportController';
+import { formatAddress, formatDate, val } from '@/utils/reportFormatters';
+import { getPriorityColor, getPriorityTextColor } from '@/utils/statusStyles';
+import { CheckRow } from '@/_components/shared/CheckRow';
+import { InfoRow } from '@/_components/shared/InfoRow';
+
+const { width: SCREEN_WIDTH } = require('react-native').Dimensions.get('window');
 
 const formatTaskType = (type: string) => {
   if (!type) return '';
@@ -23,61 +28,6 @@ const formatTaskType = (type: string) => {
   };
   return map[type] || type.replace(/_/g, ' ');
 };
-
-const formatAddress = (address: any) => {
-  if (!address) return '--';
-  const parts = [address.line1, address.line2, address.locality, address.city, address.taluk, address.district, address.state, address.pinCode, address.country]
-    .filter(Boolean);
-  return parts.length ? parts.join(', ') : '--';
-};
-
-const formatDate = (dateStr: string) => {
-  if (!dateStr) return '--';
-  try {
-    return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  } catch {
-    return '--';
-  }
-};
-
-const val = (v: any) => (v === undefined || v === null || v === '' ? '--' : String(v));
-
-// ── Badge color logic for check values (OK / Not OK / custom values) ──
-const getBadgeStyle = (value: string) => {
-  if (!value) return { badge: styles.badgeNeutral, text: styles.badgeTextNeutral };
-  const v = value.trim().toLowerCase();
-  if (v === 'ok') return { badge: styles.badgeOk, text: styles.badgeTextOk };
-  if (v === 'not ok') return { badge: styles.badgeBad, text: styles.badgeTextBad };
-  return { badge: styles.badgeNeutral, text: styles.badgeTextNeutral };
-};
-
-// ── Generic row for a single check item (label + value pill + optional comment) ──
-const CheckRow = ({ label, value, comment }: { label: string; value?: string; comment?: string }) => {
-  const { badge, text } = getBadgeStyle(value || '');
-  return (
-    <View style={styles.checkRow}>
-      <View style={styles.checkRowTop}>
-        <Text style={styles.checkRowLabel}>{label}</Text>
-        <View style={[styles.badge, badge]}>
-          <Text style={[styles.badgeText, text]}>{val(value)}</Text>
-        </View>
-      </View>
-      {comment ? (
-        <View style={styles.commentBox}>
-          <Text style={styles.commentText}>{comment}</Text>
-        </View>
-      ) : null}
-    </View>
-  );
-};
-
-// ── Generic row for a plain label:value pair (numeric fields) ──
-const InfoRow = ({ label, value }: { label: string; value?: any }) => (
-  <View style={styles.infoRow}>
-    <Text style={styles.infoRowLabel}>{label}</Text>
-    <Text style={styles.infoRowValue}>{val(value)}</Text>
-  </View>
-);
 
 // ── Commissioning Checks group definitions ──
 const COMMISSIONING_GROUP_A = [
@@ -189,83 +139,21 @@ const LOAD_STAGES = [
   { prefix: 'D75', label: '75% Load' },
   { prefix: 'D100', label: '100% Load' },
 ];
-const getPriorityColor = (priority: string) => {
-  const colors: Record<string, { backgroundColor: string }> = {
-    P1: { backgroundColor: '#FEE2E2' },    // Red
-    P2: { backgroundColor: '#FFEDD5' },    // Orange
-    P3: { backgroundColor: '#DBEAFE' },    // Blue
-    P4: { backgroundColor: '#F3F4F6' },    // Gray
-  };
-  return colors[priority] || colors['P4'];
-};
-
-const getPriorityTextColor = (priority: string) => {
-  const colors: Record<string, string> = {
-    P1: '#DC2626',    // Red
-    P2: '#C2410C',    // Orange
-    P3: '#1D4ED8',    // Blue
-    P4: '#6B7280',    // Gray
-  };
-  return colors[priority] || colors['P4'];
-};
-
 export default function TaskReportScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ task: string }>();
 
-  const initialTask = params.task ? JSON.parse(params.task) : null;
-
-  const [detail, setDetail] = useState<any>(null);
-  const [asset, setAsset] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const [gensetExpanded, setGensetExpanded] = useState(true);
-  const [engineExpanded, setEngineExpanded] = useState(false);
-  const [alternatorExpanded, setAlternatorExpanded] = useState(false);
-  const [checksExpanded, setChecksExpanded] = useState(false);
-  const [complaintExpanded, setComplaintExpanded] = useState(false);
-  const [partsExpanded, setPartsExpanded] = useState(false);
-  const [readingsExpanded, setReadingsExpanded] = useState(false);
-  const [photosExpanded, setPhotosExpanded] = useState(false);
-  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
-
-  useEffect(() => {
-    loadDetail();
-  }, []);
-
-  const loadDetail = async () => {
-    console.log('[REPORT] Loading report for task:', initialTask?._id);
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (!token || !initialTask?._id) {
-        console.log('[REPORT] Missing token or task id, aborting');
-        return;
-      }
-
-      const data = await getCommissioningTaskDetail(token, initialTask._id);
-      console.log('[REPORT] Commissioning detail response:', JSON.stringify(data));
-      setDetail(data);
-
-      const assetIdToFetch = data.assetId || initialTask.assetId;
-      if (assetIdToFetch) {
-        console.log('[REPORT] Loading asset:', assetIdToFetch);
-        try {
-          const assetData = await getAssetById(token, assetIdToFetch);
-          console.log('[REPORT] Asset response:', JSON.stringify(assetData));
-          setAsset(assetData);
-        } catch (assetErr) {
-          console.log('[REPORT] Failed to load asset:', assetErr);
-        }
-      } else {
-        console.log('[REPORT] No assetId found on task, skipping asset fetch');
-      }
-    } catch (error) {
-      console.log('[REPORT] Failed to load task detail:', error);
-    } finally {
-      setIsLoading(false);
-      console.log('[REPORT] Load complete');
-    }
-  };
+  const {
+    initialTask, detail, asset, isLoading, loadError, userName, userProfilePic,
+    gensetExpanded, setGensetExpanded,
+    engineExpanded, setEngineExpanded,
+    alternatorExpanded, setAlternatorExpanded,
+    checksExpanded, setChecksExpanded,
+    complaintExpanded, setComplaintExpanded,
+    partsExpanded, setPartsExpanded,
+    readingsExpanded, setReadingsExpanded,
+    photosExpanded, setPhotosExpanded,
+    feedbackExpanded, setFeedbackExpanded,
+  } = useTaskReportScreenController();
 
   if (!initialTask) {
     return (
@@ -291,11 +179,45 @@ export default function TaskReportScreen() {
   const customerFeedback = task.customerFeedback || null;
   const completionOtp = task.completionOtp || null;
 
+  
+
+
   return (
     <SafeAreaView style={styles.container}>
 
       {/* ── Header ── */}
-      <View style={styles.headerRow}>
+      
+      {/* ── AppBar (standard, matches rest of app) ── */}
+      <View style={styles.appBar}>
+        <View style={styles.brandRow}>
+          <Image source={require('@/assets/logo_circular.png')} style={styles.logoImage} />
+          <View>
+            <Text style={styles.brandTitle}>Cooper Corp</Text>
+            <Text style={styles.brandSubtitle}>Gentset E-FSR</Text>
+          </View>
+        </View>
+
+        <View style={styles.rightSection}>
+          <TouchableOpacity onPress={() => router.push('/screens/profile' as any)}>
+            {userProfilePic ? (
+              <Image source={{ uri: userProfilePic }} style={styles.appBarAvatar} />
+            ) : (
+              <View style={styles.appBarAvatarFallback}>
+                <Text style={styles.appBarAvatarText}>
+                  {userName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* ── Sub-header: back link + badges ── */}
+      <View style={styles.subHeaderRow}>
+        <TouchableOpacity style={styles.backLinkRow} onPress={() => router.back()}>
+          <Text style={styles.backLinkArrow}>{'‹'}</Text>
+          <Text style={styles.backLinkText}>My Tasks</Text>
+        </TouchableOpacity>
         <View style={styles.headerLeft}>
           <View style={styles.typeBadge}>
             <Text style={styles.typeBadgeText}>● {formatTaskType(task.type)}</Text>
@@ -304,9 +226,6 @@ export default function TaskReportScreen() {
             <Text style={styles.statusBadgeText}>{task.status}</Text>
           </View>
         </View>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.closeIcon}>✕</Text>
-        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scrollArea} showsVerticalScrollIndicator={false}>
@@ -328,6 +247,9 @@ export default function TaskReportScreen() {
             <Text style={styles.loadingText}>Loading full report...</Text>
           </View>
         )}
+        {!isLoading && loadError ? (
+          <Text style={[styles.errorText, { marginTop: 8 }]}>{loadError}</Text>
+        ) : null}
 
         {/* ── Genset Identification ── */}
         <TouchableOpacity style={styles.sectionHeader} onPress={() => setGensetExpanded(!gensetExpanded)}>
@@ -616,7 +538,7 @@ export default function TaskReportScreen() {
                 </Text>
               </View>
               {codeInfo.priority && (
-                <View style={[styles.priorityBadgeReport, { backgroundColor: getPriorityColor(codeInfo.priority).backgroundColor }]}>
+                <View style={[styles.priorityBadgeReport, { backgroundColor: getPriorityColor(codeInfo.priority) }]}>
                   <Text style={[styles.priorityBadgeText, { color: getPriorityTextColor(codeInfo.priority) }]}>
                     {codeInfo.priority}
                   </Text>
@@ -799,15 +721,50 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   errorText: { textAlign: 'center', marginTop: 40, color: '#9CA3AF' },
 
-  headerRow: {
+  appBar: {
+    height: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#241D67',
+    paddingHorizontal: SCREEN_WIDTH * 0.04,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  brandRow: { flexDirection: 'row', alignItems: 'center' },
+  logoImage: { width: 36, height: 36, marginRight: 10 },
+  brandTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  brandSubtitle: { fontSize: 12, color: '#FFFFFF', fontWeight: '600' },
+  rightSection: { flexDirection: 'row', alignItems: 'center' },
+  appBarAvatar: {
+    width: 34, height: 34, borderRadius: 17,
+    borderWidth: 2, borderColor: '#fff',
+  },
+  appBarAvatarFallback: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: '#F26722',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  appBarAvatarText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  subHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
+    backgroundColor: '#f8f9fa',
   },
+  backLinkRow: { flexDirection: 'row', alignItems: 'center' },
+  backLinkArrow: { fontSize: 20, color: '#241D67', marginRight: 4 },
+  backLinkText: { fontSize: 15, fontWeight: '600', color: '#241D67' },
+
   headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  
   typeBadge: {
     backgroundColor: '#F3E8FF',
     paddingHorizontal: 10,
@@ -883,31 +840,7 @@ const styles = StyleSheet.create({
   groupHeaderTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
   subGroupTitle: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 8 },
 
-  // Check rows
-  checkRow: { marginBottom: 12 },
-  checkRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  checkRowLabel: { flex: 1, fontSize: 13, color: '#374151', marginRight: 8 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-  badgeText: { fontSize: 12, fontWeight: '700' },
-  badgeOk: { backgroundColor: '#D1FAE5' },
-  badgeTextOk: { color: '#059669' },
-  badgeBad: { backgroundColor: '#FEE2E2' },
-  badgeTextBad: { color: '#DC2626' },
-  badgeNeutral: { backgroundColor: '#F3F4F6' },
-  badgeTextNeutral: { color: '#4B5563' },
-
-  commentBox: {
-    backgroundColor: '#FEF2F2',
-    borderRadius: 6,
-    padding: 8,
-    marginTop: 6,
-  },
-  commentText: { color: '#B91C1C', fontStyle: 'italic', fontSize: 12 },
-
-  // Info rows (plain label:value)
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  infoRowLabel: { fontSize: 13, color: '#6B7280' },
-  infoRowValue: { fontSize: 13, fontWeight: '600', color: '#1F2937', flexShrink: 1, textAlign: 'right' },
+  // Check rows and info rows now live in the shared CheckRow/InfoRow components.
 
   loadStageReportCard: {
     backgroundColor: '#F9FAFB',

@@ -80,8 +80,12 @@ export function useTaskFormApiData({ taskId, showToast, isEngineer, gensetNumber
     }
   }, []);
 
-  const saveFaultCodes = useCallback(async (selectedComplaintCodes: SelectedComplaintCode[]) => {
-    if (!taskId) return;
+  // Returns whether the save actually succeeded — the caller (useTaskForm's
+  // handleSaveFaultCodes) needs this to know when it's safe to clear each
+  // item's isNew flag, since that flag must only drop once the save is
+  // actually confirmed, not just attempted.
+  const saveFaultCodes = useCallback(async (selectedComplaintCodes: SelectedComplaintCode[]): Promise<boolean> => {
+    if (!taskId) return false;
     setStep3Saving(true);
     setStep3Error('');
     setStep3Success(false);
@@ -103,10 +107,12 @@ export function useTaskFormApiData({ taskId, showToast, isEngineer, gensetNumber
       );
       setStep3Success(true);
       showToast(queued ? 'Saved on this device — will sync later' : 'Fault codes saved!', 'success');
+      return true;
     } catch (error: any) {
       const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       setStep3Error(msg);
       showToast(msg, 'error');
+      return false;
     } finally {
       setStep3Saving(false);
     }

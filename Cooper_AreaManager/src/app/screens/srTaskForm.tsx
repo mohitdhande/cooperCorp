@@ -223,6 +223,18 @@ export default function SrTaskFormScreen() {
 
   const toggleSectionReopen = (key: string) => setSectionReopened((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Genset Identification / Alternator & Panel fields are asset-level, not
+  // task-level — every task type (pre-commissioning, commissioning,
+  // re-commissioning, revalidation, service) reads/writes the exact same
+  // asset record, so whatever an earlier task already filled in shows up
+  // here automatically. This locks each field that already had a value in
+  // the last successful fetch (vm.assetDetail — the raw fetched object,
+  // not the live editable state, so typing into a field that was empty
+  // never locks it out mid-edit) so it can't be accidentally overwritten;
+  // fields still blank stay editable for this task to fill in. Keyed by
+  // the asset's own backend field names, not the local state names.
+  const isAssetFieldLocked = (key: string) => !!vm.assetDetail?.[key];
+
   // Electrical Readings/Engine Parameters — unlike this step's other
   // sections, these default to an always-visible read-only display (real
   // values once saved, "null" placeholders until then) rather than
@@ -243,12 +255,21 @@ export default function SrTaskFormScreen() {
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
       {isBusy && <LoadingOverlay />}
+      {/* Both mounted here so whichever one is actually running (site
+          photos vs. the Running Hours photo) shows its own overlay. */}
       <MediaUploadOverlay
         visible={vm.mediaUploadQueue.state.visible}
         items={vm.mediaUploadQueue.state.items}
         onCancelItem={vm.mediaUploadQueue.cancelItem}
         onCancelAll={vm.mediaUploadQueue.cancel}
         onDismiss={vm.mediaUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
+        visible={vm.runningHoursUploadQueue.state.visible}
+        items={vm.runningHoursUploadQueue.state.items}
+        onCancelItem={vm.runningHoursUploadQueue.cancelItem}
+        onCancelAll={vm.runningHoursUploadQueue.cancel}
+        onDismiss={vm.runningHoursUploadQueue.dismiss}
       />
 
       {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
@@ -303,19 +324,31 @@ export default function SrTaskFormScreen() {
               submitted, they just can't change anything. */}
           <View pointerEvents={vm.task?.status === 'COMPLETED' ? 'none' : 'auto'} style={vm.task?.status === 'COMPLETED' ? styles.readOnlyDim : undefined}>
 
-          {/* Step 1 and Step 5 only — reverted from showing on every step,
-              then Step 5 added back since the post-Complete/Send-for-
-              Approval view (Customer Sign-off/Approval Status) needs the
-              same task-identity context Step 1 has. */}
-          {(vm.currentStep === 1 || vm.currentStep === 5) && (
+          {/* Step 1 and Step 6 only — reverted from showing on every step,
+              then Step 6 (Category & Complete, was Step 5 before Load
+              Unbalance/Engine Parameters/Electrical Readings got their own
+              step) added back since the post-Complete/Send-for-Approval
+              view (Customer Sign-off/Approval Status) needs the same
+              task-identity context Step 1 has. */}
+          {(vm.currentStep === 1 || vm.currentStep === 6) && (
             <TaskSummaryHeader task={vm.task} asset={vm.assetDetail} />
           )}
 
           <PendingSyncBanner />
 
-          {/* ══════════════ STEP 4 — ASSET INFORMATION ══════════════ */}
-          {vm.currentStep === 4 && (
+          {/* ══════════════ STEP 1 — ASSET INFORMATION ══════════════ */}
+          {vm.currentStep === 1 && (
             <>
+              {/* The landing step — shows loading feedback on whichever
+                  step the user actually lands on first when reopening a
+                  task, not one buried a few steps ahead. */}
+              {vm.initialDataLoading && (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color="#F26722" />
+                  <Text style={styles.loadingText}>Loading task data...</Text>
+                </View>
+              )}
+
               {/* Genset Identification */}
               <View style={styles.sectionCard}>
                 <GroupHeader
@@ -331,7 +364,8 @@ export default function SrTaskFormScreen() {
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Genset Model</Text>
                         <TextInput
-                          style={styles.fieldInput} value={vm.gensetModel} onChangeText={vm.setGensetModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('gensetModel') && styles.fieldInputReadOnly]} value={vm.gensetModel} onChangeText={vm.setGensetModel}
+                          editable={!isAssetFieldLocked('gensetModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('gensetSrNumber')}
                         />
                       </View>
@@ -339,7 +373,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Genset SR Number</Text>
                         <TextInput
                           ref={register('gensetSrNumber')}
-                          style={styles.fieldInput} value={vm.gensetSrNumber} onChangeText={vm.setGensetSrNumber}
+                          style={[styles.fieldInput, isAssetFieldLocked('gensetNumber') && styles.fieldInputReadOnly]} value={vm.gensetSrNumber} onChangeText={vm.setGensetSrNumber}
+                          editable={!isAssetFieldLocked('gensetNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineModel')}
                         />
                       </View>
@@ -349,7 +384,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Engine Model</Text>
                         <TextInput
                           ref={register('engineModel')}
-                          style={styles.fieldInput} value={vm.engineModel} onChangeText={vm.setEngineModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('engineModel') && styles.fieldInputReadOnly]} value={vm.engineModel} onChangeText={vm.setEngineModel}
+                          editable={!isAssetFieldLocked('engineModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineNumber')}
                         />
                       </View>
@@ -357,7 +393,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Engine SR Number</Text>
                         <TextInput
                           ref={register('engineNumber')}
-                          style={styles.fieldInput} value={vm.engineNumber} onChangeText={vm.setEngineNumber}
+                          style={[styles.fieldInput, isAssetFieldLocked('engineNumber') && styles.fieldInputReadOnly]} value={vm.engineNumber} onChangeText={vm.setEngineNumber}
+                          editable={!isAssetFieldLocked('engineNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineKw')}
                         />
                       </View>
@@ -367,28 +404,29 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Engine KW</Text>
                         <TextInput
                           ref={register('engineKw')}
-                          style={styles.fieldInput} value={vm.engineKw} onChangeText={vm.setEngineKw} keyboardType="numeric"
+                          style={[styles.fieldInput, isAssetFieldLocked('kw') && styles.fieldInputReadOnly]} value={vm.engineKw} onChangeText={vm.setEngineKw} keyboardType="numeric"
+                          editable={!isAssetFieldLocked('kw')}
                           returnKeyType="done"
                         />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Engine Type" value={vm.engineType} options={vm.ENGINE_TYPE_OPTIONS} onSelect={vm.setEngineType} />
+                        <DropdownField plainLabel label="Engine Type" value={vm.engineType} options={vm.ENGINE_TYPE_OPTIONS} onSelect={vm.setEngineType} disabled={isAssetFieldLocked('engineType')} />
                       </View>
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Engine Family" value={vm.engineFamily} options={vm.ENGINE_FAMILY_OPTIONS} onSelect={vm.setEngineFamily} />
+                        <DropdownField plainLabel label="Engine Family" value={vm.engineFamily} options={vm.ENGINE_FAMILY_OPTIONS} onSelect={vm.setEngineFamily} disabled={isAssetFieldLocked('engineFamily')} />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Fuel Type" value={vm.fuelType} options={vm.FUEL_TYPE_OPTIONS} onSelect={vm.setFuelType} />
+                        <DropdownField plainLabel label="Fuel Type" value={vm.fuelType} options={vm.FUEL_TYPE_OPTIONS} onSelect={vm.setFuelType} disabled={isAssetFieldLocked('fuelType')} />
                       </View>
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Application" value={vm.application} options={vm.APPLICATION_OPTIONS} onSelect={vm.setApplication} />
+                        <DropdownField plainLabel label="Application" value={vm.application} options={vm.APPLICATION_OPTIONS} onSelect={vm.setApplication} disabled={isAssetFieldLocked('applicationMaterial')} />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="CPCB Norm" value={vm.cpcbNorm} options={vm.CPCB_NORM_OPTIONS} onSelect={vm.setCpcbNorm} />
+                        <DropdownField plainLabel label="CPCB Norm" value={vm.cpcbNorm} options={vm.CPCB_NORM_OPTIONS} onSelect={vm.setCpcbNorm} disabled={isAssetFieldLocked('cpcb')} />
                       </View>
                     </View>
                     {/* ATS S/N — moved here from Alternator & Panel. */}
@@ -397,7 +435,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>ATS S/N</Text>
                         <TextInput
                           ref={register('atsSn')}
-                          style={styles.fieldInput} value={vm.atsSn} onChangeText={vm.setAtsSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('atsSerialNumber') && styles.fieldInputReadOnly]} value={vm.atsSn} onChangeText={vm.setAtsSn}
+                          editable={!isAssetFieldLocked('atsSerialNumber')}
                           returnKeyType="done"
                         />
                       </View>
@@ -428,7 +467,8 @@ export default function SrTaskFormScreen() {
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Alt. Make</Text>
                         <TextInput
-                          style={styles.fieldInput} value={vm.altMake} onChangeText={vm.setAltMake}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorMake') && styles.fieldInputReadOnly]} value={vm.altMake} onChangeText={vm.setAltMake}
+                          editable={!isAssetFieldLocked('alternatorMake')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('altModel')}
                         />
                       </View>
@@ -436,7 +476,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Alt. Model</Text>
                         <TextInput
                           ref={register('altModel')}
-                          style={styles.fieldInput} value={vm.altModel} onChangeText={vm.setAltModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorModel') && styles.fieldInputReadOnly]} value={vm.altModel} onChangeText={vm.setAltModel}
+                          editable={!isAssetFieldLocked('alternatorModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('altSn')}
                         />
                       </View>
@@ -446,7 +487,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Alt. S/N</Text>
                         <TextInput
                           ref={register('altSn')}
-                          style={styles.fieldInput} value={vm.altSn} onChangeText={vm.setAltSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorSerialNumber') && styles.fieldInputReadOnly]} value={vm.altSn} onChangeText={vm.setAltSn}
+                          editable={!isAssetFieldLocked('alternatorSerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batteryType')}
                         />
                       </View>
@@ -457,7 +499,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Battery Type</Text>
                         <TextInput
                           ref={register('batteryType')}
-                          style={styles.fieldInput} value={vm.batteryType} onChangeText={vm.setBatteryType}
+                          style={[styles.fieldInput, isAssetFieldLocked('batteryType') && styles.fieldInputReadOnly]} value={vm.batteryType} onChangeText={vm.setBatteryType}
+                          editable={!isAssetFieldLocked('batteryType')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batterySn')}
                         />
                       </View>
@@ -467,7 +510,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Battery 1 S/N</Text>
                         <TextInput
                           ref={register('batterySn')}
-                          style={styles.fieldInput} value={vm.batterySn} onChangeText={vm.setBatterySn}
+                          style={[styles.fieldInput, isAssetFieldLocked('battery1SerialNumber') && styles.fieldInputReadOnly]} value={vm.batterySn} onChangeText={vm.setBatterySn}
+                          editable={!isAssetFieldLocked('battery1SerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('battery2Sn')}
                         />
                       </View>
@@ -475,7 +519,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Battery 2 S/N</Text>
                         <TextInput
                           ref={register('battery2Sn')}
-                          style={styles.fieldInput} value={vm.battery2Sn} onChangeText={vm.setBattery2Sn}
+                          style={[styles.fieldInput, isAssetFieldLocked('battery2SerialNumber') && styles.fieldInputReadOnly]} value={vm.battery2Sn} onChangeText={vm.setBattery2Sn}
+                          editable={!isAssetFieldLocked('battery2SerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('kva')}
                         />
                       </View>
@@ -485,23 +530,25 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>KVA Rating</Text>
                         <TextInput
                           ref={register('kva')}
-                          style={styles.fieldInput} value={vm.kva} onChangeText={vm.setKva} keyboardType="numeric"
+                          style={[styles.fieldInput, isAssetFieldLocked('kva') && styles.fieldInputReadOnly]} value={vm.kva} onChangeText={vm.setKva} keyboardType="numeric"
+                          editable={!isAssetFieldLocked('kva')}
                           returnKeyType="done"
                         />
                       </View>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Phase" value={vm.phase} options={vm.PHASE_OPTIONS} onSelect={vm.setPhase} />
+                        <DropdownField plainLabel label="Phase" value={vm.phase} options={vm.PHASE_OPTIONS} onSelect={vm.setPhase} disabled={isAssetFieldLocked('phase')} />
                       </View>
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <DropdownField plainLabel label="Panel Type" value={vm.panelType} options={vm.PANEL_TYPE_OPTIONS} onSelect={vm.setPanelType} />
+                        <DropdownField plainLabel label="Panel Type" value={vm.panelType} options={vm.PANEL_TYPE_OPTIONS} onSelect={vm.setPanelType} disabled={isAssetFieldLocked('panelType')} />
                       </View>
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Panel S/N</Text>
                         <TextInput
                           ref={register('panelSn')}
-                          style={styles.fieldInput} value={vm.panelSn} onChangeText={vm.setPanelSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('controlPanelSerialNumber') && styles.fieldInputReadOnly]} value={vm.panelSn} onChangeText={vm.setPanelSn}
+                          editable={!isAssetFieldLocked('controlPanelSerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerType')}
                         />
                       </View>
@@ -511,7 +558,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Controller Type</Text>
                         <TextInput
                           ref={register('controllerType')}
-                          style={styles.fieldInput} value={vm.controllerType} onChangeText={vm.setControllerType}
+                          style={[styles.fieldInput, isAssetFieldLocked('controllerType') && styles.fieldInputReadOnly]} value={vm.controllerType} onChangeText={vm.setControllerType}
+                          editable={!isAssetFieldLocked('controllerType')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerSr')}
                         />
                       </View>
@@ -519,7 +567,8 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Controller S/R</Text>
                         <TextInput
                           ref={register('controllerSr')}
-                          style={styles.fieldInput} value={vm.controllerSr} onChangeText={vm.setControllerSr}
+                          style={[styles.fieldInput, isAssetFieldLocked('controllerSerialNumber') && styles.fieldInputReadOnly]} value={vm.controllerSr} onChangeText={vm.setControllerSr}
+                          editable={!isAssetFieldLocked('controllerSerialNumber')}
                           returnKeyType="done"
                         />
                       </View>
@@ -535,123 +584,84 @@ export default function SrTaskFormScreen() {
                 )}
               </View>
 
-              {/* Load Unbalance — its own section now, below Alternator &
-                  Panel (was embedded inside that card). Its own Save
-                  button still sends the whole asset record like every
-                  other section here (see buildAssetPayload's own comment)
-                  — 'loadUnbalance' is just this card's own independent
-                  loading/success/error tracking key. */}
-              <View style={styles.sectionCard}>
-                <GroupHeader
-                  title="Load Unbalance"
-                  saved={!!vm.sectionSuccess['loadUnbalance']}
-                  onPress={() => toggleSectionReopen('loadUnbalance')}
-                  expanded={isSectionExpanded('loadUnbalance')}
+            </>
+          )}
+
+          {/* ══════════════ STEP 2 — COMPLAINT / FAULT CODES ══════════════ */}
+          {vm.currentStep === 2 && (
+            <>
+              <GroupHeader title="Complaint Codes" saved={false} style={styles.sectionPillHeaderWhite} />
+
+              {vm.selectedComplaintCodes.map((item) => (
+                <ComplaintCodeCard
+                  key={item.uid}
+                  item={item}
+                  onRemove={() => vm.handleRemoveComplaintCode(item.uid)}
+                  onChangeObservation={(text) => vm.handleChangeComplaintObservation(item.uid, text)}
+                  onChangeRootCause={(text) => vm.handleChangeComplaintRootCause(item.uid, text)}
+                  onChangeCorrectiveAction={(text) => vm.handleChangeComplaintCorrectiveAction(item.uid, text)}
+                  onSave={vm.handleSaveFaultCodes}
+                  isSaving={vm.step2Saving}
                 />
+              ))}
+              {vm.step2Error ? <Text style={styles.sectionErrorText}>{vm.step2Error}</Text> : null}
 
-                {isSectionExpanded('loadUnbalance') && (
-                  <>
-                    <View style={styles.fieldFull}>
-                      <View style={styles.toggleRow}>
-                        <TouchableOpacity style={[styles.toggleOption, vm.loadUnbalance === 'Yes' && styles.toggleOptionActive]} onPress={() => vm.setLoadUnbalance('Yes')}>
-                          <Text style={[styles.toggleText, vm.loadUnbalance === 'Yes' && styles.toggleTextActive]}>Yes</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[styles.toggleOption, vm.loadUnbalance === 'No' && styles.toggleOptionActive]} onPress={() => vm.setLoadUnbalance('No')}>
-                          <Text style={[styles.toggleText, vm.loadUnbalance === 'No' && styles.toggleTextActive]}>No</Text>
-                        </TouchableOpacity>
-                      </View>
-                      {vm.loadUnbalance === 'Yes' && (
-                        <View style={[styles.fieldFull, { marginTop: 12 }]}>
-                          <Text style={styles.fieldLabel}>Unbalance %</Text>
-                          <TextInput style={styles.fieldInput} value={vm.loadUnbalancePercentage} onChangeText={vm.setLoadUnbalancePercentage} keyboardType="numeric" />
-                        </View>
-                      )}
-                      {vm.loadUnbalance === 'No' && (
-                        <View style={[styles.fieldFull, { marginTop: 12 }]}>
-                          <Text style={styles.fieldLabel}>Comment</Text>
-                          <TextInput style={styles.fieldInput} value={vm.loadUnbalanceComment} onChangeText={vm.setLoadUnbalanceComment} />
-                        </View>
-                      )}
-                    </View>
+              {/* Below the added-codes list now, not above it. */}
+              <AddItemButton label="Add Code" onPress={openComplaintPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
 
-                    {vm.sectionError['loadUnbalance'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['loadUnbalance']}</Text> : null}
-                    <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('loadUnbalance')}
-                      saving={vm.sectionSaving['loadUnbalance']}
-                      done={vm.sectionSuccess['loadUnbalance']}
-                    />
-                  </>
-                )}
-              </View>
+              <ComplaintCodePickerModal
+                visible={vm.complaintPickerVisible}
+                onClose={() => vm.setComplaintPickerVisible(false)}
+                faultCodes={vm.apiFaultCodes}
+                loading={vm.faultCodesLoading}
+                onSelectCode={vm.handleSelectComplaintCode}
+              />
+            </>
+          )}
 
-              {/* Electrical Readings — read-only display by default (real
-                  values once saved, "null" placeholders until then); "Edit"
-                  swaps in the input fields below. */}
-              <View style={styles.sectionCard}>
-                <ReadingsSectionHeader
-                  title="Genset Electrical Readings"
-                  expanded={electricalExpanded}
-                  onToggleExpanded={() => setElectricalExpanded((v) => !v)}
-                  editing={electricalEditing}
-                  onEditPress={() => setElectricalEditing(true)}
+          {/* ══════════════ STEP 3 — PARTS USED ══════════════ */}
+          {vm.currentStep === 3 && (
+            <>
+              <GroupHeader title="Parts Used" saved={false} style={styles.sectionPillHeaderWhite} />
+
+              {vm.selectedParts.map((part) => (
+                <SelectedPartCard
+                  key={part.partId}
+                  part={part}
+                  onIncrease={() => vm.handleIncreaseQty(part.partId)}
+                  onDecrease={() => vm.handleDecreaseQty(part.partId)}
+                  onRemove={() => vm.handleRemovePart(part.partId)}
                 />
+              ))}
+              {vm.step3Error ? <Text style={styles.sectionErrorText}>{vm.step3Error}</Text> : null}
 
-                {electricalExpanded && (electricalEditing ? (
-                  <>
-                    {([
-                      [['AC VOLT RY', vm.acVoltRY, vm.setAcVoltRY, 'V'], ['AC VOLT YB', vm.acVoltYB, vm.setAcVoltYB, 'V']],
-                      [['AC VOLT BR', vm.acVoltBR, vm.setAcVoltBR, 'V'], ['AC AMP R', vm.acAmpR, vm.setAcAmpR, 'A']],
-                      [['AC AMP Y', vm.acAmpY, vm.setAcAmpY, 'A'], ['AC AMP B', vm.acAmpB, vm.setAcAmpB, 'A']],
-                      [['LOAD KW R', vm.loadKwR, vm.setLoadKwR, undefined], ['LOAD KW Y', vm.loadKwY, vm.setLoadKwY, undefined]],
-                    ] as const).map((row, i) => (
-                      <View key={i} style={[styles.fieldRow, { marginTop: i === 0 ? 0 : 14 }]}>
-                        {row.map(([label, value, setter, unit]) => (
-                          <NumberStepperField key={label} label={label} value={value} onChangeValue={setter} unit={unit} />
-                        ))}
-                      </View>
-                    ))}
-                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="LOAD KW B" value={vm.loadKwB} onChangeValue={vm.setLoadKwB} />
-                      <View style={{ flex: 1 }} />
-                    </View>
-                    {/* Total Load KW / Load % — both read-only now, both
-                    computed off other fields (see useSrTaskForm.ts's own
-                    effects), neither separately typed in. */}
-                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="TOTAL LOAD KW" value={vm.totalKw} onChangeValue={() => {}} readOnly />
-                      <NumberStepperField label="LOAD %" value={vm.loadPercent} onChangeValue={() => {}} unit="%" readOnly />
-                    </View>
+              {/* Below the added-parts list now, not above it. */}
+              <AddItemButton label="Add Part" onPress={openPartPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
 
-                    {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
-                    <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('electrical')}
-                      saving={vm.sectionSaving['electrical']}
-                      done={vm.sectionSuccess['electrical']}
-                    />
-                  </>
-                ) : (
-                  <View style={styles.readingsDisplayGrid}>
-                    {([
-                      [{ kind: 'value', label: 'AC Volt RY', value: vm.acVoltRY, unit: 'V' }, { kind: 'value', label: 'AC Volt YB', value: vm.acVoltYB, unit: 'V' }],
-                      [{ kind: 'value', label: 'AC Volt BR', value: vm.acVoltBR, unit: 'V' }, { kind: 'value', label: 'AC Amp R', value: vm.acAmpR, unit: 'A' }],
-                      [{ kind: 'value', label: 'AC Amp Y', value: vm.acAmpY, unit: 'A' }, { kind: 'value', label: 'AC Amp B', value: vm.acAmpB, unit: 'A' }],
-                      [{ kind: 'value', label: 'Load KW R', value: vm.loadKwR }, { kind: 'value', label: 'Load KW Y', value: vm.loadKwY }],
-                      [{ kind: 'value', label: 'Load KW B', value: vm.loadKwB }],
-                      [{ kind: 'value', label: 'Total Load KW', value: vm.totalKw }, { kind: 'value', label: 'Load %', value: vm.loadPercent, unit: '%' }],
-                    ] as const).map((row, i) => (
-                      <View key={i} style={[styles.readingsDisplayRow, i === 0 && { marginTop: 4 }]}>
-                        {row.map((item) => (
-                          <View key={item.label} style={styles.readingsDisplayHalf}>
-                            <ReadingsDisplayField item={item} />
-                          </View>
-                        ))}
-                      </View>
-                    ))}
-                  </View>
-                ))}
-              </View>
+              <PartPickerModal
+                visible={vm.partPickerVisible}
+                onClose={() => vm.setPartPickerVisible(false)}
+                parts={vm.apiParts}
+                loading={vm.partsLoading}
+                onSelectPart={vm.handleSelectPart}
+                assetEngineFamily={vm.engineFamily}
+                assetCpcbNorm={vm.cpcbNorm}
+              />
+            </>
+          )}
 
-              {/* Engine Parameters — same display/edit toggle. */}
+          {/* ══════════════ STEP 4 — ENGINE PARAMETERS, GENSET ELECTRICAL
+              READINGS, RUNNING HOURS, LOAD UNBALANCE ══════════════
+              Genset Identification/Alternator & Panel stay in Step 1;
+              these four moved into their own step, in this order. Running
+              Hours is new here (no equivalent existed in the SR form
+              before); the other three keep the same fields/save actions
+              they always had — only the on-screen step/order changed. */}
+          {vm.currentStep === 4 && (
+            <>
+              {/* Engine Parameters — first now, then Genset Electrical
+                  Readings, Running Hours, Load Unbalance. Same
+                  display/edit toggle either way. */}
               <View style={styles.sectionCard}>
                 <ReadingsSectionHeader
                   title="Engine Parameters"
@@ -743,92 +753,205 @@ export default function SrTaskFormScreen() {
                   </View>
                 ))}
               </View>
-            </>
-          )}
 
-          {/* ══════════════ STEP 1 — COMPLAINT / FAULT CODES ══════════════ */}
-          {vm.currentStep === 1 && (
-            <>
-              {/* Now the landing step — the initial-load spinner moved here
-                  from Asset Information (now Step 4) so reopening a task
-                  shows loading feedback on whichever step the user actually
-                  lands on first, not one buried three steps ahead. */}
-              {vm.initialDataLoading && (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color="#F26722" />
-                  <Text style={styles.loadingText}>Loading task data...</Text>
-                </View>
-              )}
-
-              <GroupHeader title="Complaint Codes" saved={false} style={styles.sectionPillHeaderWhite} />
-
-              {vm.selectedComplaintCodes.map((item) => (
-                <ComplaintCodeCard
-                  key={item.uid}
-                  item={item}
-                  onRemove={() => vm.handleRemoveComplaintCode(item.uid)}
-                  onChangeObservation={(text) => vm.handleChangeComplaintObservation(item.uid, text)}
-                  onChangeRootCause={(text) => vm.handleChangeComplaintRootCause(item.uid, text)}
-                  onChangeCorrectiveAction={(text) => vm.handleChangeComplaintCorrectiveAction(item.uid, text)}
-                  onSave={vm.handleSaveFaultCodes}
-                  isSaving={vm.step2Saving}
+              {/* Electrical Readings — read-only display by default (real
+                  values once saved, "null" placeholders until then); "Edit"
+                  swaps in the input fields below. */}
+              <View style={styles.sectionCard}>
+                <ReadingsSectionHeader
+                  title="Genset Electrical Readings"
+                  expanded={electricalExpanded}
+                  onToggleExpanded={() => setElectricalExpanded((v) => !v)}
+                  editing={electricalEditing}
+                  onEditPress={() => setElectricalEditing(true)}
                 />
-              ))}
-              {vm.step2Error ? <Text style={styles.sectionErrorText}>{vm.step2Error}</Text> : null}
 
-              {/* Below the added-codes list now, not above it. */}
-              <AddItemButton label="Add Code" onPress={openComplaintPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
+                {electricalExpanded && (electricalEditing ? (
+                  <>
+                    {([
+                      [['AC VOLT RY', vm.acVoltRY, vm.setAcVoltRY, 'V'], ['AC VOLT YB', vm.acVoltYB, vm.setAcVoltYB, 'V']],
+                      [['AC VOLT BR', vm.acVoltBR, vm.setAcVoltBR, 'V'], ['AC AMP R', vm.acAmpR, vm.setAcAmpR, 'A']],
+                      [['AC AMP Y', vm.acAmpY, vm.setAcAmpY, 'A'], ['AC AMP B', vm.acAmpB, vm.setAcAmpB, 'A']],
+                      [['LOAD KW R', vm.loadKwR, vm.setLoadKwR, undefined], ['LOAD KW Y', vm.loadKwY, vm.setLoadKwY, undefined]],
+                    ] as const).map((row, i) => (
+                      <View key={i} style={[styles.fieldRow, { marginTop: i === 0 ? 0 : 14 }]}>
+                        {row.map(([label, value, setter, unit]) => (
+                          <NumberStepperField key={label} label={label} value={value} onChangeValue={setter} unit={unit} />
+                        ))}
+                      </View>
+                    ))}
+                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
+                      <NumberStepperField label="LOAD KW B" value={vm.loadKwB} onChangeValue={vm.setLoadKwB} />
+                      <View style={{ flex: 1 }} />
+                    </View>
+                    {/* Total Load KW / Load % — both read-only now, both
+                    computed off other fields (see useSrTaskForm.ts's own
+                    effects), neither separately typed in. */}
+                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
+                      <NumberStepperField label="TOTAL LOAD KW" value={vm.totalKw} onChangeValue={() => {}} readOnly />
+                      <NumberStepperField
+                        label="LOAD %"
+                        value={vm.loadPercent}
+                        onChangeValue={() => {}}
+                        unit="%"
+                        readOnly
+                        placeholder={vm.kva ? undefined : "KVA Rating not filled"}
+                      />
+                    </View>
 
-              <ComplaintCodePickerModal
-                visible={vm.complaintPickerVisible}
-                onClose={() => vm.setComplaintPickerVisible(false)}
-                faultCodes={vm.apiFaultCodes}
-                loading={vm.faultCodesLoading}
-                onSelectCode={vm.handleSelectComplaintCode}
-              />
-            </>
-          )}
+                    {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
+                    <SectionSaveButton
+                      onPress={() => vm.handleSaveAssetSection('electrical')}
+                      saving={vm.sectionSaving['electrical']}
+                      done={vm.sectionSuccess['electrical']}
+                    />
+                  </>
+                ) : (
+                  <View style={styles.readingsDisplayGrid}>
+                    {([
+                      [{ kind: 'value', label: 'AC Volt RY', value: vm.acVoltRY, unit: 'V' }, { kind: 'value', label: 'AC Volt YB', value: vm.acVoltYB, unit: 'V' }],
+                      [{ kind: 'value', label: 'AC Volt BR', value: vm.acVoltBR, unit: 'V' }, { kind: 'value', label: 'AC Amp R', value: vm.acAmpR, unit: 'A' }],
+                      [{ kind: 'value', label: 'AC Amp Y', value: vm.acAmpY, unit: 'A' }, { kind: 'value', label: 'AC Amp B', value: vm.acAmpB, unit: 'A' }],
+                      [{ kind: 'value', label: 'Load KW R', value: vm.loadKwR }, { kind: 'value', label: 'Load KW Y', value: vm.loadKwY }],
+                      [{ kind: 'value', label: 'Load KW B', value: vm.loadKwB }],
+                      [
+                        { kind: 'value', label: 'Total Load KW', value: vm.totalKw },
+                        // Blank Load % means KVA Rating isn't filled yet
+                        // (can't compute a % of an unknown capacity) —
+                        // says so explicitly here too, matching the
+                        // editable NumberStepperField's own placeholder,
+                        // instead of falling through to this grid's usual
+                        // literal "null" for an unset value.
+                        vm.kva
+                          ? ({ kind: 'value', label: 'Load %', value: vm.loadPercent, unit: '%' } as const)
+                          : ({ kind: 'value', label: 'Load %', value: 'KVA Rating not filled' } as const),
+                      ],
+                    ] as const).map((row, i) => (
+                      <View key={i} style={[styles.readingsDisplayRow, i === 0 && { marginTop: 4 }]}>
+                        {row.map((item) => (
+                          // 11 fields, 2 per row, doesn't divide evenly —
+                          // Load KW B is the odd one left alone in its own
+                          // row. Rather than leave dead space where a
+                          // second column would be (readingsDisplayHalf is
+                          // a fixed 48%), a lone item in a row spans the
+                          // full width instead.
+                          <View key={item.label} style={row.length === 1 ? styles.readingsDisplayFull : styles.readingsDisplayHalf}>
+                            <ReadingsDisplayField item={item} />
+                          </View>
+                        ))}
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </View>
 
-          {/* ══════════════ STEP 2 — PARTS USED ══════════════ */}
-          {vm.currentStep === 2 && (
-            <>
-              <GroupHeader title="Parts Used" saved={false} style={styles.sectionPillHeaderWhite} />
-
-              {vm.selectedParts.map((part) => (
-                <SelectedPartCard
-                  key={part.partId}
-                  part={part}
-                  onIncrease={() => vm.handleIncreaseQty(part.partId)}
-                  onDecrease={() => vm.handleDecreaseQty(part.partId)}
-                  onRemove={() => vm.handleRemovePart(part.partId)}
+              {/* Running Hours — new field, no confirmed backend key yet
+                  (see runningHours' own state comment in
+                  useSrTaskForm.ts). Its own Save button still sends the
+                  whole asset record like every other section here. */}
+              <View style={styles.sectionCard}>
+                <GroupHeader
+                  title="Running Hours"
+                  saved={!!vm.sectionSuccess['runningHours']}
+                  onPress={() => toggleSectionReopen('runningHours')}
+                  expanded={isSectionExpanded('runningHours')}
                 />
-              ))}
-              {vm.step3Error ? <Text style={styles.sectionErrorText}>{vm.step3Error}</Text> : null}
 
-              {/* Below the added-parts list now, not above it. */}
-              <AddItemButton label="Add Part" onPress={openPartPicker} disabled={vm.task?.status === 'COMPLETED'} style={{ marginBottom: 16 }} />
+                {isSectionExpanded('runningHours') && (
+                  <>
+                    <TextInput
+                      style={[styles.fieldInput, { marginTop: 12 }]}
+                      value={vm.runningHours}
+                      onChangeText={(v) => {
+                        console.log('[Service] Running Hours input changed to:', v);
+                        vm.setRunningHours(v);
+                      }}
+                      placeholder="Enter running hours..."
+                      keyboardType="numeric"
+                    />
 
-              <PartPickerModal
-                visible={vm.partPickerVisible}
-                onClose={() => vm.setPartPickerVisible(false)}
-                parts={vm.apiParts}
-                loading={vm.partsLoading}
-                onSelectPart={vm.handleSelectPart}
-                assetEngineFamily={vm.engineFamily}
-                assetCpcbNorm={vm.cpcbNorm}
-              />
+                    {vm.sectionError['runningHours'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['runningHours']}</Text> : null}
+                    <SectionSaveButton
+                      onPress={vm.handleSaveRunningHours}
+                      saving={vm.sectionSaving['runningHours']}
+                      done={vm.sectionSuccess['runningHours']}
+                    />
+
+                    {/* Running Hours' own single photo — same pairing
+                        Commissioning's form has for its Running Hours
+                        step. Uploads immediately on pick via its own
+                        queue (vm.runningHoursUploadQueue, see
+                        MediaUploadOverlay above), imagesOnly + maxItems=1
+                        since only one photo is ever wanted here. No
+                        onUpdateTag — this photo always confirms
+                        pre-tagged 'Running Hours' (see runningHoursQueue's
+                        own defaultTags in useSrTaskForm.ts) and isn't
+                        meant to be re-tagged from here, so the tag icon
+                        doesn't show on it at all. */}
+                    <PhotosVideoCard
+                      sitePhotos={vm.runningHoursPhotos}
+                      onRemove={vm.handleRemoveRunningHoursPhoto}
+                      onAddPress={() => vm.setRunningHoursPhotoOptionsVisible(true)}
+                      imagesOnly
+                      maxItems={1}
+                    />
+                  </>
+                )}
+              </View>
+
+              {/* Load Unbalance — last now, was first. Its own Save
+                  button still sends the whole asset record like every
+                  other section here (see buildAssetPayload's own
+                  comment) — 'loadUnbalance' is just this card's own
+                  independent loading/success/error tracking key. */}
+              <View style={styles.sectionCard}>
+                <GroupHeader
+                  title="Load Unbalance"
+                  saved={!!vm.sectionSuccess['loadUnbalance']}
+                  onPress={() => toggleSectionReopen('loadUnbalance')}
+                  expanded={isSectionExpanded('loadUnbalance')}
+                />
+
+                {isSectionExpanded('loadUnbalance') && (
+                  <>
+                    <View style={styles.fieldFull}>
+                      <View style={styles.toggleRow}>
+                        <TouchableOpacity style={[styles.toggleOption, vm.loadUnbalance === 'Yes' && styles.toggleOptionActive]} onPress={() => vm.setLoadUnbalance('Yes')}>
+                          <Text style={[styles.toggleText, vm.loadUnbalance === 'Yes' && styles.toggleTextActive]}>Yes</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.toggleOption, vm.loadUnbalance === 'No' && styles.toggleOptionActive]} onPress={() => vm.setLoadUnbalance('No')}>
+                          <Text style={[styles.toggleText, vm.loadUnbalance === 'No' && styles.toggleTextActive]}>No</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {vm.loadUnbalance === 'Yes' && (
+                        <View style={[styles.fieldFull, { marginTop: 12 }]}>
+                          <Text style={styles.fieldLabel}>Unbalance %</Text>
+                          <TextInput style={styles.fieldInput} value={vm.loadUnbalancePercentage} onChangeText={vm.setLoadUnbalancePercentage} keyboardType="numeric" />
+                        </View>
+                      )}
+                    </View>
+
+                    {vm.sectionError['loadUnbalance'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['loadUnbalance']}</Text> : null}
+                    <SectionSaveButton
+                      onPress={() => vm.handleSaveAssetSection('loadUnbalance')}
+                      saving={vm.sectionSaving['loadUnbalance']}
+                      done={vm.sectionSuccess['loadUnbalance']}
+                    />
+                  </>
+                )}
+              </View>
             </>
           )}
 
-          {/* ══════════════ STEP 3 — PHOTOS & VIDEO ══════════════
+          {/* ══════════════ STEP 5 — PHOTOS & VIDEO ══════════════
               Each photo/video/PDF uploads immediately when picked (see
               vm.mediaUploadQueue / MediaUploadOverlay) — photos go through
               a multipart call, video/PDF through their own GCS-based
               upload (no multipart endpoint for either, per the backend dev
-              guide). Nothing is deferred to Complete at Step 5 anymore. */}
-          {vm.currentStep === 3 && (
+              guide). Nothing is deferred to Complete at Step 6 anymore. */}
+          {vm.currentStep === 5 && (
             <>
-              <Text style={styles.stepSectionLabel}>STEP 3 — PHOTOS & VIDEO</Text>
+              <Text style={styles.stepSectionLabel}>STEP 5 — PHOTOS & VIDEO</Text>
 
               {/* Photos & Video card — shared with the Commissioning form
                   (same grid + video-list + upload behavior), not a
@@ -840,6 +963,7 @@ export default function SrTaskFormScreen() {
                   sitePhotos={vm.sitePhotos}
                   onRemove={vm.handleRemovePhoto}
                   onAddPress={() => vm.setPhotoOptionsVisible(true)}
+                  onUpdateTag={vm.handleUpdateMediaTag}
                 />
               </View>
 
@@ -850,21 +974,25 @@ export default function SrTaskFormScreen() {
                 pdfs={vm.sitePhotos.filter((p) => p.mediaType === 'pdf')}
                 onPickPdf={vm.handlePickPdf}
                 onRemove={vm.handleRemovePhoto}
+                onUpdateTag={vm.handleUpdateMediaTag}
               />
 
+              {/* Moved here from Step 5 (Category & Complete) — sits right
+                  below the documents/PDF card now, not down by the finish
+                  actions. Still the same optional freetext, submitted once
+                  as suggestionComment in the finish call. */}
+              <SuggestionCommentCard value={vm.suggestionComment} onChangeText={vm.setSuggestionComment} style={{ marginTop: 16 }} />
             </>
           )}
 
-          {/* ══════════════ STEP 5 (engineer) — CATEGORY & COMPLETE ══════════════
-              Notes & Summary (formerly its own step 5) removed — step 6
-              renumbered to 5. Distinct from area_manager's Send-for-Approval/
-              OTP flow below — engineers lock in category/sub-category
-              (read-only if the dealer already set them at creation,
-              otherwise pick from the live category-config) then Complete
-              via the finish API. The post-finish Approval Status/Close
-              Ticket view renders outside the read-only wrapper below, once
-              isEngineerFinished. */}
-          {vm.currentStep === 5 && vm.isEngineer && !isEngineerFinished && (
+          {/* ══════════════ STEP 6 (engineer) — CATEGORY & COMPLETE ══════════════
+              Distinct from area_manager's Send-for-Approval/OTP flow below
+              — engineers lock in category/sub-category (read-only if the
+              dealer already set them at creation, otherwise pick from the
+              live category-config) then Complete via the finish API. The
+              post-finish Approval Status/Close Ticket view renders outside
+              the read-only wrapper below, once isEngineerFinished. */}
+          {vm.currentStep === 6 && vm.isEngineer && !isEngineerFinished && (
             <>
               <View style={styles.sectionCard}>
                 {vm.categoryPresetAtCreation ? (
@@ -928,7 +1056,7 @@ export default function SrTaskFormScreen() {
                           plainLabel
                           requiredAsterisk
                           value={vm.billingType}
-                          options={['Paid', 'Goodwill']}
+                          options={['Paid', 'Goodwill', 'FOC']}
                           onSelect={vm.setBillingType}
                           placeholder="Select billing type..."
                         />
@@ -1007,8 +1135,6 @@ export default function SrTaskFormScreen() {
 
               {!!vm.finishError && <Text style={styles.sectionErrorText}>{vm.finishError}</Text>}
 
-              <SuggestionCommentCard value={vm.suggestionComment} onChangeText={vm.setSuggestionComment} style={{ marginTop: 16 }} />
-
               <View style={styles.finishActionsRow}>
                 <TouchableOpacity style={styles.backButton} onPress={vm.handleBack}>
                   <ChevronLeft size={24} color="#4B5563" />
@@ -1022,10 +1148,10 @@ export default function SrTaskFormScreen() {
             </>
           )}
 
-          {/* ══════════════ STEP 5 (area_manager) — CATEGORY, APPROVAL & COMPLETION ══════════════ */}
-          {vm.currentStep === 5 && !vm.isEngineer && (
+          {/* ══════════════ STEP 6 (area_manager) — CATEGORY, APPROVAL & COMPLETION ══════════════ */}
+          {vm.currentStep === 6 && !vm.isEngineer && (
             <>
-                  {/* Same 3-way branch the engineer's own Step 5 uses —
+                  {/* Same 3-way branch the engineer's own Step 6 uses —
                       category+sub-type both preset at creation (read-only),
                       category only preset (this card + Service Type
                       dropdown + Billing Type), or neither (the original
@@ -1089,7 +1215,7 @@ export default function SrTaskFormScreen() {
                               plainLabel
                               requiredAsterisk
                               value={vm.billingType}
-                              options={['Paid', 'Goodwill']}
+                              options={['Paid', 'Goodwill', 'FOC']}
                               onSelect={vm.setBillingType}
                               placeholder="Select billing type..."
                             />
@@ -1157,7 +1283,7 @@ export default function SrTaskFormScreen() {
                               plainLabel
                               requiredAsterisk
                               value={vm.billingType}
-                              options={['Paid', 'Goodwill']}
+                              options={['Paid', 'Goodwill', 'FOC']}
                               onSelect={vm.setBillingType}
                               placeholder="Select billing type..."
                             />
@@ -1168,8 +1294,6 @@ export default function SrTaskFormScreen() {
 
                     {vm.step6Error ? <Text style={styles.sectionErrorText}>{vm.step6Error}</Text> : null}
                   </View>
-
-                  <SuggestionCommentCard value={vm.suggestionComment} onChangeText={vm.setSuggestionComment} style={{ marginTop: 16 }} />
 
                   <View style={styles.finishActionsRow}>
                     <TouchableOpacity style={styles.backButton} onPress={vm.handleBack}>
@@ -1204,15 +1328,31 @@ export default function SrTaskFormScreen() {
               </View>
             </Pressable>
           </Modal>
+
+          {/* Camera / Gallery picker — Running Hours' own single photo.
+              Images only, no video/PDF, same as taskForm.tsx's
+              commissioning equivalent. */}
+          <Modal visible={vm.runningHoursPhotoOptionsVisible} transparent animationType="none" onRequestClose={() => vm.setRunningHoursPhotoOptionsVisible(false)}>
+            <Pressable style={styles.modalOverlay} onPress={() => vm.setRunningHoursPhotoOptionsVisible(false)}>
+              <View style={[styles.optionsSheet, { paddingBottom: sheetPaddingBottom }]}>
+                <Text style={styles.optionsTitle}>Add Photo</Text>
+                <TouchableOpacity style={styles.optionRow} onPress={vm.handleTakeRunningHoursPhoto}><Text style={styles.optionText}>📷  Take Photo</Text></TouchableOpacity>
+                <View style={styles.optionDivider} />
+                <TouchableOpacity style={styles.optionRow} onPress={vm.handleChooseRunningHoursPhotos}><Text style={styles.optionText}>🖼️  Choose from Gallery</Text></TouchableOpacity>
+                <View style={styles.optionDivider} />
+                <TouchableOpacity style={styles.optionRow} onPress={() => vm.setRunningHoursPhotoOptionsVisible(false)}><Text style={styles.optionText}>Cancel</Text></TouchableOpacity>
+              </View>
+            </Pressable>
+          </Modal>
         {/* Labeled Back/Next bar, alongside the stepper row's flanking
             arrows above — same handlers either way, just a second, more
-            discoverable way to move between steps. Steps 1-4 only: step 5's
+            discoverable way to move between steps. Steps 1-5 only: step 6's
             own actions (category select + Send for Approval, or the status/
             OTP flow) are already inline in that step's content, so a
             duplicate Next button here would be redundant. Scrolls away with
             the rest of the content instead of staying pinned at the
             screen's bottom edge. */}
-        {vm.currentStep !== 5 && (
+        {vm.currentStep !== 6 && (
           <View style={styles.fixedBottomActions}>
             <TouchableOpacity
               style={[styles.backButton, vm.currentStep === 1 && styles.buttonDisabled]}
@@ -1293,6 +1433,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#1F2937', backgroundColor: '#fff',
   },
+  // Locked fields (already filled by an earlier task on the same asset,
+  // e.g. Genset Identification/Alternator & Panel) — same shape as a
+  // normal input, just visibly non-interactive.
+  fieldInputReadOnly: { backgroundColor: '#F3F4F6', color: '#6B7280' },
   toggleRow: { flexDirection: 'row' },
   toggleOption: {
     flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10,
@@ -1323,6 +1467,7 @@ const styles = StyleSheet.create({
   readingsDisplayGrid: { marginTop: 4 },
   readingsDisplayRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, gap: 12 },
   readingsDisplayHalf: { width: '48%' },
+  readingsDisplayFull: { width: '100%' },
   readingsDisplayLabel: { fontSize: 14, fontWeight: '500', color: '#9CA3AF', marginBottom: 6 },
   readingsDisplayValue: { fontSize: 18, fontWeight: '700', color: '#000000' },
   readingsStatusPill: {

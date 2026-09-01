@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFaultCodes, getParts, saveStepProgress } from '@/viewModel/commisionAPi';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart } from '@/models/taskForm.types';
+import { parseApiError } from '@/utils/apiError';
 
 type UseTaskFormApiDataArgs = {
   taskId: string;
@@ -67,7 +68,7 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
       setStep3Success(true);
       showToast('Fault codes saved!', 'success');
     } catch (error: any) {
-      const msg = error.response?.data?.message || 'Failed to save. Please try again.';
+      const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       setStep3Error(msg);
       showToast(msg, 'error');
     } finally {
@@ -92,7 +93,7 @@ export function useTaskFormApiData({ taskId, showToast }: UseTaskFormApiDataArgs
       setStep4Success(true);
       showToast('Parts saved!', 'success');
     } catch (error: any) {
-      const msg = error.response?.data?.message || 'Failed to save. Please try again.';
+      const msg = parseApiError(error, 'Failed to save. Please try again.').message;
       setStep4Error(msg);
       showToast(msg, 'error');
     } finally {

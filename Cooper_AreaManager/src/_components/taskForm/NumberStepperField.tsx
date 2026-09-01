@@ -12,10 +12,15 @@ type Props = {
   // Auto-computed fields (e.g. Total Load KW = Load KW R+Y+B added
   // together) — no typing, no spinner arrows, just the live value.
   readOnly?: boolean;
+  // Shown in place of the value when it's blank — e.g. Load % explaining
+  // *why* it's empty (KVA Rating not filled yet) instead of just looking
+  // like a blank/broken field. Every other caller leaves this unset and
+  // gets no placeholder, same as before.
+  placeholder?: string;
 };
 
 // Numeric input with up/down spinner arrows + optional unit suffix (V, A, %, Hz, °C).
-export function NumberStepperField({ label, value, onChangeValue, unit, step = 1, readOnly }: Props) {
+export function NumberStepperField({ label, value, onChangeValue, unit, step = 1, readOnly, placeholder }: Props) {
   const handleStep = (dir: 1 | -1) => {
     const current = parseFloat(value) || 0;
     onChangeValue(String(current + dir * step));
@@ -31,6 +36,7 @@ export function NumberStepperField({ label, value, onChangeValue, unit, step = 1
           onChangeText={onChangeValue}
           keyboardType="numeric"
           editable={!readOnly}
+          placeholder={placeholder}
         />
         {unit ? <Text style={styles.unit}>{unit}</Text> : null}
         {!readOnly && (

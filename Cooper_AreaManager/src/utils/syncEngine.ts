@@ -1,7 +1,6 @@
 import axiosClient from '../viewModel/axiosClient';
 import { getToken } from './tokenStore';
 import { enqueueAction, getQueue, getQueueCount, removeFromQueue, recordSyncFailure, getSyncFailures, clearSyncFailures } from './offlineQueue';
-import { logLocationForAction } from './locationLogger';
 import { devLog } from './devLog';
 
 // True only for a genuine connectivity failure (the request never reached
@@ -37,13 +36,14 @@ export function isNetworkError(error: any): boolean {
 // failure surfaces immediately instead of silently queueing, same as
 // before offline support existed.
 export async function putOrQueue(url: string, body: Record<string, any>, description: string, dedupeKey: string, offlineEnabled: boolean = true): Promise<{ queued: boolean; data?: any }> {
-  // Every Accept/Start/section-Save/Complete action in both forms and both
-  // task lists calls putOrQueue — capturing the phone's location here,
-  // once, covers all of them in one place instead of needing this wired
-  // into each individual button. Console-only for now (not sent to the
-  // backend yet) and never awaited, so a slow/denied location request can
-  // never delay or block the real save it's attached to.
-  logLocationForAction(description);
+  // Location is deliberately NOT captured here anymore — every action that
+  // goes through putOrQueue used to get it for free (Accept/Start/every
+  // section Save/Complete alike), which was far broader than intended.
+  // Only Start, Complete, and photo upload should capture it — those three
+  // call logLocationForAction explicitly themselves now (see
+  // handleStartTask/handleStartActiveTask, useTaskFormOtp.ts's
+  // handleMarkComplete, useSrTaskForm.ts's handleFinishService/
+  // handleSendForApproval, and useMediaUploadQueue.ts's attemptItem).
   const token = await getToken();
   try {
     const response = await axiosClient.put(url, body, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);

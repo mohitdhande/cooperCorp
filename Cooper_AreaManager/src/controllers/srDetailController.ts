@@ -334,13 +334,17 @@ export function useSrDetailController(initialTask: any) {
 
   // Photos here are raw GCS URLs — same private-bucket problem as
   // srTaskReportController, fixed the same way: one batch /gcs/sign call
-  // for the whole gallery, keyed by the original raw url.
+  // for the whole gallery, keyed by the original raw url. task.media
+  // replaces the old flat task.photos field (unified media[] model, Sep
+  // 2026 backend migration) — filtered by .type instead of trusting a
+  // field that no longer exists.
+  const photoUrls: string[] = (task?.media || []).filter((m: any) => m.type === 'photo' || m.type === 'image').map((m: any) => m.gcsUrl);
   const [signedPhotoUrls, setSignedPhotoUrls] = useState<Record<string, string>>({});
   const [photosSigning, setPhotosSigning] = useState(false);
-  const photosKey = JSON.stringify(task?.photos || []);
+  const photosKey = JSON.stringify(photoUrls);
 
   useEffect(() => {
-    const photos: string[] = task?.photos || [];
+    const photos: string[] = photoUrls;
     if (photos.length === 0) { setSignedPhotoUrls({}); return; }
     let cancelled = false;
     (async () => {

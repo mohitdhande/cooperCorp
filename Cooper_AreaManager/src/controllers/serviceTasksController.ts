@@ -14,6 +14,7 @@ import { useAssetTaskSearch } from './useAssetTaskSearch';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
+import { logLocationForAction } from '../utils/locationLogger';
 import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 const PAGE_SIZE = 10;
@@ -290,6 +291,9 @@ export function useServiceTasksController() {
     try {
       const task = tasks.find((t) => t._id === taskId);
       const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
+      // Location is captured only at Start, photo upload, and Complete —
+      // see the same note in syncEngine.ts's own putOrQueue.
+      logLocationForAction(`Start task (${assetLabel})`);
       await putOrQueue(`/api/service/${taskId}/start`, {}, `Start task (${assetLabel})`, `service_start_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'IN_PROGRESS' }));
     } catch (err: any) {

@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { uploadCommissioningPhotos } from '@/viewModel/commisionAPi';
 import { SitePhoto } from '@/models/taskForm.types';
+import { parseApiError } from '@/utils/apiError';
 
 type UseTaskFormPhotosArgs = {
   taskId: string;
@@ -135,7 +136,7 @@ export function useTaskFormPhotos({ taskId, showToast }: UseTaskFormPhotosArgs) 
       setPhotosUploadSuccess(true);
       showToast('Photos uploaded successfully!', 'success');
     } catch (error: any) {
-      const msg = error.response?.data?.message || 'Failed to upload photos. Please try again.';
+      const msg = parseApiError(error, 'Failed to upload photos. Please try again.').message;
       setPhotosUploadError(msg);
       showToast(msg, 'error');
     } finally {

@@ -236,6 +236,7 @@ export function useNewJobController() {
   const closeAssigneePicker = useCallback(() => setAssigneePickerVisible(false), []);
 
   const handleSelectAssignee = useCallback((member: TeamMember) => {
+    console.log('[NewJob] handleSelectAssignee called with:', member._id, member.name);
     setSelectedAssignee(member);
     setAssigneeError('');
     setAssigneePickerVisible(false);

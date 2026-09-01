@@ -13,7 +13,7 @@ import { useRouter } from 'expo-router';
 import { useNewJobController } from '../../controllers/newJobController';
 import { computeDispatchType } from '../../controllers/createAssetCommissionController';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
-import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModal';
+import { AssignEngineerModal, getAssigneeDisplayName } from '../../_components/shared/AssignEngineerModal';
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { AssetHistorySection } from '../../_components/shared/AssetHistorySection';
@@ -401,8 +401,17 @@ export default function NewJobScreen() {
                                 onPress={openAssigneePicker}
                               >
                                 <UserRoundCog size={18} color="#9CA3AF" />
-                                <Text style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]} numberOfLines={1}>
-                                  {selectedAssignee ? selectedAssignee.name : 'Select assignee...'}
+                                {/* Keyed on the picked id so a fresh pick always forces a
+                                    brand-new Text node instead of an in-place prop update —
+                                    belt-and-suspenders alongside the deferred state update in
+                                    newJobController.ts, in case Android's Modal-dismiss repaint
+                                    still misses an in-place text change on some devices. */}
+                                <Text
+                                  key={selectedAssignee?._id || 'none'}
+                                  style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]}
+                                  numberOfLines={1}
+                                >
+                                  {selectedAssignee ? getAssigneeDisplayName(selectedAssignee) : 'Select assignee...'}
                                 </Text>
                                 <ChevronRight size={18} color="#9CA3AF" />
                               </TouchableOpacity>
@@ -510,7 +519,12 @@ export default function NewJobScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Keyed on the open/closed transition — see the matching comment in
+          newServiceJob.tsx for why (guarantees a fresh picker instance on
+          every open, so re-picking can never carry over the previous
+          highlight). */}
       <AssignEngineerModal
+        key={assigneePickerVisible ? 'assignee-picker-open' : 'assignee-picker-closed'}
         visible={assigneePickerVisible}
         onClose={closeAssigneePicker}
         engineers={engineers}

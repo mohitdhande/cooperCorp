@@ -60,6 +60,8 @@ if (isLoading) {
   <Stack.Screen name="screens/commissioningTasks" options={{ headerShown: false }} />
   <Stack.Screen name="screens/taskForm" options={{ headerShown: false }} />
   <Stack.Screen name="screens/taskReport" options={{ headerShown: false }} />
+  <Stack.Screen name="screens/srTaskForm" options={{ headerShown: false }} />
+  <Stack.Screen name="screens/srTaskReport" options={{ headerShown: false }} />
 </Stack>
    </ErrorBoundary>
   );

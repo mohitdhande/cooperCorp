@@ -3,10 +3,10 @@ import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { getToken } from '../../utils/tokenStore';
-import { uploadCommissioningPhotos, uploadOneCommissioningVideoOrPdf, getGcsSignedUrls } from '../../viewModel/commisionAPi';
-import { SitePhoto } from '../../models/taskForm.types';
+import { uploadOneCommissioningMedia, updateCommissioningMediaTag, getGcsSignedUrls } from '../../viewModel/commisionAPi';
+import { SitePhoto, MediaType, MediaLocation } from '../../models/taskForm.types';
 import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } from '../../utils/photoValidation';
-import { splitMediaByExtension, videoFileName } from '../../utils/reportFormatters';
+import { videoFileName } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
 
@@ -18,8 +18,23 @@ type UseTaskFormPhotosArgs = {
   isEngineer: boolean;
 };
 
+// gcsUrl/type only ever missing if this fires before the migration to the
+// media[] model somehow left an item without them — shouldn't happen since
+// onItemSucceeded only ever calls with a confirmed item, but the field is
+// optional on QueueItem itself (not populated yet while pending/uploading),
+// so this still needs a fallback rather than asserting non-null.
 function toSitePhoto(item: QueueItem): SitePhoto {
-  return { id: item.localId, uri: item.uri, fileName: item.fileName, mediaType: item.kind === 'photo' ? 'image' : item.kind, fileSize: item.fileSize };
+  return {
+    id: item.gcsUrl || item.localId,
+    uri: item.uri,
+    fileName: item.fileName,
+    mediaType: item.kind === 'photo' ? 'image' : item.kind,
+    fileSize: item.fileSize,
+    gcsUrl: item.gcsUrl,
+    type: item.type,
+    tags: item.tags || [],
+    location: item.location,
+  };
 }
 
 // Keeps photo capture, selection, and upload behavior isolated from the
@@ -36,27 +51,30 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   // Both Step 2 (running-hours, images only) and Step 6 (site, photo/video/
   // PDF) hit the same commissioning endpoints for the same taskId — only
   // which local list a successful item lands in (onItemSucceeded) differs,
-  // which is exactly what lets one shared hook drive both.
+  // which is exactly what lets one shared hook drive both. Every media
+  // type now rides the same uploadOneCommissioningMedia call (unified
+  // media[] model) — the old separate photo (multipart) vs. video/PDF (GCS)
+  // paths are gone, so uploadPhoto/uploadVideoOrPdf both just forward here.
   const uploaders = useMemo(() => ({
-    uploadPhoto: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+    uploadPhoto: async (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => {
       const token = await getToken();
       if (!token || !taskId) throw new Error('Not authenticated.');
-      await uploadCommissioningPhotos(token, taskId, [file], onProgress, signal);
+      return uploadOneCommissioningMedia(token, taskId, file, type, location, tags, onProgress, signal);
     },
-    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, onProgress: (percent: number) => void, signal: AbortSignal) => {
+    uploadVideoOrPdf: async (file: { uri: string; fileName: string }, type: MediaType, location: MediaLocation | undefined, tags: string[] | undefined, onProgress: (percent: number) => void, signal: AbortSignal) => {
       const token = await getToken();
       if (!token || !taskId) throw new Error('Not authenticated.');
-      await uploadOneCommissioningVideoOrPdf(token, taskId, file, onProgress, signal);
+      return uploadOneCommissioningMedia(token, taskId, file, type, location, tags, onProgress, signal);
     },
   }), [taskId]);
 
   const persistSiteFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
     sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
-    mediaKind: item.kind, formKind: 'commissioning', taskId, target: 'site',
+    mediaKind: item.kind, source: item.source, formKind: 'commissioning', taskId, target: 'site',
   }), [taskId]);
   const persistRunningHoursFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
     sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
-    mediaKind: item.kind, formKind: 'commissioning', taskId, target: 'runningHours',
+    mediaKind: item.kind, source: item.source, formKind: 'commissioning', taskId, target: 'runningHours',
   }), [taskId]);
 
   const siteQueue = useMediaUploadQueue(
@@ -65,11 +83,16 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     isEngineer,
     persistSiteFailure
   );
+  // Every Running Hours photo confirms pre-tagged 'Running Hours' by
+  // default (defaultTags below) — the tag picker on this photo can still
+  // re-tag it afterward if that's ever genuinely needed, same as any other
+  // item, it just doesn't start blank.
   const runningHoursQueue = useMediaUploadQueue(
     uploaders,
     useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), []),
     isEngineer,
-    persistRunningHoursFailure
+    persistRunningHoursFailure,
+    ['Running Hours']
   );
 
   // Android's native camera intent can't mix photo and video capture in
@@ -109,7 +132,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         }
         const isVideo = mediaType === 'videos';
         const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`;
-        const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo' };
+        const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo', source: 'camera' };
         (target === 'site' ? siteQueue : runningHoursQueue).startBatch([picked]);
       }
     } catch (error) {
@@ -151,7 +174,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         const picked: PickedAsset[] = valid.map((asset, index) => {
           const isVideo = asset.type === 'video';
           const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}_${index}.${isVideo ? 'mp4' : 'jpg'}`;
-          return { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo' };
+          return { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo', source: 'gallery' };
         });
         if (picked.length > 0) siteQueue.startBatch(picked);
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
@@ -192,6 +215,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         fileName: asset.name || `document_${i + 1}.pdf`,
         fileSize: asset.size,
         kind: 'pdf',
+        source: 'gallery',
       }));
       if (picked.length > 0) siteQueue.startBatch(picked);
 
@@ -205,13 +229,26 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     }
   }, [siteQueue]);
 
+  // Exactly one running-hours photo — the PhotosVideoCard usage in
+  // taskForm.tsx already hides its own Add trigger once one exists
+  // (maxItems={1}), but these are guarded directly too rather than relying
+  // solely on that UI-level hiding, in case either handler is ever reached
+  // another way.
   const handleTakeRunningHoursPhoto = useCallback(async () => {
     setStep2PhotoOptionsVisible(false);
+    if (runningHoursPhotos.length >= 1) {
+      Alert.alert('Only one photo allowed', 'Remove the current running-hours photo before adding a different one.');
+      return;
+    }
     await captureFromCamera('images', 'runningHours');
-  }, [captureFromCamera]);
+  }, [captureFromCamera, runningHoursPhotos]);
 
   const handleChooseRunningHoursPhotos = useCallback(async () => {
     setStep2PhotoOptionsVisible(false);
+    if (runningHoursPhotos.length >= 1) {
+      Alert.alert('Only one photo allowed', 'Remove the current running-hours photo before adding a different one.');
+      return;
+    }
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -220,20 +257,24 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
       }
 
       // Images only — Step 2's running-hours upload never takes video or
-      // PDF, unlike Step 6's own site photos.
+      // PDF, unlike Step 6's own site photos. Single-select — only one
+      // running-hours photo is ever wanted, not a batch.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 0.7,
-        allowsMultipleSelection: true,
+        allowsMultipleSelection: false,
       });
 
       if (!result.canceled) {
         const { valid, skippedMessage } = partitionValidPhotos(result.assets);
-        const picked: PickedAsset[] = valid.map((asset, index) => ({
+        // Belt-and-suspenders on top of allowsMultipleSelection: false —
+        // caps at exactly 1 regardless of what the native picker returns.
+        const picked: PickedAsset[] = valid.slice(0, 1).map((asset, index) => ({
           uri: asset.uri,
           fileName: asset.uri.split('/').pop() || `photo_${Date.now()}_${index}.jpg`,
           fileSize: asset.fileSize,
           kind: 'photo',
+          source: 'gallery',
         }));
         if (picked.length > 0) runningHoursQueue.startBatch(picked);
         if (skippedMessage) Alert.alert('Some items were skipped', skippedMessage);
@@ -242,7 +283,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
       console.log('[Task Form Photos] Gallery picker failed:', error);
       Alert.alert('Gallery unavailable', 'Could not open the photo gallery. Please try again.');
     }
-  }, [runningHoursQueue]);
+  }, [runningHoursQueue, runningHoursPhotos]);
 
   const handleRemoveRunningHoursPhoto = useCallback((id: string) => {
     setRunningHoursPhotos(prev => prev.filter(photo => photo.id !== id));
@@ -252,38 +293,80 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   // when the task detail first loads (see useTaskForm.ts), so reopening a
   // task you'd already added photos/videos/PDFs to doesn't look empty just
   // because this session's own sitePhotos/runningHoursPhotos state starts
-  // fresh. Commissioning's task.photos is one flat array with no per-item
-  // record of which step (2 or 6) an item was originally added from — the
-  // backend genuinely can't tell them apart (both hit the same endpoint) —
-  // so everything hydrates into sitePhotos (Step 6's "everything" list)
-  // rather than guessing a split. Photos need a signed URL to actually
-  // render as a thumbnail (private GCS bucket, same as the report screens);
-  // video/PDF rows only ever show a filename/icon, never the file itself,
-  // so the raw URL is fine as-is for those.
-  const hydrateSitePhotos = useCallback(async (urls: string[]) => {
-    if (!urls || urls.length === 0) return;
-    const { photos: photoUrls, videos: videoUrls, documents: pdfUrls } = splitMediaByExtension(urls);
+  // fresh. Reads the unified task.media array directly and filters by each
+  // item's own .type — no more extension-guessing (splitMediaByExtension)
+  // now that the backend tells us exactly what each item is. An item
+  // tagged 'Running Hours' (the fixed default runningHoursQueue always
+  // confirms with) hydrates into runningHoursPhotos instead of the general
+  // site list — that tag is now the one reliable signal for "which step
+  // this came from," where before there was none at all. Photos need a
+  // signed URL to actually render as a thumbnail (private GCS bucket, same
+  // as the report screens); video/PDF rows only ever show a filename/icon,
+  // never the file itself, so the raw gcsUrl is fine as-is for those.
+  const hydrateSitePhotos = useCallback(async (media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]) => {
+    if (!media || media.length === 0) return;
+    const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+    const runningHoursItems = media.filter(isRunningHours);
+    const siteMedia = media.filter((m) => !isRunningHours(m));
 
+    const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
+    const videoItems = siteMedia.filter((m) => m.type === 'video');
+    const pdfItems = siteMedia.filter((m) => m.type === 'pdf');
+    // Running Hours only ever holds photo-like items in practice (its own
+    // picker is images-only), but filtered defensively all the same rather
+    // than assuming.
+    const runningHoursPhotoItems = runningHoursItems.filter((m) => m.type === 'photo' || m.type === 'image');
+
+    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems].map((m) => m.gcsUrl);
     let signedPhotoUrls: Record<string, string> = {};
-    if (photoUrls.length > 0) {
+    if (allPhotoUrls.length > 0) {
       try {
         const token = await getToken();
-        if (token) signedPhotoUrls = await getGcsSignedUrls(token, photoUrls);
+        if (token) signedPhotoUrls = await getGcsSignedUrls(token, allPhotoUrls);
       } catch (error) {
         console.log('[Task Form Photos] Failed to sign previously-uploaded photo URLs:', error);
       }
     }
 
     const hydrated: SitePhoto[] = [
-      ...photoUrls.map((url) => ({ id: url, uri: signedPhotoUrls[url] || url, fileName: videoFileName(url), mediaType: 'image' as const })),
-      ...videoUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'video' as const })),
-      ...pdfUrls.map((url) => ({ id: url, uri: url, fileName: videoFileName(url), mediaType: 'pdf' as const })),
+      ...photoItems.map((m) => ({ id: m.gcsUrl, uri: signedPhotoUrls[m.gcsUrl] || m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'image' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
+      ...videoItems.map((m) => ({ id: m.gcsUrl, uri: m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'video' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
+      ...pdfItems.map((m) => ({ id: m.gcsUrl, uri: m.gcsUrl, fileName: videoFileName(m.gcsUrl), mediaType: 'pdf' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location })),
     ];
     setSitePhotos((prev) => {
       const existingIds = new Set(prev.map((p) => p.id));
       return [...prev, ...hydrated.filter((p) => !existingIds.has(p.id))];
     });
+
+    const hydratedRunningHours: SitePhoto[] = runningHoursPhotoItems.map((m) => ({
+      id: m.gcsUrl, uri: signedPhotoUrls[m.gcsUrl] || m.gcsUrl, fileName: videoFileName(m.gcsUrl),
+      mediaType: 'image' as const, gcsUrl: m.gcsUrl, type: m.type as MediaType, tags: m.tags || [], location: m.location,
+    }));
+    if (hydratedRunningHours.length > 0) {
+      setRunningHoursPhotos((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        return [...prev, ...hydratedRunningHours.filter((p) => !existingIds.has(p.id))];
+      });
+    }
   }, []);
+
+  // Updates the tag(s) on an already-uploaded item, matched by gcsUrl —
+  // could be in either list (site photos or the running-hours photo), so
+  // this just tries both; only the one that actually has a matching id
+  // changes.
+  const handleUpdateMediaTag = useCallback(async (gcsUrl: string, tags: string[]) => {
+    try {
+      const token = await getToken();
+      if (!token || !taskId) return;
+      await updateCommissioningMediaTag(token, taskId, gcsUrl, tags);
+      const applyTag = (photos: SitePhoto[]) => photos.map((p) => (p.gcsUrl === gcsUrl ? { ...p, tags } : p));
+      setSitePhotos(applyTag);
+      setRunningHoursPhotos(applyTag);
+    } catch (error) {
+      console.log('[Task Form Photos] Failed to update media tag:', error);
+      Alert.alert('Failed to update tag', 'Please try again.');
+    }
+  }, [taskId]);
 
   return {
     sitePhotos,
@@ -305,5 +388,6 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto,
     hydrateSitePhotos,
+    handleUpdateMediaTag,
   };
 }

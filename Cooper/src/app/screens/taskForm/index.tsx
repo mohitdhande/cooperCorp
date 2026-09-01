@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTaskFormScreenController } from '../../../controllers/taskFormScreenController';
 import {
   Image, View, Text, TouchableOpacity, Dimensions, ScrollView,
-  TextInput, Modal, Pressable,ActivityIndicator
+  TextInput, Modal, Pressable,ActivityIndicator, KeyboardAvoidingView, Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -87,10 +87,16 @@ export default function TaskFormScreen() {
 
       
 
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
       <ScrollView
         style={styles.scrollArea}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 30 }}
+        keyboardShouldPersistTaps="handled"
       >
 
         {/* ── My Tasks back link ── */}
@@ -1638,6 +1644,7 @@ export default function TaskFormScreen() {
           </TouchableOpacity>
         )}
       </View>
+      </KeyboardAvoidingView>
 
     </SafeAreaView>
   );

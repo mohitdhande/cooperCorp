@@ -158,7 +158,9 @@ export default function SrDetailScreen() {
   const faultCodes = task.faultCodes || [];
   const partsUsed = task.partsUsed || [];
   const notes = task.notes || '';
-  const photos: string[] = task.photos || [];
+  // task.media replaces the old flat task.photos field (unified media[]
+  // model, Sep 2026 backend migration).
+  const photos: string[] = (task.media || []).filter((m: any) => m.type === 'photo' || m.type === 'image').map((m: any) => m.gcsUrl);
   const taskPeople = getTaskPeople(task);
 
   const partRowId = (p: any, i: number) => p._id || p.partId?._id || String(i);

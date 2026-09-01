@@ -23,6 +23,23 @@ type TeamState = {
 
 const TeamContext = createContext<TeamState | null>(null);
 
+// getDealers/getEngineers return response.data as-is, with no unwrapping —
+// fine as long as the backend really does answer with a bare array, but
+// other list endpoints in this same API (e.g. service category config)
+// answer wrapped in a named field instead. Accept either shape here so a
+// real roster never silently turns into an empty one just because this
+// particular endpoint happens to wrap its array under a key.
+function extractMemberList(result: unknown): TeamMember[] {
+  if (Array.isArray(result)) return result;
+  if (result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    for (const key of ['data', 'users', 'dealers', 'engineers', 'results', 'items', 'members']) {
+      if (Array.isArray(obj[key])) return obj[key] as TeamMember[];
+    }
+  }
+  return [];
+}
+
 // The current user's subordinate roster (a dealer's engineers, or an area
 // manager's dealers) — fetched once here instead of every screen with an
 // assign picker (Dashboard, Commissioning, Services, New Job, New Service
@@ -63,9 +80,15 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       // Dealers manage engineers, area managers manage dealers.
       const fetchFn = subordinateRole === 'dealer' ? getDealers : getEngineers;
       const result = await fetchFn(token);
-      const list = Array.isArray(result) ? result : [];
+      const list = extractMemberList(result);
       setMembers(list);
     } catch (error) {
+      // Silent by design — an expired/invalid token here (same cause as
+      // the roster coming back empty) is already surfaced to the user by
+      // the app's own session-expiry handling elsewhere (axios interceptor
+      // → redirect to Login with "Your session has expired"); this is just
+      // one of several screens that independently wants the roster, so it
+      // shouldn't also throw up its own separate error for the same event.
       console.log('[Team] Failed to load team:', error);
     } finally {
       setLoading(false);

@@ -1,8 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, useWindowDimensions, Modal, Pressable } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import {
   ChevronLeft, Bell,
@@ -12,12 +12,11 @@ import { useRouter } from 'expo-router';
 import { useNewServiceJobController } from '../../controllers/newServiceJobController';
 import { computeDispatchType } from '../../controllers/createAssetCommissionController';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
-import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModal';
+import { AssignEngineerModal, getAssigneeDisplayName } from '../../_components/shared/AssignEngineerModal';
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { AssetLocationContact } from '../../_components/shared/AssetLocationContact';
 import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeader';
-import { AnchoredPanel } from '../../_components/shared/AnchoredPanel';
 import { FreeServiceItem, ServiceCategory } from '../../controllers/newServiceJobController';
 import { FINANCING_BANK_OPTIONS } from '../../_components/srTaskForm/srDropdownOptions';
 
@@ -63,6 +62,45 @@ const CATEGORY_DISPLAY_GROUPS: { group: string; titles: string[] }[] = [
   { group: 'Special', titles: ['Campaign', 'Other'] },
 ];
 
+// Shared bottom sheet for Category/Sub-category/Bank below — replaces
+// AnchoredPanel for these three specifically. AnchoredPanel renders inline
+// (position: absolute relative to its own trigger row, not portaled) which
+// its own comment already documents as only reliable for content that
+// stays within its immediate card — Category's list (grouped headers, up
+// to 9+ real entries) outgrew that: on device it rendered detached from
+// its trigger, overlapping the category-info card and bottom tab bar
+// below instead of a clean floating dropdown. A real Modal sidesteps all
+// of that — its own top-level layer, always correctly positioned,
+// closes on backdrop tap. Sibling backdrop Pressable + sheet (not the
+// sheet nested inside the backdrop) — same shape AssignEngineerModal
+// settled on, avoids Android's double-tap-to-confirm bug that nesting
+// caused there.
+function PickerSheet({
+  visible, onClose, title, children, maxListHeight = 420,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  maxListHeight?: number;
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.sheetOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={[styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
+          <View style={styles.sheetDragHandle} />
+          <Text style={styles.sheetTitle}>{title}</Text>
+          <ScrollView style={{ maxHeight: maxListHeight }} showsVerticalScrollIndicator={false}>
+            {children}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // The New Service Request form's Category field — the categories fetched
 // from GET /api/service/category-config, shown under group headers purely
 // for visual organization. Local to this screen; the shared DropdownField
@@ -79,40 +117,60 @@ function CategoryPickerField({
 
   return (
     <View style={styles.pickerContainer}>
-      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible((v) => !v)}>
+      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible(true)}>
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value?.title || 'Select category...'}
         </Text>
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} maxHeight={480}>
-        {/* flexShrink: 1 (not just AnchoredPanel's own maxHeight+overflow:
-            hidden on its outer panel) is what actually makes this scroll —
-            without it a plain View child just renders at its full content
-            height and gets silently clipped by the panel instead of
-            becoming scrollable, which is what cut this list off before. */}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
-          {CATEGORY_DISPLAY_GROUPS.map(({ group, titles }) => (
-            <View key={group}>
-              <Text style={styles.categoryGroupLabel}>{group}</Text>
-              {titles.map((title) => {
-                const cat = categories.find((c) => c.title === title);
-                if (!cat) return null;
-                return (
-                  <TouchableOpacity
-                    key={cat.letter}
-                    style={[styles.categoryOptionRow, value?.letter === cat.letter && styles.categoryOptionRowSelected]}
-                    onPress={() => { onSelect(cat); setVisible(false); }}
-                  >
-                    <Text style={styles.categoryOptionText}>{cat.title}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+      <PickerSheet visible={visible} onClose={() => setVisible(false)} title="Select Category" maxListHeight={420}>
+        {CATEGORY_DISPLAY_GROUPS.map(({ group, titles }) => (
+          <View key={group}>
+            <Text style={styles.categoryGroupLabel}>{group}</Text>
+            {titles.map((title) => {
+              const cat = categories.find((c) => c.title === title);
+              if (!cat) return null;
+              return (
+                <TouchableOpacity
+                  key={cat.letter}
+                  style={[styles.categoryOptionRow, value?.letter === cat.letter && styles.categoryOptionRowSelected]}
+                  onPress={() => { onSelect(cat); setVisible(false); }}
+                >
+                  <Text style={styles.categoryOptionText}>{cat.title}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ))}
+        {/* CATEGORY_DISPLAY_GROUPS above is a fixed, hand-maintained
+            allowlist of titles purely for visual grouping — it silently
+            dropped any category GET /api/service/category-config actually
+            returns whose title isn't an exact string match to one of
+            those, even though `categories` (the real API response)
+            already has it. Anything left over here still shows, under its
+            own catch-all group, so the picker can never show fewer
+            categories than the backend actually sent. */}
+        {(() => {
+          const shownTitles = new Set(CATEGORY_DISPLAY_GROUPS.flatMap((g) => g.titles));
+          const leftover = categories.filter((c) => !shownTitles.has(c.title));
+          if (leftover.length === 0) return null;
+          return (
+            <View>
+              <Text style={styles.categoryGroupLabel}>More</Text>
+              {leftover.map((cat) => (
+                <TouchableOpacity
+                  key={cat.letter}
+                  style={[styles.categoryOptionRow, value?.letter === cat.letter && styles.categoryOptionRowSelected]}
+                  onPress={() => { onSelect(cat); setVisible(false); }}
+                >
+                  <Text style={styles.categoryOptionText}>{cat.title}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
-          ))}
-        </ScrollView>
-      </AnchoredPanel>
+          );
+        })()}
+      </PickerSheet>
     </View>
   );
 }
@@ -140,7 +198,7 @@ function SubCategoryPickerField({
       <TouchableOpacity
         style={[styles.categoryTrigger, !category && styles.categoryTriggerDisabled]}
         activeOpacity={0.7}
-        onPress={() => { if (category) setVisible((v) => !v); }}
+        onPress={() => { if (category) setVisible(true); }}
       >
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value || 'Select sub-category...'}
@@ -148,85 +206,76 @@ function SubCategoryPickerField({
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} maxHeight={300}>
-        {/* flexShrink: 1 (not just AnchoredPanel's own maxHeight+overflow:
-            hidden on its outer panel) is what actually makes this scroll —
-            without it a plain View child just renders at its full content
-            height and gets silently clipped by the panel instead of
-            becoming scrollable. */}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
-          {isFreeService ? (
-            freeServiceLoading ? (
-              <ActivityIndicator style={{ marginVertical: 20 }} color="#F26722" />
-            ) : freeServiceError ? (
-              <Text style={[styles.placeholderText, { padding: 16 }]}>{freeServiceError}</Text>
-            ) : (
-              <View>
-                {freeServiceItems.map((item) => {
-                  const statusColor = FREE_SERVICE_STATUS_COLOR[item.status] || DEFAULT_FREE_SERVICE_STATUS_COLOR;
-                  return (
-                    <TouchableOpacity
-                      key={item.no}
-                      style={[styles.categoryOptionRow, styles.freeServiceOptionRow, value === item.label && styles.categoryOptionRowSelected]}
-                      disabled={!item.canCreate}
-                      onPress={() => { onSelect(item.label); setVisible(false); }}
-                    >
-                      <View style={[styles.freeServiceOptionDot, { backgroundColor: statusColor.dot }]} />
-                      <Text style={[styles.categoryOptionText, !item.canCreate && styles.categoryOptionTextDisabled]}>
-                        {item.label} — {item.reason}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )
+      <PickerSheet visible={visible} onClose={() => setVisible(false)} title="Select Sub-category" maxListHeight={340}>
+        {isFreeService ? (
+          freeServiceLoading ? (
+            <ActivityIndicator style={{ marginVertical: 20 }} color="#F26722" />
+          ) : freeServiceError ? (
+            <Text style={[styles.placeholderText, { padding: 16 }]}>{freeServiceError}</Text>
           ) : (
             <View>
-              {(category?.subCategories || []).map((sub) => (
-                <TouchableOpacity
-                  key={sub}
-                  style={[styles.categoryOptionRow, value === sub && styles.categoryOptionRowSelected]}
-                  onPress={() => { onSelect(sub); setVisible(false); }}
-                >
-                  <Text style={styles.categoryOptionText}>{sub}</Text>
-                </TouchableOpacity>
-              ))}
+              {freeServiceItems.map((item) => {
+                const statusColor = FREE_SERVICE_STATUS_COLOR[item.status] || DEFAULT_FREE_SERVICE_STATUS_COLOR;
+                return (
+                  <TouchableOpacity
+                    key={item.no}
+                    style={[styles.categoryOptionRow, styles.freeServiceOptionRow, value === item.label && styles.categoryOptionRowSelected]}
+                    disabled={!item.canCreate}
+                    onPress={() => { onSelect(item.label); setVisible(false); }}
+                  >
+                    <View style={[styles.freeServiceOptionDot, { backgroundColor: statusColor.dot }]} />
+                    <Text style={[styles.categoryOptionText, !item.canCreate && styles.categoryOptionTextDisabled]}>
+                      {item.label} — {item.reason}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-          )}
-        </ScrollView>
-      </AnchoredPanel>
+          )
+        ) : (
+          <View>
+            {(category?.subCategories || []).map((sub) => (
+              <TouchableOpacity
+                key={sub}
+                style={[styles.categoryOptionRow, value === sub && styles.categoryOptionRowSelected]}
+                onPress={() => { onSelect(sub); setVisible(false); }}
+              >
+                <Text style={styles.categoryOptionText}>{sub}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </PickerSheet>
     </View>
   );
 }
 
 // Financing Bank — only asked for the two Cooper-managed AMC/CAMC
 // categories (letters D/E), which are financed through a bank tie-up.
-// Plain flat list, same trigger/panel shape as the pickers above.
+// Plain flat list, same trigger/sheet shape as the pickers above.
 function BankPickerField({ value, onSelect }: { value: string; onSelect: (value: string) => void }) {
   const [visible, setVisible] = useState(false);
 
   return (
     <View style={styles.pickerContainer}>
-      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible((v) => !v)}>
+      <TouchableOpacity style={styles.categoryTrigger} activeOpacity={0.7} onPress={() => setVisible(true)}>
         <Text style={[styles.categoryValueText, !value && styles.categoryPlaceholderText]}>
           {value || 'Select bank...'}
         </Text>
         <ChevronDown size={18} color="#9CA3AF" />
       </TouchableOpacity>
 
-      <AnchoredPanel visible={visible} maxHeight={300}>
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
-          {FINANCING_BANK_OPTIONS.map((bank) => (
-            <TouchableOpacity
-              key={bank}
-              style={[styles.categoryOptionRow, value === bank && styles.categoryOptionRowSelected]}
-              onPress={() => { onSelect(bank); setVisible(false); }}
-            >
-              <Text style={styles.categoryOptionText}>{bank}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </AnchoredPanel>
+      <PickerSheet visible={visible} onClose={() => setVisible(false)} title="Select Bank" maxListHeight={340}>
+        {FINANCING_BANK_OPTIONS.map((bank) => (
+          <TouchableOpacity
+            key={bank}
+            style={[styles.categoryOptionRow, value === bank && styles.categoryOptionRowSelected]}
+            onPress={() => { onSelect(bank); setVisible(false); }}
+          >
+            <Text style={styles.categoryOptionText}>{bank}</Text>
+          </TouchableOpacity>
+        ))}
+      </PickerSheet>
     </View>
   );
 }
@@ -560,8 +609,18 @@ export default function NewServiceJobScreen() {
                   <Text style={styles.formLabel}>Assign To <Text style={styles.requiredStar}>*</Text></Text>
                   <TouchableOpacity style={styles.assignToField} onPress={openAssigneePicker}>
                     <UserRoundCog size={18} color="#9CA3AF" />
-                    <Text style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]} numberOfLines={1}>
-                      {selectedAssignee ? selectedAssignee.name : 'Select assignee...'}
+                    {/* Keyed on the picked id so a fresh pick always forces a
+                        brand-new Text node instead of an in-place prop
+                        update — belt-and-suspenders alongside the deferred
+                        state update in newServiceJobController.ts, in case
+                        Android's Modal-dismiss repaint still misses an
+                        in-place text change on some devices. */}
+                    <Text
+                      key={selectedAssignee?._id || 'none'}
+                      style={[styles.assignToFieldText, !selectedAssignee && styles.assignToPlaceholder]}
+                      numberOfLines={1}
+                    >
+                      {selectedAssignee ? getAssigneeDisplayName(selectedAssignee) : 'Select assignee...'}
                     </Text>
                     <ChevronRight size={18} color="#9CA3AF" />
                   </TouchableOpacity>
@@ -586,7 +645,13 @@ export default function NewServiceJobScreen() {
       </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Keyed on the open/closed transition so every open is a genuinely
+          fresh instance — the modal's own internal "which row is
+          highlighted" state resets by mounting fresh rather than relying
+          solely on its internal useEffect, so re-opening to change an
+          already-made pick can never carry over the previous highlight. */}
       <AssignEngineerModal
+        key={assigneePickerVisible ? 'assignee-picker-open' : 'assignee-picker-closed'}
         visible={assigneePickerVisible}
         onClose={closeAssigneePicker}
         engineers={engineers}
@@ -719,6 +784,21 @@ const styles = StyleSheet.create({
   // The dropdown panel positions itself (position: 'absolute', top: '100%')
   // relative to this — see AnchoredPanel/DropdownField's own comments.
   pickerContainer: { position: 'relative' },
+  // PickerSheet's bottom-sheet chrome — same shape as AssignEngineerModal's
+  // own sheet (rounded top corners, drag handle, backdrop-tap-to-close).
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheetContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 20, paddingTop: 12,
+  },
+  sheetDragHandle: {
+    alignSelf: 'center',
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 16,
+  },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: '#000000', marginBottom: 12 },
   categoryTrigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',

@@ -16,6 +16,7 @@ import { formatTaskType, formatAssetLabel } from '../utils/reportFormatters';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
+import { logLocationForAction } from '../utils/locationLogger';
 import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 // Backend doesn't send a greeting string — purely a function of the
@@ -399,6 +400,10 @@ export function useDashboardHomeController() {
     try {
       const kind = task.__kind === 'service' ? 'service' : 'commissioning';
       const assetLabel = formatAssetLabel(task.asset?.gensetNumber, task.asset?.engineNumber, taskId);
+      // Location is captured only at Start, photo upload, and Complete —
+      // not on every putOrQueue action anymore (see its own comment in
+      // syncEngine.ts), so this needs its own explicit call.
+      logLocationForAction(`Start task (${assetLabel})`);
       await putOrQueue(`/api/${kind}/${taskId}/start`, {}, `Start task (${assetLabel})`, `${kind}_start_${taskId}`);
       setTaskStatusOverrides((prev) => ({ ...prev, [taskId]: 'IN_PROGRESS' }));
     } catch (error: any) {

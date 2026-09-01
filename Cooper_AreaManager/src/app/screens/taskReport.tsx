@@ -212,6 +212,7 @@ export default function TaskReportScreen() {
   const {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
+    runningHoursPhotoUrl,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
@@ -227,6 +228,7 @@ export default function TaskReportScreen() {
   const [engineExpanded, setEngineExpanded] = useState(false);
   const [alternatorExpanded, setAlternatorExpanded] = useState(false);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  const [runningHoursExpanded, setRunningHoursExpanded] = useState(false);
   const [customerHandoverExpanded, setCustomerHandoverExpanded] = useState(false);
   const [complaintExpanded, setComplaintExpanded] = useState(false);
   const [partsExpanded, setPartsExpanded] = useState(false);
@@ -517,6 +519,13 @@ export default function TaskReportScreen() {
                   <InfoRow label="Load B Phase" value={commissioningChecks.A13} />
                 </View>
 
+                {/* Commissioning Instructions (B) / CPCB IV+ ATS System
+                    Check Points (C) / Performance Trial (D) all skip
+                    Pre-Commissioning — matches taskForm.tsx's own gating on
+                    the same flag, since a pre-commissioning task never
+                    actually collects any of this. */}
+                {!isPreCommissioning && (
+                <>
                 {renderCheckGroup('B', 'Commissioning Instructions', COMMISSIONING_GROUP_B, commissioningChecks)}
                 <View style={{ marginBottom: 18 }}>
                   <Text style={styles.subGroupTitle}>Phase Difference (A)</Text>
@@ -528,8 +537,8 @@ export default function TaskReportScreen() {
                 {renderCheckGroup('C', 'CPCB IV+ ATS System Check Points', COMMISSIONING_GROUP_C, commissioningChecks)}
                 <View style={{ marginBottom: 18 }}>
                   <Text style={styles.subGroupTitle}>Exhaust Temp. on Load DOC (°C)</Text>
-                  <InfoRow label="Before" value={commissioningChecks.C12} />
-                  <InfoRow label="After" value={commissioningChecks.C13} />
+                  <InfoRow label="IN" value={commissioningChecks.C12} />
+                  <InfoRow label="OUT" value={commissioningChecks.C13} />
                   <InfoRow label="DEF Make" value={commissioningChecks.C18} />
                 </View>
 
@@ -543,7 +552,14 @@ export default function TaskReportScreen() {
                   {LOAD_STAGES.map(stage => (
                     <View key={stage.prefix} style={styles.loadStageReportCard}>
                       <Text style={styles.loadStageReportLabel}>{stage.label}</Text>
-                      <InfoRow label="Load R/Y/B (A)" value={`${val(commissioningChecks[`${stage.prefix}LR`])} / ${val(commissioningChecks[`${stage.prefix}LY`])} / ${val(commissioningChecks[`${stage.prefix}LB`])}`} />
+                      {/* 0% Load never collects this in the form (see
+                          taskForm.tsx's own `stage.prefix !== "D0"` gate on
+                          the Load (AMPS) fields) — showing it here anyway
+                          just displayed three dashes with nothing behind
+                          them, so it's skipped for that one stage only. */}
+                      {stage.prefix !== 'D0' && (
+                        <InfoRow label="Load R/Y/B (A)" value={`${val(commissioningChecks[`${stage.prefix}LR`])} / ${val(commissioningChecks[`${stage.prefix}LY`])} / ${val(commissioningChecks[`${stage.prefix}LB`])}`} />
+                      )}
                       <InfoRow label="Voltage R/Y/B (V)" value={`${val(commissioningChecks[`${stage.prefix}VR`])} / ${val(commissioningChecks[`${stage.prefix}VY`])} / ${val(commissioningChecks[`${stage.prefix}VB`])}`} />
                       <InfoRow label="Freq (Hz)" value={commissioningChecks[`${stage.prefix}F`]} />
                       <InfoRow label="Battery V" value={commissioningChecks[`${stage.prefix}BV`]} />
@@ -551,21 +567,41 @@ export default function TaskReportScreen() {
                     </View>
                   ))}
                 </View>
+                </>
+                )}
 
-                <View style={{ marginBottom: 4 }}>
-                  <View style={styles.groupHeaderRow}>
-                    <View style={styles.groupLetterCircle}>
-                      <Text style={styles.groupLetterText}>E</Text>
-                    </View>
-                    <Text style={styles.groupHeaderTitle}>Running Hours</Text>
-                  </View>
-                  <InfoRow label="Running Hours" value={commissioningChecks.E_runHrs} />
-                </View>
               </>
             )}
           </ReportSectionCard>
 
-        {!isRevalidation && (
+        {/* Running Hours — its own standalone section rather than buried
+            inside Commissioning/Validation Checks above, same
+            commissioningChecks.runningHours key regardless of task type (see
+            taskForm.tsx's runningHoursCard: Step 2 for pre-commissioning/
+            commissioning/re-commissioning, Step 5 for revalidation). Now
+            also shows the photo taken during that same step — it's
+            recoverable here because the form always confirms it pre-tagged
+            'Running Hours' (see useTaskFormPhotos.ts's runningHoursQueue),
+            so taskReportController.ts can pull it out of the general
+            media[] array by that tag instead of it landing in the plain
+            Photos section below alongside everything else. */}
+        <ReportSectionCard
+          title="Running Hours"
+          expanded={runningHoursExpanded}
+          onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}
+        >
+          <InfoRow label="Running Hours" value={commissioningChecks.runningHours} />
+          {!!runningHoursPhotoUrl && (
+            <Image
+              source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
+              style={[styles.reportPhotoThumb, { marginTop: 12 }]}
+            />
+          )}
+        </ReportSectionCard>
+
+        {/* Revalidation and Pre-Commissioning both skip this — matches
+            taskForm.tsx's own gating on the same two flags. */}
+        {!isRevalidation && !isPreCommissioning && (
           <ReportSectionCard
             title="Customer Handover"
             expanded={customerHandoverExpanded}
@@ -730,10 +766,11 @@ export default function TaskReportScreen() {
           )}
         </ReportSectionCard>
 
-        {/* PDFs ride the same GCS array as photos/videos for commissioning
-            (see splitMediaByExtension/taskReportController.ts) — no in-app
-            PDF viewer, tapping one signs the URL and hands it to the
-            device's own PDF viewer via Linking. */}
+        {/* PDFs ride the same unified media[] array as photos/videos for
+            commissioning, filtered by type: 'pdf' (see
+            taskReportController.ts) — no in-app PDF viewer, tapping one
+            signs the URL and hands it to the device's own PDF viewer via
+            Linking. */}
         <ReportSectionCard title={`Documents (${documents.length})`} expanded={documentsExpanded} onToggle={() => setDocumentsExpanded(!documentsExpanded)}>
           {documents.length === 0 ? (
             <Text style={styles.emptyText}>No documents uploaded.</Text>

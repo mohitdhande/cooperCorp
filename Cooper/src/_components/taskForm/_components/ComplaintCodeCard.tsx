@@ -4,15 +4,17 @@ import { styles } from '../TaskForm.styles';
 import { SelectedComplaintCode } from '@/models/taskForm.types';
 import { PriorityBadge } from './PriorityBadge';
 
+// NEW
 type ComplaintCodeCardProps = {
   item: SelectedComplaintCode;
   onRemove: () => void;
   onChangeObservation: (text: string) => void;
   onChangeRootCause: (text: string) => void;
+  onChangeCorrectiveAction?: (text: string) => void;
 };
 
 export const ComplaintCodeCard: React.FC<ComplaintCodeCardProps> = ({
-  item, onRemove, onChangeObservation, onChangeRootCause,
+  item, onRemove, onChangeObservation, onChangeRootCause, onChangeCorrectiveAction,
 }) => {
   return (
     <View style={styles.complaintCard}>
@@ -27,9 +29,10 @@ export const ComplaintCodeCard: React.FC<ComplaintCodeCardProps> = ({
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.complaintCardTitle}>{item.title}</Text>
+    
+      <Text style={styles.complaintCardTitle}>{item.title || (item as any).description}</Text>
       <Text style={styles.complaintCardBreadcrumb}>
-        {item.categoryName} › {item.subcategoryName}
+        {item.categoryName || (item as any).category} › {item.subcategoryName || (item as any).subCategory}
       </Text>
 
       <View style={styles.complaintCardDivider} />
@@ -44,6 +47,7 @@ export const ComplaintCodeCard: React.FC<ComplaintCodeCardProps> = ({
         multiline
       />
 
+    
       <Text style={[styles.complaintFieldLabel, { marginTop: 14 }]}>ROOT CAUSE</Text>
       <TextInput
         style={styles.complaintTextArea}
@@ -53,6 +57,20 @@ export const ComplaintCodeCard: React.FC<ComplaintCodeCardProps> = ({
         onChangeText={onChangeRootCause}
         multiline
       />
+
+      {onChangeCorrectiveAction && (
+        <>
+          <Text style={[styles.complaintFieldLabel, { marginTop: 14 }]}>CORRECTIVE ACTION TAKEN</Text>
+          <TextInput
+            style={styles.complaintTextArea}
+            placeholder="Describe the corrective action taken..."
+            placeholderTextColor="#9CA3AF"
+            value={(item as any).correctiveAction}
+            onChangeText={onChangeCorrectiveAction}
+            multiline
+          />
+        </>
+      )}
     </View>
   );
 };

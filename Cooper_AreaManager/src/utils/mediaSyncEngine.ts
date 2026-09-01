@@ -1,8 +1,6 @@
 import { getToken } from './tokenStore';
-import {
-  uploadCommissioningPhotos, uploadOneCommissioningVideoOrPdf,
-  uploadServicePhotos, uploadOneServiceVideoOrPdf,
-} from '../viewModel/commisionAPi';
+import { uploadOneCommissioningMedia, uploadOneServiceMedia } from '../viewModel/commisionAPi';
+import { resolveMediaType } from '../models/taskForm.types';
 import { getPendingMediaQueue, getPendingMediaCount, removePendingMedia, PendingMediaItem } from './pendingMediaQueue';
 import { isNetworkError, isServerError } from './syncEngine';
 import { devLog } from './devLog';
@@ -74,13 +72,15 @@ export async function runMediaSync(): Promise<{ synced: number }> {
     for (const item of queue) {
       try {
         const file = { uri: item.fileUri, fileName: item.fileName };
-        if (item.mediaKind === 'photo') {
-          const uploadPhotos = item.formKind === 'service' ? uploadServicePhotos : uploadCommissioningPhotos;
-          await uploadPhotos(token, item.taskId, [file]);
-        } else {
-          const uploadOne = item.formKind === 'service' ? uploadOneServiceVideoOrPdf : uploadOneCommissioningVideoOrPdf;
-          await uploadOne(token, item.taskId, file);
-        }
+        const type = resolveMediaType(item.mediaKind, item.source);
+        // No location for a replayed item — see PendingMediaItem's own
+        // comment for why (original capture-time location would be
+        // misleading by the time this finally uploads). target already
+        // tells us which picker this came from, so a queued Running Hours
+        // photo still confirms pre-tagged even after an offline retry.
+        const tags = item.target === 'runningHours' ? ['Running Hours'] : undefined;
+        const uploadOne = item.formKind === 'service' ? uploadOneServiceMedia : uploadOneCommissioningMedia;
+        await uploadOne(token, item.taskId, file, type, undefined, tags);
         await removePendingMedia(item.id);
         synced++;
         notifySuccessListeners(item);

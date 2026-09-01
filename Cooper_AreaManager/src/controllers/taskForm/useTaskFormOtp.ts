@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { parseApiError } from '../../utils/apiError';
 import { putOrQueue } from '../../utils/syncEngine';
+import { logLocationForAction } from '../../utils/locationLogger';
 import { formatAssetLabel } from '../../utils/reportFormatters';
 
 type UseTaskFormOtpArgs = {
@@ -38,6 +39,9 @@ export function useTaskFormOtp({ taskId, showToast, isEngineer, gensetNumber, en
       const trimmed = suggestionComment?.trim();
       const body = trimmed ? { suggestionComment: trimmed } : {};
       const assetLabel = formatAssetLabel(gensetNumber, engineNumber, taskId);
+      // Location is captured only at Start, photo upload, and Complete —
+      // see the same note in syncEngine.ts's own putOrQueue.
+      logLocationForAction(`Complete task (${assetLabel})`);
       const { queued } = await putOrQueue(`/api/commissioning/${taskId}/complete`, body, `Complete task (${assetLabel})`, `commissioning_complete_${taskId}`, isEngineer);
       showToast(queued ? 'Saved on this device — will sync later' : 'Task marked complete!', 'success');
       return true;

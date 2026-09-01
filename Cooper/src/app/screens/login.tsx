@@ -13,16 +13,54 @@ const { width } = Dimensions.get('window');
 // Renders the login experience and delegates the auth workflow to the controller hook.
 export default function LoginScreen() {
   const {
-    username,
-    setUsername,
-    password,
-    setPassword,
-    loading,
-    loginError,
-    showPassword,
-    togglePasswordVisibility,
-    handleLogin,
-  } = useLoginController();
+  username,
+  setUsername,
+  password,
+  setPassword,
+  loading,
+  loginError,
+  showPassword,
+  togglePasswordVisibility,
+  handleLogin,
+} = useLoginController();
+
+const DOT = '●';
+
+const handleMaskedPasswordChange = (input: string) => {
+  if (showPassword) {
+    setPassword(input);
+    return;
+  }
+  if (input.length >= password.length) {
+    // Characters were added — walk through, keeping existing chars where
+    // the input still shows a dot, and picking up any new (non-dot) chars.
+    let real = '';
+    let pi = 0;
+    for (let i = 0; i < input.length; i++) {
+      if (input[i] === DOT) {
+        real += password[pi] ?? '';
+        pi++;
+      } else {
+        real += input[i];
+      }
+    }
+    setPassword(real);
+  } else {
+    // Characters were removed — diff the masked strings to find what was cut.
+    const oldMasked = DOT.repeat(password.length);
+    let prefix = 0;
+    while (prefix < input.length && prefix < oldMasked.length && input[prefix] === oldMasked[prefix]) {
+      prefix++;
+    }
+    let suffixOld = oldMasked.length;
+    let suffixNew = input.length;
+    while (suffixOld > prefix && suffixNew > prefix && oldMasked[suffixOld - 1] === input[suffixNew - 1]) {
+      suffixOld--;
+      suffixNew--;
+    }
+    setPassword(password.slice(0, prefix) + password.slice(suffixOld));
+  }
+};
 
   return (
   <SafeAreaView style={styles.container}>
@@ -59,16 +97,17 @@ export default function LoginScreen() {
 
           <Text style={styles.fieldLabel}>PASSWORD</Text>
           <View style={styles.passwordWrapper}>
-            <TextInput
-              placeholder="Enter your password"
-              placeholderTextColor="#aaa"
-              secureTextEntry={!showPassword}
-              style={styles.passwordInput}
-              value={password}
-              onChangeText={setPassword}
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-            />
+           <TextInput
+  placeholder="Enter your password"
+  placeholderTextColor="#aaa"
+  style={styles.passwordInput}
+  value={showPassword ? password : DOT.repeat(password.length)}
+  onChangeText={handleMaskedPasswordChange}
+  autoCapitalize="none"
+  autoCorrect={false}
+  returnKeyType="done"
+  onSubmitEditing={handleLogin}
+/>
             <TouchableOpacity
               style={styles.eyeButton}
               onPress={togglePasswordVisibility}

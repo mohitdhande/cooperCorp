@@ -23,6 +23,12 @@ type Props = {
   // srTaskForm's Service Type/Billing Type fields. Independent of
   // `required`/plainLabel so existing bullet-style callers are unaffected.
   requiredAsterisk?: boolean;
+  // Already has a value carried over from an earlier task on the same
+  // asset (Genset Identification/Alternator & Panel) — shown, but locked
+  // from further changes rather than hidden, same reasoning as every
+  // other "locked" field pattern in these forms (e.g. DEF Level's KVA
+  // gate): visible context beats a blank field with no explanation.
+  disabled?: boolean;
 };
 
 // A tap-to-open dropdown field used across the task form's asset sections.
@@ -30,7 +36,7 @@ type Props = {
 // AnchoredPanel's own comment for why it's not a full-screen sheet/Modal —
 // in short, so the rest of the screen keeps scrolling normally while
 // it's open, instead of needing an explicit tap to close it first).
-export function DropdownField({ label, value, options, onSelect, required = true, plainLabel = false, placeholder = '', requiredAsterisk = false }: Props) {
+export function DropdownField({ label, value, options, onSelect, required = true, plainLabel = false, placeholder = '', requiredAsterisk = false, disabled = false }: Props) {
   const [visible, setVisible] = useState(false);
 
   return (
@@ -39,9 +45,13 @@ export function DropdownField({ label, value, options, onSelect, required = true
         {plainLabel ? label : `${required ? '● ' : ''}${label}`}
         {requiredAsterisk && <Text style={styles.requiredAsterisk}> *</Text>}
       </Text>
-      <TouchableOpacity style={[styles.dropdownInput, visible && styles.dropdownInputActive]} onPress={() => setVisible((v) => !v)}>
-        <Text style={styles.dropdownText}>{value || placeholder}</Text>
-        <Text style={styles.dropdownArrow}>▾</Text>
+      <TouchableOpacity
+        style={[styles.dropdownInput, visible && styles.dropdownInputActive, disabled && styles.dropdownInputDisabled]}
+        onPress={() => !disabled && setVisible((v) => !v)}
+        disabled={disabled}
+      >
+        <Text style={[styles.dropdownText, disabled && styles.dropdownTextDisabled]}>{value || placeholder}</Text>
+        {!disabled && <Text style={styles.dropdownArrow}>▾</Text>}
       </TouchableOpacity>
 
       <AnchoredPanel visible={visible} maxHeight={340} minWidth={220}>
@@ -50,8 +60,13 @@ export function DropdownField({ label, value, options, onSelect, required = true
             and a VirtualizedList nested inside the screen's own ScrollView
             (now that AnchoredPanel isn't a separate Modal anymore) throws
             "VirtualizedLists should never be nested inside plain
-            ScrollViews with the same orientation". */}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+            ScrollViews with the same orientation".
+            Explicit maxHeight on the ScrollView itself, matching the
+            panel's own maxHeight — flexShrink alone doesn't reliably make
+            this an actually-scrollable bounded viewport once a list is
+            long enough to exceed it (found via newServiceJob.tsx's
+            Category picker hitting exactly this with a long list). */}
+        <ScrollView style={{ flexShrink: 1, maxHeight: 340 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           {['—', ...options].map((item) => {
             // The blank row's own real value is '' (see onSelect below),
             // not the literal '—' it displays — compare against that so
@@ -110,10 +125,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   dropdownInputActive: { borderColor: '#E76124' },
+  dropdownInputDisabled: { backgroundColor: '#F3F4F6' },
   dropdownText: {
     fontSize: 14,
     color: '#1F2937',
   },
+  dropdownTextDisabled: { color: '#6B7280' },
   dropdownArrow: {
     color: '#9CA3AF',
     fontSize: 12,
