@@ -163,17 +163,41 @@ export default function TaskFormScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vm.taskLoading]);
 
+  // "Load & Phase Check" was built with no collapse logic at all — its
+  // GroupHeader had a hardcoded saved={false} and no onPress/expanded, so
+  // it could never auto-minimize after saving (or manually collapse at
+  // all), unlike every other Step 2 card. Its own save button combines
+  // two separate underlying saves (Alternator & Panel's loadUnbalance +
+  // Group B's Phase Difference), so — same reasoning as engineParamsCollapsed
+  // above — it needs its own local collapse flag rather than reusing either
+  // single sectionSuccess key directly: it should only collapse once BOTH
+  // underlying saves have actually succeeded.
+  const [loadPhaseCollapsed, setLoadPhaseCollapsed] = useState(false);
+  useEffect(() => {
+    if (vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]) {
+      setLoadPhaseCollapsed(true);
+    }
+  }, [vm.sectionSuccess["alternator"], vm.sectionSuccess["groupB"]]);
+  const loadPhaseExpanded = !loadPhaseCollapsed || !!sectionReopened["loadAndPhase"];
+
   const engineParamsExpanded = engineParamsCollapsed !== true || !!sectionReopened["engineParams"];
   const toggleEngineParamsReopen = () => toggleSectionReopen("engineParams");
+  // Revalidation saves this card's own independent engineParameters slice
+  // (mobile-revalidation-and-service-changes.md §1.5-1.7) instead of the
+  // shared combined readings/gensetReadings blob every other task type
+  // still uses unchanged — same button, same card, just a different
+  // underlying save depending on task type.
   const handleSaveEngineParams = async () => {
-    const ok = await vm.handleSaveReadings();
+    const ok = vm.isRevalidation ? await vm.handleSaveEngineParametersReval() : await vm.handleSaveReadings();
     if (ok) setEngineParamsCollapsed(true);
   };
 
   const readingsExpanded = readingsCardCollapsed !== true || !!sectionReopened["readings"];
   const toggleReadingsReopen = () => toggleSectionReopen("readings");
+  // Same isRevalidation split as handleSaveEngineParams above, for this
+  // card's own independent gensetElectricalReadings slice.
   const handleSaveReadingsCard = async () => {
-    const ok = await vm.handleSaveReadings();
+    const ok = vm.isRevalidation ? await vm.handleSaveGensetElectricalReadingsReval() : await vm.handleSaveReadings();
     if (ok) setReadingsCardCollapsed(true);
   };
 
@@ -872,10 +896,22 @@ export default function TaskFormScreen() {
                           {vm.sectionError["alternator"]}
                         </Text>
                       ) : null}
+                      {vm.sectionError["groupB"] ? (
+                        <Text style={styles.sectionErrorText}>
+                          {vm.sectionError["groupB"]}
+                        </Text>
+                      ) : null}
+                      {/* Also fires handleSaveGroupB now, not just
+                      handleSaveAlternatorPanel — Load Unbalance moved to
+                      Group B's own payload (commissioningChecks.
+                      B_loadUnbalance), and this card is what actually
+                      shows/edits that Yes/No + percentage value, so its
+                      own Save button needs to send it too, the same as
+                      Step 2's "Load & Phase Check" card does. */}
                       <SectionSaveButton
-                        onPress={vm.handleSaveAlternatorPanel}
-                        saving={vm.sectionSaving["alternator"]}
-                        done={vm.sectionSuccess["alternator"]}
+                        onPress={vm.handleSaveLoadAndPhaseCheck}
+                        saving={vm.sectionSaving["alternator"] || vm.sectionSaving["groupB"]}
+                        done={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
                       />
                     </>
                   )}
@@ -1847,7 +1883,14 @@ export default function TaskFormScreen() {
                     Alternator & Panel / Group B success state those cards
                     show too. */}
                 <View style={styles.sectionCard}>
-                  <GroupHeader title="Load & Phase Check" saved={false} />
+                  <GroupHeader
+                    title="Load & Phase Check"
+                    saved={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
+                    onPress={() => toggleSectionReopen("loadAndPhase")}
+                    expanded={loadPhaseExpanded}
+                  />
+                  {loadPhaseExpanded && (
+                  <>
                   <Text style={styles.fieldLabel}>Load Unbalance</Text>
                   <View style={[styles.fieldFull, { marginTop: 10 }]}>
                     <View style={styles.toggleRow}>
@@ -1951,6 +1994,8 @@ export default function TaskFormScreen() {
                     saving={vm.sectionSaving["alternator"] || vm.sectionSaving["groupB"]}
                     done={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
                   />
+                  </>
+                  )}
                 </View>
                 </>
                 )}
@@ -2593,15 +2638,22 @@ export default function TaskFormScreen() {
                 Difference alongside it here, unlike Step 2's combined
                 "Load & Phase Check" card — Phase Difference comes from
                 Group B's item 8, which is a regular-commissioning-only
-                checklist group revalidation doesn't have). Still saved by
-                its original action (handleSaveAlternatorPanel) — only the
-                on-screen position/grouping changed, not which payload
-                loadUnbalance is actually part of. */}
+                checklist group revalidation doesn't have). Saves via its
+                own handleSaveLoadUnbalanceReval now — confirmed real
+                contract (mobile-revalidation-and-service-changes.md
+                §1.5-1.7) is CommissioningEntry's own top-level
+                loadUnbalance/loadUnbalancePercentage via /readings, not
+                the commissioningChecks.B_loadUnbalance key every other
+                task type now uses (Group B doesn't exist for
+                Revalidation's own checklist). Uses its own
+                'loadUnbalanceReval' section key rather than reusing
+                'alternator', so this card's own saved/saving/error state
+                reflects THIS save, not Step 1's unrelated one. */}
                 {vm.isRevalidation && (
                 <View style={styles.sectionCard}>
                   <GroupHeader
                     title="Load Unbalance"
-                    saved={vm.sectionSuccess["alternator"] || false}
+                    saved={vm.sectionSuccess["loadUnbalanceReval"] || false}
                     onPress={() => toggleSectionReopen("loadUnbalanceStep5")}
                     expanded={isSectionExpanded("loadUnbalanceStep5")}
                   />
@@ -2659,15 +2711,15 @@ export default function TaskFormScreen() {
                         )}
                       </View>
 
-                      {vm.sectionError["alternator"] ? (
+                      {vm.sectionError["loadUnbalanceReval"] ? (
                         <Text style={styles.sectionErrorText}>
-                          {vm.sectionError["alternator"]}
+                          {vm.sectionError["loadUnbalanceReval"]}
                         </Text>
                       ) : null}
                       <SectionSaveButton
-                        onPress={vm.handleSaveAlternatorPanel}
-                        saving={vm.sectionSaving["alternator"]}
-                        done={vm.sectionSuccess["alternator"]}
+                        onPress={vm.handleSaveLoadUnbalanceReval}
+                        saving={vm.sectionSaving["loadUnbalanceReval"]}
+                        done={vm.sectionSuccess["loadUnbalanceReval"]}
                       />
                     </>
                   )}

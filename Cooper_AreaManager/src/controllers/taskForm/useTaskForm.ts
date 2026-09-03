@@ -377,19 +377,22 @@ export function useTaskForm() {
     atsSerialNumber: atsSn,
   }), [saveAssetSection, gensetModel, gensetSrNumber, engineModel, engineNumber, engineKw, engineType, engineFamily, fuelType, application, cpcbNorm, atsSn]);
 
+  // loadUnbalance/loadUnbalancePercentage/loadUnbalanceComment used to be
+  // sent here as part of the Asset record — confirmed real destination is
+  // actually commissioningChecks.B_loadUnbalance/B_loadUnbalancePercentage
+  // instead (Group B, as strings — "Yes"/"75", same convention every other
+  // check field already uses), sent via handleSaveGroupB below. Not
+  // included in this payload anymore; see handleSaveLoadAndPhaseCheck,
+  // which every place that saves this shared Yes/No + percentage value
+  // (both this card's own Save button and Step 2's "Load & Phase Check")
+  // now goes through instead of calling this function alone.
   const handleSaveAlternatorPanel = useCallback(() => saveAssetSection('alternator', {
     alternatorMake: altMake, alternatorModel: altModel, alternatorSerialNumber: altSn,
     batteryType, battery1SerialNumber: batterySn, battery2SerialNumber: battery2Sn,
     kva, phase, panelType,
     controlPanelSerialNumber: panelSn,
     controllerType, controllerSerialNumber: controllerSr,
-    // loadUnbalance itself (the Yes/No answer) was never actually included
-    // here before — only the percentage was, so the backend had no way to
-    // tell "balanced" apart from "unbalanced but no % entered yet".
-    loadUnbalance: loadUnbalance === 'Yes',
-    loadUnbalancePercentage: loadUnbalance === 'Yes' && loadUnbalancePercentage ? Number(loadUnbalancePercentage) : null,
-    loadUnbalanceComment: loadUnbalance === 'No' ? (loadUnbalanceComment || null) : null,
-  }), [saveAssetSection, altMake, altModel, altSn, batteryType, batterySn, battery2Sn, kva, phase, panelType, panelSn, controllerType, controllerSr, loadUnbalance, loadUnbalancePercentage, loadUnbalanceComment]);
+  }), [saveAssetSection, altMake, altModel, altSn, batteryType, batterySn, battery2Sn, kva, phase, panelType, panelSn, controllerType, controllerSr]);
 
   // cpcbNorm and atsSn moved here from Alternator & Panel — both fields now
   // live on the Genset Identification card, so their "missing" count and
@@ -453,6 +456,16 @@ export function useTaskForm() {
       });
       setCommissioningChecks(checks);
 
+      // Confirmed real key: commissioningChecks.B_loadUnbalance (Group B,
+      // alongside B1-B5B) — takes precedence over whatever the Asset
+      // record's own loadUnbalance was hydrated to (see loadAssetDetail),
+      // since that's no longer where handleSaveGroupB/
+      // handleSaveLoadAndPhaseCheck actually save it.
+      if (checks.B_loadUnbalance !== undefined) {
+        setLoadUnbalance(checks.B_loadUnbalance === 'Yes' ? 'Yes' : 'No');
+        setLoadUnbalancePercentage(checks.B_loadUnbalancePercentage ?? '');
+      }
+
       // Always check (silently) whether the source entry has checks worth
       // offering as a "load as starting point" card — shown regardless of
       // whether this task already has its own checks, so it also works as
@@ -484,7 +497,30 @@ export function useTaskForm() {
       const token = await getToken();
       if (!token) return;
       const data = await getCommissioningProgress(token, taskId);
-      let checks = data.validationChecks || {};
+      const raw = data.validationChecks || {};
+      // This app always saves/reads validationChecks flat — {A1: 'Ok',
+      // A1_comment: '...'} — but the field is a free-form Mixed blob, and
+      // the web app's OWN per-item shape is a small object instead —
+      // validationChecks[id] = { value, comment } (see mobile-
+      // revalidation-and-service-changes.md §1.1's own
+      // "validationChecks[item.id].comment" reference). A task last
+      // touched from the website can have that nested shape sitting in
+      // the same field this reads, which crashed the checklist screen
+      // entirely before (see FormToggleRows.tsx's own fix) and — even
+      // once that crash was fixed — still just showed as unanswered,
+      // since a { value, comment } object never matched a plain-string
+      // toggle option. Normalizing each key independently here means a
+      // task can have some items answered via the website (nested) and
+      // others via this app (flat) and both still display correctly.
+      let checks: Record<string, string> = {};
+      Object.entries(raw).forEach(([key, val]: [string, any]) => {
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+          if (val.value !== undefined && val.value !== null) checks[key] = String(val.value);
+          if (val.comment !== undefined && val.comment !== null) checks[`${key}_comment`] = String(val.comment);
+        } else if (val !== undefined && val !== null) {
+          checks[key] = String(val);
+        }
+      });
       const pending = await getPendingBody(`validation_${taskId}`);
       if (pending?.validationChecks) checks = { ...checks, ...pending.validationChecks };
       setValidationChecks(checks);
@@ -563,17 +599,26 @@ export function useTaskForm() {
     () => saveGroupChecks('groupA', buildGroupPayload(GROUP_A_FIELDS, GROUP_A_COMMENT_FIELDS)),
     [saveGroupChecks, commissioningChecks]
   );
-  const handleSaveGroupB = useCallback(
-    () => saveGroupChecks('groupB', buildGroupPayload(GROUP_B_FIELDS, GROUP_B_COMMENT_FIELDS)),
-    [saveGroupChecks, commissioningChecks]
-  );
+  // Confirmed real keys: commissioningChecks.B_loadUnbalance /
+  // B_loadUnbalancePercentage — strings ("Yes"/"75"), same convention
+  // every other check field already uses, part of Group B alongside
+  // B1-B5B rather than a separate boolean/number on the Asset record.
+  const handleSaveGroupB = useCallback(() => {
+    const payload = buildGroupPayload(GROUP_B_FIELDS, GROUP_B_COMMENT_FIELDS);
+    if (loadUnbalance) payload.B_loadUnbalance = loadUnbalance;
+    if (loadUnbalance === 'Yes' && loadUnbalancePercentage) payload.B_loadUnbalancePercentage = loadUnbalancePercentage;
+    return saveGroupChecks('groupB', payload);
+  }, [saveGroupChecks, commissioningChecks, loadUnbalance, loadUnbalancePercentage]);
   // The "Load & Phase Check" card's single Save button — it shows Load
-  // Unbalance (part of Alternator & Panel's payload) and Phase Difference
-  // Genset A (part of Group B's payload) together, so pressing it has to
-  // fire both underlying saves. Each still tracks its own saving/success/
-  // error under its own key ('alternator'/'groupB') — this just runs them
-  // together; the Alternator & Panel and Group B cards elsewhere keep
-  // showing the same saved state either save updates.
+  // Unbalance (now part of Group B's own payload, see handleSaveGroupB
+  // above) and Phase Difference Genset A (also Group B) together. Also
+  // reused by Step 1's own "Alternator & Panel" Save button, since both
+  // cards edit the same shared loadUnbalance/loadUnbalancePercentage
+  // value and both need it to actually reach the server. Each half still
+  // tracks its own saving/success/error under its own key
+  // ('alternator'/'groupB') — this just runs them together; the
+  // Alternator & Panel and Group B cards elsewhere keep showing the same
+  // saved state either save updates.
   const handleSaveLoadAndPhaseCheck = useCallback(
     () => Promise.all([handleSaveAlternatorPanel(), handleSaveGroupB()]),
     [handleSaveAlternatorPanel, handleSaveGroupB]
@@ -587,12 +632,47 @@ export function useTaskForm() {
     GROUP_D_FIELDS.forEach(key => { if (commissioningChecks[key]) payload[key] = commissioningChecks[key]; });
     return saveGroupChecks('groupD', payload);
   }, [saveGroupChecks, commissioningChecks]);
-  const handleSaveGroupE = useCallback(() => {
-    console.log('[Commissioning] handleSaveGroupE tapped, isRevalidation =', isRevalidation, 'commissioningChecks.runningHours =', JSON.stringify(commissioningChecks.runningHours));
+  // Running Hours — for Revalidation, confirmed real contract (mobile-
+  // revalidation-and-service-changes.md §1.6-1.7) is a plain top-level
+  // `runningHours` field via PUT /api/commissioning/:id/readings, NOT
+  // nested under commissioningChecks via /progress (the shape below,
+  // which stays exactly as-is for plain Commissioning/Re-Commissioning/
+  // Pre-Commissioning — those keep using GROUP_E_FIELDS/saveGroupChecks
+  // unchanged). Both branches share the same 'groupE' sectionSaving/
+  // sectionSuccess/sectionError keys, so runningHoursCard's existing
+  // Save-button/GroupHeader indicator keeps working for either path
+  // without taskForm.tsx needing any JSX change.
+  const handleSaveGroupE = useCallback(async () => {
+    if (isRevalidation) {
+      setSectionSaving(prev => ({ ...prev, groupE: true }));
+      setSectionError(prev => ({ ...prev, groupE: '' }));
+      setSectionSuccess(prev => ({ ...prev, groupE: false }));
+      try {
+        if (!taskId) return;
+        const value = commissioningChecks.runningHours;
+        const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+        const { queued } = await putOrQueue(
+          `/api/commissioning/${taskId}/readings`,
+          { runningHours: value ? Number(value) : null },
+          `Running Hours (${assetLabel})`,
+          `reval_runningHours_${taskId}`,
+          isEngineer
+        );
+        setSectionSuccess(prev => ({ ...prev, groupE: true }));
+        showToast(queued ? 'Saved on this device — will sync later' : 'Saved successfully!', 'success');
+      } catch (error: any) {
+        const msg = parseApiError(error, 'Failed to save. Please try again.').message;
+        setSectionError(prev => ({ ...prev, groupE: msg }));
+        showToast(msg, 'error');
+      } finally {
+        setSectionSaving(prev => ({ ...prev, groupE: false }));
+      }
+      return;
+    }
     const payload: Record<string, string> = {};
     GROUP_E_FIELDS.forEach(key => { if (commissioningChecks[key]) payload[key] = commissioningChecks[key]; });
     return saveGroupChecks('groupE', payload);
-  }, [saveGroupChecks, commissioningChecks, isRevalidation]);
+  }, [saveGroupChecks, commissioningChecks, isRevalidation, taskId, gensetSrNumber, engineNumber, isEngineer, showToast]);
   const handleSaveCustomerHandover = useCallback(() => {
     const payload: Record<string, string> = {};
     GROUP_F_FIELDS.forEach(key => {
@@ -837,6 +917,47 @@ export function useTaskForm() {
       if (r.oilLevelComment) next.oilLevelComment = r.oilLevelComment;
       if (r.coolantLevel) next.coolantLevel = r.coolantLevel;
       if (r.coolantLevelComment) next.coolantLevelComment = r.coolantLevelComment;
+
+      // Revalidation reads back from its own independent fields (see
+      // handleSaveEngineParametersReval/handleSaveGensetElectricalReadingsReval/
+      // handleSaveGroupE/handleSaveLoadUnbalanceReval) instead of the
+      // shared gensetReadings blob above — merged into the same `readings`
+      // state object since engineParametersCard/the Genset Electrical
+      // Readings card both read every field from vm.readings[key]
+      // regardless of which backend field it actually came from. Plain
+      // Commissioning/Re-Commissioning/Pre-Commissioning is untouched —
+      // this block only runs for Revalidation.
+      if (isRevalidation) {
+        const ep = data.engineParameters || {};
+        const er = data.gensetElectricalReadings || {};
+        [...READINGS_NUMERIC_FIELDS].forEach(key => {
+          if (ep[key] !== undefined) next[key] = String(ep[key]);
+          if (er[key] !== undefined) next[key] = String(er[key]);
+        });
+        if (ep.oilLevel) next.oilLevel = ep.oilLevel;
+        if (ep.oilLevelComment) next.oilLevelComment = ep.oilLevelComment;
+        if (ep.coolantLevel) next.coolantLevel = ep.coolantLevel;
+        if (ep.coolantLevelComment) next.coolantLevelComment = ep.coolantLevelComment;
+
+        // Takes precedence over the Asset record's own loadUnbalance
+        // (hydrated separately, see loadAssetDetail's own comment) — for
+        // Revalidation, CommissioningEntry.loadUnbalance is now the
+        // authoritative value since that's what handleSaveLoadUnbalanceReval
+        // actually writes to.
+        if (data.loadUnbalance === true) setLoadUnbalance('Yes');
+        else if (data.loadUnbalance === false) setLoadUnbalance('No');
+        if (data.loadUnbalancePercentage !== undefined) setLoadUnbalancePercentage(String(data.loadUnbalancePercentage));
+
+        // Running Hours moved off commissioningChecks entirely for
+        // Revalidation (superseded — see handleSaveGroupE's own comment) —
+        // overlaid onto the same commissioningChecks.runningHours key the
+        // (unchanged) runningHoursCard UI already reads, so this card
+        // shows the real, current value without needing its own JSX.
+        if (data.runningHours !== undefined) {
+          setCommissioningChecks(prev => ({ ...prev, runningHours: String(data.runningHours) }));
+        }
+      }
+
       setReadings(next);
 
       if (r.savedBy) setReadingsSavedBy(r.savedBy);
@@ -844,7 +965,7 @@ export function useTaskForm() {
     } catch (error) {
       console.log('Failed to load genset readings:', error);
     }
-  }, [taskId]);
+  }, [taskId, isRevalidation]);
 
   useEffect(() => {
     // Step 2 now shows Engine Parameters (moved there, above Performance
@@ -906,6 +1027,141 @@ export function useTaskForm() {
       setReadingsSaving(false);
     }
   }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
+
+  // Revalidation-only counterparts to handleSaveReadings above — confirmed
+  // real contract (mobile-revalidation-and-service-changes.md §1.5-1.7):
+  // Engine Parameters and Genset Electrical Reading are independent slices
+  // (engineParameters / gensetElectricalReadings) on the SAME
+  // /api/commissioning/:id/readings endpoint handleSaveReadings already
+  // uses, not the shared `readings` (gensetReadings) blob that stays
+  // exactly as-is for plain Commissioning/Re-Commissioning/Pre-
+  // Commissioning. Deliberately reuse the same readingsSaving/
+  // readingsError/readingsSuccess state handleSaveReadings uses (not a new
+  // sectionSuccess key) so engineParametersCard's/the Genset Electrical
+  // Readings card's existing Save-button/GroupHeader indicators keep
+  // working exactly as they already do for the non-revalidation case,
+  // without taskForm.tsx needing any JSX changes for these two.
+  const handleSaveEngineParametersReval = useCallback(async (): Promise<boolean> => {
+    setReadingsSaving(true);
+    setReadingsError('');
+    setReadingsSuccess(false);
+    try {
+      if (!taskId) return false;
+      const oilLevel = readings.oilLevel || '';
+      const coolantLevel = readings.coolantLevel || '';
+      const now = new Date().toISOString();
+
+      const body: Record<string, any> = {};
+      (['rpm', 'frequency', 'dcVoltage', 'oilPressure', 'coolantTemperature', 'defLevelPercentage'] as const).forEach(key => {
+        body[key] = readings[key] ? Number(readings[key]) : undefined;
+      });
+      body.oilLevel = oilLevel || undefined;
+      if (oilLevel.toUpperCase() === 'NOT OK' && readings.oilLevelComment) body.oilLevelComment = readings.oilLevelComment;
+      body.coolantLevel = coolantLevel || undefined;
+      if (coolantLevel.toUpperCase() === 'NOT OK' && readings.coolantLevelComment) body.coolantLevelComment = readings.coolantLevelComment;
+
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      const { queued } = await putOrQueue(
+        `/api/commissioning/${taskId}/readings`,
+        { engineParameters: body },
+        `Engine Parameters (${assetLabel})`,
+        `reval_engineParams_${taskId}`,
+        isEngineer
+      );
+
+      setReadingsSavedBy({ name: assignedToName, role: assignedToRole });
+      setReadingsSavedAt(now);
+      setReadingsSuccess(true);
+      showToast(queued ? 'Saved on this device — will sync later' : 'Saved successfully!', 'success');
+      return true;
+    } catch (error: any) {
+      const msg = parseApiError(error, 'Failed to save. Please try again.').message;
+      setReadingsError(msg);
+      showToast(msg, 'error');
+      return false;
+    } finally {
+      setReadingsSaving(false);
+    }
+  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
+
+  const handleSaveGensetElectricalReadingsReval = useCallback(async (): Promise<boolean> => {
+    setReadingsSaving(true);
+    setReadingsError('');
+    setReadingsSuccess(false);
+    try {
+      if (!taskId) return false;
+      const now = new Date().toISOString();
+
+      const body: Record<string, any> = {};
+      (['acVoltageRY', 'acVoltageYB', 'acVoltageBR', 'acAmpR', 'acAmpY', 'acAmpB', 'loadKwR', 'loadKwY', 'loadKwB', 'totalKwLoad', 'loadPercentage'] as const).forEach(key => {
+        body[key] = readings[key] ? Number(readings[key]) : undefined;
+      });
+
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      const { queued } = await putOrQueue(
+        `/api/commissioning/${taskId}/readings`,
+        { gensetElectricalReadings: body },
+        `Genset Electrical Reading (${assetLabel})`,
+        `reval_electrical_${taskId}`,
+        isEngineer
+      );
+
+      setReadingsSavedBy({ name: assignedToName, role: assignedToRole });
+      setReadingsSavedAt(now);
+      setReadingsSuccess(true);
+      showToast(queued ? 'Saved on this device — will sync later' : 'Saved successfully!', 'success');
+      return true;
+    } catch (error: any) {
+      const msg = parseApiError(error, 'Failed to save. Please try again.').message;
+      setReadingsError(msg);
+      showToast(msg, 'error');
+      return false;
+    } finally {
+      setReadingsSaving(false);
+    }
+  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
+
+  // Load Unbalance — Revalidation's own dedicated Step 5 card (a separate
+  // JSX block, only ever rendered when isRevalidation, unlike Engine
+  // Parameters/Genset Electrical Reading above which share JSX with the
+  // non-revalidation flow) — so this always sends the new confirmed
+  // contract unconditionally, no isRevalidation branch needed here. Uses
+  // its own 'loadUnbalanceReval' section key rather than reusing
+  // handleSaveAlternatorPanel's 'alternator' key, so this card's own
+  // Save-button/GroupHeader indicator reflects whether THIS save actually
+  // succeeded instead of showing Step 1's Alternator & Panel card's
+  // unrelated save state. handleSaveAlternatorPanel itself is untouched —
+  // Step 1's own Alternator & Panel card keeps saving loadUnbalance to the
+  // Asset record exactly as it already does, for every task type.
+  const handleSaveLoadUnbalanceReval = useCallback(async (): Promise<boolean> => {
+    const sectionKey = 'loadUnbalanceReval';
+    setSectionSaving(prev => ({ ...prev, [sectionKey]: true }));
+    setSectionError(prev => ({ ...prev, [sectionKey]: '' }));
+    setSectionSuccess(prev => ({ ...prev, [sectionKey]: false }));
+    try {
+      if (!taskId) return false;
+      const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
+      const body: Record<string, any> = { loadUnbalance: loadUnbalance === 'Yes' };
+      if (loadUnbalance === 'Yes') body.loadUnbalancePercentage = loadUnbalancePercentage ? Number(loadUnbalancePercentage) : undefined;
+      const { queued } = await putOrQueue(
+        `/api/commissioning/${taskId}/readings`,
+        body,
+        `Load Unbalance (${assetLabel})`,
+        `reval_loadUnbalance_${taskId}`,
+        isEngineer
+      );
+      setSectionSuccess(prev => ({ ...prev, [sectionKey]: true }));
+      showToast(queued ? 'Saved on this device — will sync later' : 'Saved successfully!', 'success');
+      return true;
+    } catch (error: any) {
+      const msg = parseApiError(error, 'Failed to save. Please try again.').message;
+      setSectionError(prev => ({ ...prev, [sectionKey]: msg }));
+      showToast(msg, 'error');
+      return false;
+    } finally {
+      setSectionSaving(prev => ({ ...prev, [sectionKey]: false }));
+    }
+  }, [taskId, loadUnbalance, loadUnbalancePercentage, isEngineer, gensetSrNumber, engineNumber, showToast]);
 
   // Step 6's "Complete" action: every photo/video/PDF has already uploaded
   // immediately when it was picked (see useTaskFormPhotos/
@@ -1016,6 +1272,7 @@ export function useTaskForm() {
     readings, updateReading,
     readingsSavedBy, readingsSavedAt, readingsSaving, readingsError, readingsSuccess,
     handleSaveReadings,
+    handleSaveEngineParametersReval, handleSaveGensetElectricalReadingsReval, handleSaveLoadUnbalanceReval,
 
     // Step 6
     sitePhotos: photos.sitePhotos, photoOptionsVisible: photos.photoOptionsVisible,

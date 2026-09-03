@@ -727,7 +727,7 @@ export default function SrTaskFormScreen() {
 
                     {vm.sectionError['engineParams'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['engineParams']}</Text> : null}
                     <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('engineParams')}
+                      onPress={vm.handleSaveEngineParams}
                       saving={vm.sectionSaving['engineParams']}
                       done={vm.sectionSuccess['engineParams']}
                     />
@@ -801,7 +801,7 @@ export default function SrTaskFormScreen() {
 
                     {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
                     <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('electrical')}
+                      onPress={vm.handleSaveGensetElectricalReadings}
                       saving={vm.sectionSaving['electrical']}
                       done={vm.sectionSuccess['electrical']}
                     />
@@ -933,7 +933,7 @@ export default function SrTaskFormScreen() {
 
                     {vm.sectionError['loadUnbalance'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['loadUnbalance']}</Text> : null}
                     <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('loadUnbalance')}
+                      onPress={vm.handleSaveLoadUnbalance}
                       saving={vm.sectionSaving['loadUnbalance']}
                       done={vm.sectionSuccess['loadUnbalance']}
                     />

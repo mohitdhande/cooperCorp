@@ -737,39 +737,39 @@ export default function ServiceTaskReportScreen() {
               <Text style={styles.fieldValue}>{val(a.controllerSerialNumber)}</Text>
             </View>
           </View>
+          {/* Confirmed real backend shape (mobile-service-complete-
+              changes.md §4): task.loadUnbalance / task.loadUnbalancePercentage
+              — plain top-level fields on the service entry itself, NOT the
+              Asset record (an earlier, since-superseded assumption). No
+              comment field exists in this contract, so there's nothing to
+              fall back to when unbalance is "No". */}
           <View style={styles.fieldFull}>
             <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
-            <Text style={styles.fieldValue}>{a.loadUnbalance === true ? 'Yes' : a.loadUnbalance === false ? 'No' : '--'}</Text>
+            <Text style={styles.fieldValue}>{task?.loadUnbalance === true ? 'Yes' : task?.loadUnbalance === false ? 'No' : '--'}</Text>
           </View>
-          {a.loadUnbalance ? (
+          {task?.loadUnbalance ? (
             <View style={styles.fieldFull}>
               <Text style={styles.fieldLabel}>UNBALANCE %</Text>
-              <Text style={styles.fieldValue}>{val(a.loadUnbalancePercentage)}</Text>
-            </View>
-          ) : a.loadUnbalanceComment ? (
-            <View style={styles.fieldFull}>
-              <Text style={styles.fieldLabel}>COMMENT</Text>
-              <Text style={styles.fieldValue}>{val(a.loadUnbalanceComment)}</Text>
+              <Text style={styles.fieldValue}>{val(task?.loadUnbalancePercentage)}</Text>
             </View>
           ) : null}
         </ReportSectionCard>
 
- 
+
 
         {/* Running Hours — its own standalone section rather than folded
-            into Engine Parameters below. Confirmed real backend shape:
-            task.commissioningChecks.runningHours (same wrapper/key
-            Commissioning uses, a string, saved via srTaskForm.tsx's own
-            handleSaveRunningHours to /api/service/:id/save-progress) — NOT
-            an asset-level field, despite living alongside Step 1's other
-            asset fields in the form. Also shows the photo taken during
-            that same step — recoverable here because the form always
-            confirms it pre-tagged 'Running Hours' (see useSrTaskForm.ts's
-            runningHoursQueue), so srTaskReportController.ts can pull it
-            out of the general media[] array instead of it landing in the
-            plain Photos section below. */}
+            into Engine Parameters below. Confirmed real backend shape
+            (mobile-service-complete-changes.md §3): task.runningHours — a
+            plain top-level number on the service entry, NOT nested under
+            commissioningChecks (an earlier, since-superseded assumption).
+            Also shows the photo taken during that same step — recoverable
+            here because the form always confirms it pre-tagged 'Running
+            Hours' (see useSrTaskForm.ts's runningHoursQueue), so
+            srTaskReportController.ts can pull it out of the general
+            media[] array instead of it landing in the plain Photos section
+            below. */}
         <ReportSectionCard title="Running Hours" expanded={runningHoursExpanded} onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}>
-          <InfoRow label="Running Hours" value={task?.commissioningChecks?.runningHours} />
+          <InfoRow label="Running Hours" value={task?.runningHours} />
           {!!runningHoursPhotoUrl && (
             <Image
               source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
@@ -778,29 +778,38 @@ export default function ServiceTaskReportScreen() {
           )}
         </ReportSectionCard>
 
+        {/* Confirmed real backend shape (mobile-service-complete-
+            changes.md v1.1 §2): task.engineParameters — the service
+            entry's own field, NOT the Asset record (an earlier, since-
+            superseded assumption; also renamed from an earlier
+            "gensetReadings" guess to the confirmed real key). */}
         <ReportSectionCard title="Engine Parameters" expanded={engineParamsExpanded} onToggle={() => setEngineParamsExpanded(!engineParamsExpanded)}>
-          <InfoRow label="RPM" value={a.rpm} />
-          <InfoRow label="Frequency (Hz)" value={a.frequency} />
-          <InfoRow label="DC Voltage (V)" value={a.dcVoltage} />
-          <InfoRow label="Oil Pressure" value={a.oilPressure} />
-          <InfoRow label="Coolant Temp (°C)" value={a.coolantTemperature} />
-          <InfoRow label="DEF Level (%)" value={a.defLevelPercentage} />
-          <CheckRow label="Oil Level" value={a.oilLevel} />
-          <CheckRow label="Coolant Level" value={a.coolantLevel} />
+          <InfoRow label="RPM" value={task?.engineParameters?.rpm} />
+          <InfoRow label="Frequency (Hz)" value={task?.engineParameters?.frequency} />
+          <InfoRow label="DC Voltage (V)" value={task?.engineParameters?.dcVoltage} />
+          <InfoRow label="Oil Pressure" value={task?.engineParameters?.oilPressure} />
+          <InfoRow label="Coolant Temp (°C)" value={task?.engineParameters?.coolantTemperature} />
+          <InfoRow label="DEF Level (%)" value={task?.engineParameters?.defLevelPercentage} />
+          <CheckRow label="Oil Level" value={task?.engineParameters?.oilLevel} />
+          <CheckRow label="Coolant Level" value={task?.engineParameters?.coolantLevel} />
         </ReportSectionCard>
 
+        {/* Confirmed real backend shape (mobile-service-complete-
+            changes.md v1.1 §3): task.gensetElectricalReadings — its own
+            separate top-level field on the service entry (NEW in v1.1;
+            previously assumed to live on the Asset record). */}
         <ReportSectionCard title="Genset Electrical Readings" expanded={readingsExpanded} onToggle={() => setReadingsExpanded(!readingsExpanded)}>
-          <InfoRow label="AC Volt R-Y" value={a.acVoltageRY} />
-          <InfoRow label="AC Volt Y-B" value={a.acVoltageYB} />
-          <InfoRow label="AC Volt B-R" value={a.acVoltageBR} />
-          <InfoRow label="AC Amp R" value={a.acAmpR} />
-          <InfoRow label="AC Amp Y" value={a.acAmpY} />
-          <InfoRow label="AC Amp B" value={a.acAmpB} />
-          <InfoRow label="Load kW R" value={a.loadKwR} />
-          <InfoRow label="Load kW Y" value={a.loadKwY} />
-          <InfoRow label="Load kW B" value={a.loadKwB} />
-          <InfoRow label="Total Load KW" value={a.totalKwLoad} />
-          <InfoRow label="Load %" value={a.loadPercentage} />
+          <InfoRow label="AC Volt R-Y" value={task?.gensetElectricalReadings?.acVoltageRY} />
+          <InfoRow label="AC Volt Y-B" value={task?.gensetElectricalReadings?.acVoltageYB} />
+          <InfoRow label="AC Volt B-R" value={task?.gensetElectricalReadings?.acVoltageBR} />
+          <InfoRow label="AC Amp R" value={task?.gensetElectricalReadings?.acAmpR} />
+          <InfoRow label="AC Amp Y" value={task?.gensetElectricalReadings?.acAmpY} />
+          <InfoRow label="AC Amp B" value={task?.gensetElectricalReadings?.acAmpB} />
+          <InfoRow label="Load kW R" value={task?.gensetElectricalReadings?.loadKwR} />
+          <InfoRow label="Load kW Y" value={task?.gensetElectricalReadings?.loadKwY} />
+          <InfoRow label="Load kW B" value={task?.gensetElectricalReadings?.loadKwB} />
+          <InfoRow label="Total Load KW" value={task?.gensetElectricalReadings?.totalKwLoad} />
+          <InfoRow label="Load %" value={task?.gensetElectricalReadings?.loadPercentage} />
         </ReportSectionCard>
 
         <ReportSectionCard title="Complaint Codes" expanded={complaintExpanded} onToggle={() => setComplaintExpanded(!complaintExpanded)}>

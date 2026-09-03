@@ -256,7 +256,37 @@ export default function TaskReportScreen() {
   const validationChecks = task.validationChecks || {};
   const faultCodes = task.faultCodes || [];
   const partsUsed = task.partsUsed || [];
-  const gensetReadings = task.gensetReadings || null;
+  // Plain Commissioning/Re-Commissioning/Pre-Commissioning still uses the
+  // old combined blob (task.gensetReadings). Revalidation splits the same
+  // information across two independent fields instead — confirmed real
+  // shape (mobile-revalidation-and-service-changes.md §1.5-1.7) —
+  // task.engineParameters (rpm/frequency/oilLevel/...) and
+  // task.gensetElectricalReadings (acVoltage*/acAmp*/loadKw*/...). Merging
+  // them here (only when the old field is actually absent) keeps this one
+  // existing report section working unchanged for both cases instead of
+  // needing a second, near-duplicate section just for Revalidation.
+  const gensetReadings = task.gensetReadings
+    || ((task.engineParameters || task.gensetElectricalReadings)
+      ? { ...(task.engineParameters || {}), ...(task.gensetElectricalReadings || {}) }
+      : null);
+  // Same old-field/new-field split as gensetReadings above — plain
+  // Commissioning stores loadUnbalance on the Asset record; Revalidation
+  // has its own top-level task.loadUnbalance instead (confirmed real
+  // shape, mobile-revalidation-and-service-changes.md §1.5-1.7). Prefer
+  // the task-level one whenever it's actually set.
+  // Three possible sources, in priority order: Revalidation's own
+  // top-level task.loadUnbalance; regular Commissioning's confirmed real
+  // key commissioningChecks.B_loadUnbalance (a "Yes"/"No" string, not a
+  // boolean); the Asset record's own loadUnbalance as a last-resort
+  // fallback for older tasks saved before either of those existed.
+  const reportLoadUnbalance: boolean | undefined =
+    task.loadUnbalance !== undefined ? task.loadUnbalance
+      : commissioningChecks.B_loadUnbalance !== undefined ? commissioningChecks.B_loadUnbalance === 'Yes'
+        : a.loadUnbalance;
+  const reportLoadUnbalancePercentage =
+    task.loadUnbalance !== undefined ? task.loadUnbalancePercentage
+      : commissioningChecks.B_loadUnbalance !== undefined ? commissioningChecks.B_loadUnbalancePercentage
+        : a.loadUnbalancePercentage;
   const notes = task.notes || '';
   // Saved via the OTP sheet's own optional Step 3 (PUT /:id/feedback) once
   // the customer's OTP is verified — field name not yet confirmed against
@@ -477,13 +507,13 @@ export default function TaskReportScreen() {
             </View>
             <View style={styles.fieldHalf}>
               <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
-              <Text style={styles.fieldValue}>{a.loadUnbalance === true ? 'Yes' : a.loadUnbalance === false ? 'No' : '--'}</Text>
+              <Text style={styles.fieldValue}>{reportLoadUnbalance === true ? 'Yes' : reportLoadUnbalance === false ? 'No' : '--'}</Text>
             </View>
           </View>
-          {a.loadUnbalance && (
+          {reportLoadUnbalance && (
             <View style={styles.fieldFull}>
               <Text style={styles.fieldLabel}>UNBALANCE %</Text>
-              <Text style={styles.fieldValue}>{val(a.loadUnbalancePercentage)}</Text>
+              <Text style={styles.fieldValue}>{val(reportLoadUnbalancePercentage)}</Text>
             </View>
           )}
         </ReportSectionCard>
@@ -575,22 +605,25 @@ export default function TaskReportScreen() {
           </ReportSectionCard>
 
         {/* Running Hours — its own standalone section rather than buried
-            inside Commissioning/Validation Checks above, same
-            commissioningChecks.runningHours key regardless of task type (see
-            taskForm.tsx's runningHoursCard: Step 2 for pre-commissioning/
-            commissioning/re-commissioning, Step 5 for revalidation). Now
-            also shows the photo taken during that same step — it's
-            recoverable here because the form always confirms it pre-tagged
-            'Running Hours' (see useTaskFormPhotos.ts's runningHoursQueue),
-            so taskReportController.ts can pull it out of the general
-            media[] array by that tag instead of it landing in the plain
-            Photos section below alongside everything else. */}
+            inside Commissioning/Validation Checks above. Plain Commissioning/
+            Re-Commissioning/Pre-Commissioning still stores this in
+            commissioningChecks.runningHours; Revalidation moved it to its
+            own top-level task.runningHours field instead (confirmed real
+            shape, mobile-revalidation-and-service-changes.md §1.3/1.6-1.7)
+            — prefer that when present, fall back to the old spot otherwise
+            so this one section keeps working for both. Now also shows the
+            photo taken during that same step — it's recoverable here
+            because the form always confirms it pre-tagged 'Running Hours'
+            (see useTaskFormPhotos.ts's runningHoursQueue), so
+            taskReportController.ts can pull it out of the general media[]
+            array by that tag instead of it landing in the plain Photos
+            section below alongside everything else. */}
         <ReportSectionCard
           title="Running Hours"
           expanded={runningHoursExpanded}
           onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}
         >
-          <InfoRow label="Running Hours" value={commissioningChecks.runningHours} />
+          <InfoRow label="Running Hours" value={task.runningHours ?? commissioningChecks.runningHours} />
           {!!runningHoursPhotoUrl && (
             <Image
               source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}

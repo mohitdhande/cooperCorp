@@ -92,7 +92,11 @@ function PickerSheet({
         <View style={[styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, 16) + 14 }]}>
           <View style={styles.sheetDragHandle} />
           <Text style={styles.sheetTitle}>{title}</Text>
-          <ScrollView style={{ maxHeight: maxListHeight }} showsVerticalScrollIndicator={false}>
+          {/* keyboardShouldPersistTaps="handled" — this sheet can open
+              while the Title field's keyboard is still up (e.g. Category,
+              right below it); without this, the first tap on an option
+              just dismisses the keyboard instead of picking it. */}
+          <ScrollView style={{ maxHeight: maxListHeight }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {children}
           </ScrollView>
         </View>

@@ -126,6 +126,10 @@ export default function SrApprovalsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: hPad, paddingTop: 8, paddingBottom: 130, gap: 16 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
+        // Search box above stays focused/keyboard-up while typing —
+        // without this, the first tap on a card just dismisses the
+        // keyboard instead of opening it, needing a second tap.
+        keyboardShouldPersistTaps="handled"
       >
         {isLoading ? null : error ? (
           <Text style={styles.statusText}>{error}</Text>

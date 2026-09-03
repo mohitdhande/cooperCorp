@@ -127,6 +127,10 @@ export function PartPickerModal({ visible, onClose, parts, loading, onSelectPart
             keyExtractor={(part) => part._id}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            // Search box above stays focused/keyboard-up while typing —
+            // without this, the first tap on a result just dismisses the
+            // keyboard instead of picking it, needing a second tap.
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               <Text style={styles.emptyText}>
                 {parts.length === 0 ? 'No parts available.' : 'No matching parts'}

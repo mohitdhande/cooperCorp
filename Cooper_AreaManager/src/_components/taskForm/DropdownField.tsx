@@ -66,7 +66,13 @@ export function DropdownField({ label, value, options, onSelect, required = true
             this an actually-scrollable bounded viewport once a list is
             long enough to exceed it (found via newServiceJob.tsx's
             Category picker hitting exactly this with a long list). */}
-        <ScrollView style={{ flexShrink: 1, maxHeight: 340 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+        {/* keyboardShouldPersistTaps="handled" — without it, tapping an
+            option while a text field's keyboard is still up spends that
+            first tap dismissing the keyboard instead of picking the
+            option, needing a second tap to actually select it. The outer
+            screen ScrollView already has this set, but a nested
+            ScrollView like this one needs its own — it isn't inherited. */}
+        <ScrollView style={{ flexShrink: 1, maxHeight: 340 }} showsVerticalScrollIndicator={false} nestedScrollEnabled keyboardShouldPersistTaps="handled">
           {['—', ...options].map((item) => {
             // The blank row's own real value is '' (see onSelect below),
             // not the literal '—' it displays — compare against that so

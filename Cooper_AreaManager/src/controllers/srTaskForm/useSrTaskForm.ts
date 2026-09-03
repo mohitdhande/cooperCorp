@@ -183,23 +183,25 @@ export function useSrTaskForm() {
   const [coolantLevelComment, setCoolantLevelComment] = useState('');
   const [coolantTemp, setCoolantTemp] = useState('');
   const [defLevel, setDefLevel] = useState('');
-  // Confirmed real backend shape: NOT part of the Asset record — it's
-  // { commissioningChecks: { runningHours: "<string>" } } on the service
-  // task itself (same key/wrapper as Commissioning's own Running Hours
-  // field, sent as a string like every other commissioningChecks value,
-  // not a number), saved via its own handleSaveRunningHours below rather
-  // than folded into buildAssetPayload/handleSaveAssetSection.
+  // Confirmed real backend shape (mobile-service-complete-changes.md §3):
+  // NOT part of the Asset record, and NOT nested under commissioningChecks
+  // either (an earlier, since-superseded assumption) — a plain top-level
+  // `runningHours: number` field on the service entry itself, saved via
+  // PUT /api/service/:id/readings (see handleSaveRunningHours below).
   const [runningHours, setRunningHours] = useState('');
 
   const [sectionSaving, setSectionSaving] = useState<Record<string, boolean>>({});
   const [sectionSuccess, setSectionSuccess] = useState<Record<string, boolean>>({});
   const [sectionError, setSectionError] = useState<Record<string, string>>({});
 
-  // Builds the full asset payload from ALL step-1 fields, since the API is
-  // one PUT for the whole record — every section's Save button sends the
-  // same full payload, just tracked with its own loading/success state.
+  // Builds the full asset payload from Step-1's ASSET-level fields only —
+  // Engine Parameters, Genset Electrical Reading, Running Hours, and Load
+  // Unbalance all moved OFF this (and off the Asset record entirely) onto
+  // the service task's own /readings endpoint below (per the confirmed
+  // mobile-service-complete-changes.md contract) — they used to ride
+  // along in this same payload, sent to /api/assets/:id, which was never
+  // the right record for any of them.
   const buildAssetPayload = useCallback(() => ({
-    loadUnbalance: loadUnbalance === 'Yes',
     gensetNumber: gensetSrNumber,
     engineNumber,
     applicationMaterial: application,
@@ -211,40 +213,34 @@ export function useSrTaskForm() {
     controlPanelSerialNumber: panelSn,
     controllerType, controllerSerialNumber: controllerSr,
     cpcb: cpcbNorm, kva,
-    loadUnbalanceComment: loadUnbalance === 'No' ? (loadUnbalanceComment || null) : null,
-    loadUnbalancePercentage: loadUnbalance === 'Yes' ? toNum(loadUnbalancePercentage) : null,
     panelType, phase,
-    acAmpB: toNum(acAmpB), acAmpR: toNum(acAmpR), acAmpY: toNum(acAmpY),
-    acVoltageBR: toNum(acVoltBR), acVoltageRY: toNum(acVoltRY), acVoltageYB: toNum(acVoltYB),
-    loadKwB: toNum(loadKwB), loadKwR: toNum(loadKwR), loadKwY: toNum(loadKwY),
-    loadPercentage: toNum(loadPercent), totalKwLoad: toNum(totalKw),
-    coolantLevel, coolantTemperature: toNum(coolantTemp),
-    coolantLevelComment: coolantLevel === 'Not OK' ? (coolantLevelComment || null) : null,
-    dcVoltage: toNum(dcVoltage), defLevelPercentage: toNum(defLevel),
-    frequency: toNum(frequency), oilLevel, oilPressure: toNum(oilPressure), rpm: toNum(rpm),
-    oilLevelComment: oilLevel === 'Not OK' ? (oilLevelComment || null) : null,
   }), [
-    loadUnbalance, gensetSrNumber, engineNumber, application, engineFamily, engineModel, engineType,
+    gensetSrNumber, engineNumber, application, engineFamily, engineModel, engineType,
     fuelType, gensetModel, engineKw, altMake, altModel, altSn, atsSn, batteryType, batterySn, battery2Sn,
-    panelSn, controllerType, controllerSr, cpcbNorm, kva,
-    loadUnbalanceComment, loadUnbalancePercentage, panelType, phase,
-    acAmpB, acAmpR, acAmpY, acVoltBR, acVoltRY, acVoltYB, loadKwB, loadKwR, loadKwY, loadPercent, totalKw,
-    coolantLevel, coolantLevelComment, coolantTemp, dcVoltage, defLevel, frequency, oilLevel, oilLevelComment, oilPressure, rpm,
+    panelSn, controllerType, controllerSr, cpcbNorm, kva, panelType, phase,
   ]);
 
   const handleSaveAssetSection = useCallback(async (sectionKey: string) => {
+    console.log(`[Service] handleSaveAssetSection(${sectionKey}) tapped, assetId =`, assetId);
     setSectionSaving(prev => ({ ...prev, [sectionKey]: true }));
     setSectionError(prev => ({ ...prev, [sectionKey]: '' }));
     setSectionSuccess(prev => ({ ...prev, [sectionKey]: false }));
     try {
-      if (!assetId) return;
+      if (!assetId) {
+        console.log(`[Service] handleSaveAssetSection(${sectionKey}) aborted — no assetId yet`);
+        return;
+      }
       // Always the whole record (see buildAssetPayload's own comment) —
       // one dedupeKey covers every section's save button here, unlike
       // commissioning's per-section partial saves.
       const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, assetId);
-      await putOrQueue(`/api/assets/${assetId}`, buildAssetPayload(), `Asset details (${assetLabel})`, `sr_asset_${assetId}`, isEngineer);
+      const payload = buildAssetPayload();
+      console.log(`[Service] handleSaveAssetSection(${sectionKey}) sending to /api/assets/${assetId}:`, JSON.stringify(payload));
+      const { queued } = await putOrQueue(`/api/assets/${assetId}`, payload, `Asset details (${assetLabel})`, `sr_asset_${assetId}`, isEngineer);
+      console.log(`[Service] handleSaveAssetSection(${sectionKey}) result — queued:`, queued);
       setSectionSuccess(prev => ({ ...prev, [sectionKey]: true }));
     } catch (error: any) {
+      console.log(`[Service] handleSaveAssetSection(${sectionKey}) FAILED — status:`, error?.response?.status, 'data:', JSON.stringify(error?.response?.data), 'message:', error?.message);
       const { message } = parseApiError(error, 'Failed to save. Please try again.');
       setSectionError(prev => ({ ...prev, [sectionKey]: message }));
     } finally {
@@ -252,39 +248,100 @@ export function useSrTaskForm() {
     }
   }, [assetId, buildAssetPayload, isEngineer, gensetSrNumber, engineNumber]);
 
-  // Running Hours' own save — confirmed to NOT live on the Asset record
-  // (unlike every other Step-1 field above). It's part of the service
-  // task's own progress, under the same commissioningChecks.runningHours
-  // key/shape Commissioning uses, sent as a string like every other
-  // commissioningChecks value (not a number) — hence taskId/save-progress
-  // here, not assetId/buildAssetPayload.
-  const handleSaveRunningHours = useCallback(async () => {
-    const sectionKey = 'runningHours';
+  // Shared by all four /readings-based saves below (Engine Parameters,
+  // Genset Electrical Reading, Running Hours, Load Unbalance) — one
+  // endpoint, four independent optional slices (mobile-service-complete-
+  // changes.md v1.1 §6): only the top-level keys actually present in
+  // `body` are touched server-side, so each card's own Save button can
+  // call this with just its own slice without clobbering the other
+  // cards' unsaved edits.
+  const saveServiceReadings = useCallback(async (
+    sectionKey: string,
+    body: {
+      engineParameters?: Record<string, unknown>;
+      gensetElectricalReadings?: Record<string, unknown>;
+      runningHours?: number | null;
+      loadUnbalance?: boolean;
+      loadUnbalancePercentage?: number | null;
+    },
+    label: string,
+  ) => {
     setSectionSaving(prev => ({ ...prev, [sectionKey]: true }));
     setSectionError(prev => ({ ...prev, [sectionKey]: '' }));
     setSectionSuccess(prev => ({ ...prev, [sectionKey]: false }));
     try {
       if (!taskId) return;
       const assetLabel = formatAssetLabel(gensetSrNumber, engineNumber, taskId);
-      const payload = { commissioningChecks: { runningHours } };
-      console.log('[Service] handleSaveRunningHours sending:', JSON.stringify(payload));
+      console.log(`[Service] saveServiceReadings(${sectionKey}) sending to /api/service/${taskId}/readings:`, JSON.stringify(body));
       const { queued } = await putOrQueue(
-        `/api/service/${taskId}/save-progress`,
-        payload,
-        `Running Hours (${assetLabel})`,
-        `sr_runninghours_${taskId}`,
+        `/api/service/${taskId}/readings`,
+        body,
+        `${label} (${assetLabel})`,
+        `sr_readings_${sectionKey}_${taskId}`,
         isEngineer
       );
-      console.log('[Service] handleSaveRunningHours result — queued:', queued);
+      console.log(`[Service] saveServiceReadings(${sectionKey}) result — queued:`, queued);
       setSectionSuccess(prev => ({ ...prev, [sectionKey]: true }));
     } catch (error: any) {
-      console.log('[Service] handleSaveRunningHours FAILED:', error?.message || error);
+      console.log(`[Service] saveServiceReadings(${sectionKey}) FAILED — status:`, error?.response?.status, 'data:', JSON.stringify(error?.response?.data), 'message:', error?.message);
       const { message } = parseApiError(error, 'Failed to save. Please try again.');
       setSectionError(prev => ({ ...prev, [sectionKey]: message }));
     } finally {
       setSectionSaving(prev => ({ ...prev, [sectionKey]: false }));
     }
-  }, [taskId, runningHours, isEngineer, gensetSrNumber, engineNumber]);
+  }, [taskId, isEngineer, gensetSrNumber, engineNumber]);
+
+  // Engine Parameters — confirmed to live on the service entry's own
+  // `engineParameters` field (mobile-service-complete-changes.md v1.1 §2),
+  // sent whole (not merged field-by-field). Electrical Reading fields are
+  // deliberately NOT included here — they moved to their own field/save
+  // below (§3) after briefly being merged into this one mid-cycle.
+  const handleSaveEngineParams = useCallback(() => saveServiceReadings('engineParams', {
+    engineParameters: {
+      rpm: toNum(rpm), frequency: toNum(frequency), dcVoltage: toNum(dcVoltage),
+      oilPressure: toNum(oilPressure), coolantTemperature: toNum(coolantTemp), defLevelPercentage: toNum(defLevel),
+      oilLevel, oilLevelComment: oilLevel === 'Not OK' ? (oilLevelComment || null) : null,
+      coolantLevel, coolantLevelComment: coolantLevel === 'Not OK' ? (coolantLevelComment || null) : null,
+    },
+  }, 'Engine Parameters'), [saveServiceReadings, rpm, frequency, dcVoltage, oilPressure, coolantTemp, defLevel, oilLevel, oilLevelComment, coolantLevel, coolantLevelComment]);
+
+  // Genset Electrical Reading — NEW as of mobile-service-complete-
+  // changes.md v1.1 §3: its own top-level `gensetElectricalReadings` field
+  // on the service entry, fully independent from Engine Parameters (own
+  // save call, own dedupeKey, own success/error state). This used to ride
+  // along inside buildAssetPayload/handleSaveAssetSection('electrical'),
+  // sent to /api/assets/:id — that was never the right record for it, per
+  // this same document's earlier v1.0 §2 for Engine Parameters. Total Load
+  // KW / Load % are computed client-side already (see the totalKw/
+  // loadPercent effects above) — sent as plain numbers alongside the 9 raw
+  // inputs, not recomputed server-side.
+  const handleSaveGensetElectricalReadings = useCallback(() => saveServiceReadings('electrical', {
+    gensetElectricalReadings: {
+      acVoltageRY: toNum(acVoltRY), acVoltageYB: toNum(acVoltYB), acVoltageBR: toNum(acVoltBR),
+      acAmpR: toNum(acAmpR), acAmpY: toNum(acAmpY), acAmpB: toNum(acAmpB),
+      loadKwR: toNum(loadKwR), loadKwY: toNum(loadKwY), loadKwB: toNum(loadKwB),
+      totalKwLoad: toNum(totalKw), loadPercentage: toNum(loadPercent),
+    },
+  }, 'Genset Electrical Reading'), [saveServiceReadings, acVoltRY, acVoltYB, acVoltBR, acAmpR, acAmpY, acAmpB, loadKwR, loadKwY, loadKwB, totalKw, loadPercent]);
+
+  // Running Hours — confirmed real backend shape (mobile-service-complete-
+  // changes.md §3): a plain top-level number, not nested under
+  // commissioningChecks (an earlier, since-superseded assumption).
+  const handleSaveRunningHours = useCallback(
+    () => saveServiceReadings('runningHours', { runningHours: toNum(runningHours) as number | null }, 'Running Hours'),
+    [saveServiceReadings, runningHours]
+  );
+
+  // Load Unbalance — confirmed to live on the service entry's own top-level
+  // loadUnbalance/loadUnbalancePercentage (mobile-service-complete-
+  // changes.md §4), not the Asset record. Percentage is only sent when
+  // Yes — the server force-clears it to undefined whenever loadUnbalance
+  // is false regardless of what's sent, so there's no need to explicitly
+  // send a clearing value here, just omit it.
+  const handleSaveLoadUnbalance = useCallback(() => saveServiceReadings('loadUnbalance', {
+    loadUnbalance: loadUnbalance === 'Yes',
+    ...(loadUnbalance === 'Yes' ? { loadUnbalancePercentage: toNum(loadUnbalancePercentage) as number | null } : {}),
+  }, 'Load Unbalance'), [saveServiceReadings, loadUnbalance, loadUnbalancePercentage]);
 
   // ── Step 2: Complaint / Fault Codes ──
   const [apiFaultCodes, setApiFaultCodes] = useState<ApiFaultCode[]>([]);
@@ -1200,17 +1257,66 @@ export function useSrTaskForm() {
         if (pendingAsset) assetData = { ...assetData, ...pendingAsset };
       }
 
-      // Running Hours lives on the service task's own commissioningChecks,
-      // not the Asset record (see handleSaveRunningHours) — same "don't
-      // revert an unsynced offline edit" overlay as assetData above, just
-      // keyed to its own dedupeKey since it saves through a different call.
+      // Engine Parameters / Genset Electrical Reading / Running Hours /
+      // Load Unbalance all live on the service entry itself
+      // (engineParameters / gensetElectricalReadings / runningHours /
+      // loadUnbalance + loadUnbalancePercentage), not the Asset record —
+      // see saveServiceReadings above. Same "don't revert an unsynced
+      // offline edit" overlay pattern as assetData below, one per
+      // dedupeKey since each card saves independently.
       {
-        let runningHoursValue = serviceData?.commissioningChecks?.runningHours;
-        const pendingRunningHours = await getPendingBody(`sr_runninghours_${taskId}`);
-        if (pendingRunningHours?.commissioningChecks?.runningHours != null) {
-          runningHoursValue = pendingRunningHours.commissioningChecks.runningHours;
-        }
+        let engineReadings = serviceData?.engineParameters || {};
+        const pendingEngineReadings = await getPendingBody(`sr_readings_engineParams_${taskId}`);
+        if (pendingEngineReadings?.engineParameters) engineReadings = { ...engineReadings, ...pendingEngineReadings.engineParameters };
+        // savedBy/savedAt/serviceEntryId are write-only stamps the server
+        // adds onto whatever was sent — strip them back out before they'd
+        // otherwise land in editable form state.
+        const { savedBy: _savedBy, savedAt: _savedAt, serviceEntryId: _seId, ...cleanEngineReadings } = engineReadings;
+        setRpm(cleanEngineReadings.rpm != null ? String(cleanEngineReadings.rpm) : '');
+        setFrequency(cleanEngineReadings.frequency != null ? String(cleanEngineReadings.frequency) : '');
+        setDcVoltage(cleanEngineReadings.dcVoltage != null ? String(cleanEngineReadings.dcVoltage) : '');
+        setOilPressure(cleanEngineReadings.oilPressure != null ? String(cleanEngineReadings.oilPressure) : '');
+        setOilLevel(cleanEngineReadings.oilLevel ?? '');
+        setOilLevelComment(cleanEngineReadings.oilLevelComment ?? '');
+        setCoolantLevel(cleanEngineReadings.coolantLevel ?? '');
+        setCoolantLevelComment(cleanEngineReadings.coolantLevelComment ?? '');
+        setCoolantTemp(cleanEngineReadings.coolantTemperature != null ? String(cleanEngineReadings.coolantTemperature) : '');
+        setDefLevel(cleanEngineReadings.defLevelPercentage != null ? String(cleanEngineReadings.defLevelPercentage) : '');
+
+        let electricalReadings = serviceData?.gensetElectricalReadings || {};
+        const pendingElectricalReadings = await getPendingBody(`sr_readings_electrical_${taskId}`);
+        if (pendingElectricalReadings?.gensetElectricalReadings) electricalReadings = { ...electricalReadings, ...pendingElectricalReadings.gensetElectricalReadings };
+        const { savedBy: _elSavedBy, savedAt: _elSavedAt, serviceEntryId: _elSeId, ...cleanElectricalReadings } = electricalReadings;
+        setAcVoltRY(cleanElectricalReadings.acVoltageRY != null ? String(cleanElectricalReadings.acVoltageRY) : '');
+        setAcVoltYB(cleanElectricalReadings.acVoltageYB != null ? String(cleanElectricalReadings.acVoltageYB) : '');
+        setAcVoltBR(cleanElectricalReadings.acVoltageBR != null ? String(cleanElectricalReadings.acVoltageBR) : '');
+        setAcAmpR(cleanElectricalReadings.acAmpR != null ? String(cleanElectricalReadings.acAmpR) : '');
+        setAcAmpY(cleanElectricalReadings.acAmpY != null ? String(cleanElectricalReadings.acAmpY) : '');
+        setAcAmpB(cleanElectricalReadings.acAmpB != null ? String(cleanElectricalReadings.acAmpB) : '');
+        setLoadKwR(cleanElectricalReadings.loadKwR != null ? String(cleanElectricalReadings.loadKwR) : '');
+        setLoadKwY(cleanElectricalReadings.loadKwY != null ? String(cleanElectricalReadings.loadKwY) : '');
+        setLoadKwB(cleanElectricalReadings.loadKwB != null ? String(cleanElectricalReadings.loadKwB) : '');
+        // Total Load KW / Load % are NOT set here — they're recomputed
+        // live client-side from loadKwR/Y/B + kva (see the effects near
+        // the top of this hook), matching the doc's own "computed
+        // client-side, not independently editable" rule. Setting them
+        // from the server's last-saved snapshot here would just get
+        // immediately overwritten by that recompute anyway.
+
+        let runningHoursValue = serviceData?.runningHours;
+        const pendingRunningHours = await getPendingBody(`sr_readings_runningHours_${taskId}`);
+        if (pendingRunningHours?.runningHours != null) runningHoursValue = pendingRunningHours.runningHours;
         setRunningHours(runningHoursValue != null ? String(runningHoursValue) : '');
+
+        let loadUnbalanceValue = serviceData?.loadUnbalance;
+        let loadUnbalancePercentageValue = serviceData?.loadUnbalancePercentage;
+        const pendingLoadUnbalance = await getPendingBody(`sr_readings_loadUnbalance_${taskId}`);
+        if (pendingLoadUnbalance) {
+          if ('loadUnbalance' in pendingLoadUnbalance) loadUnbalanceValue = pendingLoadUnbalance.loadUnbalance;
+          if ('loadUnbalancePercentage' in pendingLoadUnbalance) loadUnbalancePercentageValue = pendingLoadUnbalance.loadUnbalancePercentage;
+        }
+        setLoadUnbalance(loadUnbalanceValue ? 'Yes' : 'No');
+        setLoadUnbalancePercentage(loadUnbalancePercentageValue != null ? String(loadUnbalancePercentageValue) : '');
       }
 
       if (assetData) {
@@ -1239,32 +1345,6 @@ export function useSrTaskForm() {
         setControllerType(assetData.controllerType ?? '');
         setControllerSr(assetData.controllerSerialNumber ?? '');
         setCpcbNorm(assetData.cpcb ?? '');
-        setLoadUnbalance(assetData.loadUnbalance ? 'Yes' : 'No');
-        setLoadUnbalancePercentage(assetData.loadUnbalancePercentage != null ? String(assetData.loadUnbalancePercentage) : '');
-        setLoadUnbalanceComment(assetData.loadUnbalanceComment ?? '');
-
-        setAcVoltRY(assetData.acVoltageRY != null ? String(assetData.acVoltageRY) : '');
-        setAcVoltYB(assetData.acVoltageYB != null ? String(assetData.acVoltageYB) : '');
-        setAcVoltBR(assetData.acVoltageBR != null ? String(assetData.acVoltageBR) : '');
-        setAcAmpR(assetData.acAmpR != null ? String(assetData.acAmpR) : '');
-        setAcAmpY(assetData.acAmpY != null ? String(assetData.acAmpY) : '');
-        setAcAmpB(assetData.acAmpB != null ? String(assetData.acAmpB) : '');
-        setLoadKwR(assetData.loadKwR != null ? String(assetData.loadKwR) : '');
-        setLoadKwY(assetData.loadKwY != null ? String(assetData.loadKwY) : '');
-        setLoadKwB(assetData.loadKwB != null ? String(assetData.loadKwB) : '');
-        setTotalKw(assetData.totalKwLoad != null ? String(assetData.totalKwLoad) : '');
-        setLoadPercent(assetData.loadPercentage != null ? String(assetData.loadPercentage) : '');
-
-        setRpm(assetData.rpm != null ? String(assetData.rpm) : '');
-        setFrequency(assetData.frequency != null ? String(assetData.frequency) : '');
-        setDcVoltage(assetData.dcVoltage != null ? String(assetData.dcVoltage) : '');
-        setOilPressure(assetData.oilPressure != null ? String(assetData.oilPressure) : '');
-        setOilLevel(assetData.oilLevel ?? '');
-        setOilLevelComment(assetData.oilLevelComment ?? '');
-        setCoolantLevel(assetData.coolantLevel ?? '');
-        setCoolantLevelComment(assetData.coolantLevelComment ?? '');
-        setCoolantTemp(assetData.coolantTemperature != null ? String(assetData.coolantTemperature) : '');
-        setDefLevel(assetData.defLevelPercentage != null ? String(assetData.defLevelPercentage) : '');
       }
 
       if (serviceData?.faultCodes?.length) {
@@ -1394,6 +1474,7 @@ export function useSrTaskForm() {
     coolantLevel, setCoolantLevel, coolantLevelComment, setCoolantLevelComment,
     coolantTemp, setCoolantTemp, defLevel, setDefLevel,
     runningHours, setRunningHours, handleSaveRunningHours,
+    handleSaveEngineParams, handleSaveGensetElectricalReadings, handleSaveLoadUnbalance,
     sectionSaving, sectionSuccess, sectionError, handleSaveAssetSection,
     ENGINE_TYPE_OPTIONS, ENGINE_FAMILY_OPTIONS, FUEL_TYPE_OPTIONS, APPLICATION_OPTIONS,
     PHASE_OPTIONS, PANEL_TYPE_OPTIONS, CPCB_NORM_OPTIONS,

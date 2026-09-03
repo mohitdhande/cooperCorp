@@ -88,11 +88,18 @@ function ToggleRowCore({
   hasNA = false, naValue = 'N/A', commentTriggerValue, comment, onSetComment,
   commentPlaceholder = 'Add a comment...',
 }: ToggleRowCoreProps) {
-  const normalized = value?.trim().toUpperCase();
-  const isA = normalized === optionA.toUpperCase();
-  const isB = normalized === optionB.toUpperCase();
-  const isNA = hasNA && normalized === naValue.toUpperCase();
-  const showComment = !!commentTriggerValue && normalized === commentTriggerValue.toUpperCase() && !!onSetComment;
+  // `value` (and the option labels) are typed as string, but this reads
+  // straight from whatever the backend/offline cache actually returned —
+  // a stray number/boolean there (not this component's own doing) used to
+  // crash the whole screen here, since a plain string method call on a
+  // non-string throws instead of just rendering "unanswered". String(...)
+  // first makes every comparison below tolerant of that, same spirit as
+  // this file's own case-insensitive matching a line down.
+  const normalized = value != null ? String(value).trim().toUpperCase() : '';
+  const isA = normalized === String(optionA ?? '').toUpperCase();
+  const isB = normalized === String(optionB ?? '').toUpperCase();
+  const isNA = hasNA && normalized === String(naValue ?? '').toUpperCase();
+  const showComment = !!commentTriggerValue && normalized === String(commentTriggerValue).toUpperCase() && !!onSetComment;
 
   return (
     <View style={[styles.row, alt && styles.rowAlt]}>

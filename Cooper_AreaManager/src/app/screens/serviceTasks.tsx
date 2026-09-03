@@ -82,6 +82,10 @@ export default function ServiceTasksScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 130 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#F26722']} tintColor="#F26722" />}
+        // Search box above stays focused/keyboard-up while typing —
+        // without this, the first tap on a task card just dismisses the
+        // keyboard instead of opening it, needing a second tap.
+        keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.header, { paddingHorizontal: headerPad }]}>
           <TouchableOpacity style={styles.headerButton} onPress={() => router.replace('/screens/dashboard' as any)}>

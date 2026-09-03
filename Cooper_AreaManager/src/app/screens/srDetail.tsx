@@ -11,7 +11,7 @@ import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Wrench, Clock, Check, X, CheckCircle2, XCircle,
-  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck, FileDown,
+  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck,
 } from 'lucide-react-native';
 import { useSrDetailController } from '../../controllers/srDetailController';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
@@ -101,11 +101,11 @@ export default function SrDetailScreen() {
     amReviewSaving, amReviewError, handleAmReview,
     workApprovalSaving, workApprovalError, handleAmWorkDecision, handleRsmWorkDecision,
     closingTicket, closeTicketError, handleCloseTicket,
-    signedPhotoUrls, photosSigning,
-    downloadingReport, downloadReportError, handleDownloadReport,
+    signedPhotoUrls, photosSigning, runningHoursPhotoUrl,
   } = useSrDetailController(initialTask);
 
   const [photosExpanded, setPhotosExpanded] = useState(true);
+  const [runningHoursExpanded, setRunningHoursExpanded] = useState(false);
   const [complaintExpanded, setComplaintExpanded] = useState(true);
   const [partsExpanded, setPartsExpanded] = useState(true);
   const [notesExpanded, setNotesExpanded] = useState(true);
@@ -159,8 +159,13 @@ export default function SrDetailScreen() {
   const partsUsed = task.partsUsed || [];
   const notes = task.notes || '';
   // task.media replaces the old flat task.photos field (unified media[]
-  // model, Sep 2026 backend migration).
-  const photos: string[] = (task.media || []).filter((m: any) => m.type === 'photo' || m.type === 'image').map((m: any) => m.gcsUrl);
+  // model, Sep 2026 backend migration). An item tagged 'Running Hours' is
+  // excluded here — it now has its own dedicated section below (matching
+  // srTaskReport.tsx's own split), so it shouldn't also show up in this
+  // general gallery.
+  const photos: string[] = (task.media || [])
+    .filter((m: any) => (m.type === 'photo' || m.type === 'image') && !m.tags?.includes('Running Hours'))
+    .map((m: any) => m.gcsUrl);
   const taskPeople = getTaskPeople(task);
 
   const partRowId = (p: any, i: number) => p._id || p.partId?._id || String(i);
@@ -286,15 +291,13 @@ export default function SrDetailScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>SERVICE DETAILS</Text>
-        <TouchableOpacity style={styles.headerButton} onPress={handleDownloadReport} disabled={downloadingReport}>
-          {downloadingReport ? <ActivityIndicator size="small" color="#1E1951" /> : <FileDown size={20} color="#1E1951" />}
-        </TouchableOpacity>
+        {/* No PDF download for Service (per explicit request — Service
+            reports aren't downloaded, unlike Commissioning's). Empty
+            same-size spacer keeps the title centered against the back
+            button on the left, matching every other screen's 3-slot
+            header layout instead of the title drifting to one side. */}
+        <View style={styles.headerButton} />
       </View>
-      {!!downloadReportError && (
-        <View style={[styles.detailErrorBanner, { marginHorizontal: hPad, marginBottom: 12 }]}>
-          <Text style={styles.detailErrorBannerText}>{downloadReportError}</Text>
-        </View>
-      )}
 
       <ScrollView
         style={{ flex: 1 }}
@@ -728,6 +731,22 @@ export default function SrDetailScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
+              )}
+            </ReportSectionCard>
+
+            {/* Same standalone Running Hours section srTaskReport.tsx has —
+                reusing that exact ReportSectionCard/InfoRow pair rather
+                than a new component, per request. Shows the number plus
+                the dedicated meter photo (pulled out of the general
+                Photos gallery above via its 'Running Hours' tag, see
+                srDetailController.ts). */}
+            <ReportSectionCard title="Running Hours" expanded={runningHoursExpanded} onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}>
+              <InfoRow label="Running Hours" value={task?.runningHours} />
+              {!!runningHoursPhotoUrl && (
+                <Image
+                  source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
+                  style={[styles.photoThumb, { marginTop: 12 }]}
+                />
               )}
             </ReportSectionCard>
 

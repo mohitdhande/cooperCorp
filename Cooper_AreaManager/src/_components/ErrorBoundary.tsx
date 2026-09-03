@@ -30,8 +30,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
     this.setState({ hasError: false, errorMessage: '' });
     // Reset the whole navigation stack back to a known-good screen instead
     // of just re-rendering in place, so the crashing screen isn't still
-    // sitting underneath waiting to be returned to.
-    router.dismissAll();
+    // sitting underneath waiting to be returned to. dismissAll() only
+    // makes sense when there's something behind this screen to dismiss —
+    // if the crash happened on the very first screen in the stack (nothing
+    // to pop to), it logs a "POP_TO_TOP not handled" dev warning instead of
+    // silently no-op'ing. canDismiss() guards that; replace() below still
+    // always runs either way.
+    if (router.canDismiss()) router.dismissAll();
     router.replace('/screens/dashboard');
   };
 

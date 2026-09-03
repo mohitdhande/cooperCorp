@@ -115,6 +115,10 @@ export function ComplaintCodePickerModal({ visible, onClose, faultCodes, loading
             keyExtractor={(item) => item._id}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            // Search box above stays focused/keyboard-up while typing —
+            // without this, the first tap on a row just dismisses the
+            // keyboard instead of picking it, needing a second tap.
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={<Text style={styles.emptyText}>No matching codes</Text>}
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.codeRow} onPress={() => { onSelectCode(item); onClose(); }}>
@@ -136,6 +140,10 @@ export function ComplaintCodePickerModal({ visible, onClose, faultCodes, loading
             keyExtractor={(item) => item}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            // Search box above stays focused/keyboard-up while typing —
+            // without this, the first tap on a row just dismisses the
+            // keyboard instead of picking it, needing a second tap.
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={<Text style={styles.emptyText}>No fault codes available.</Text>}
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.row} onPress={() => setSelectedCategory(item)}>
@@ -153,6 +161,10 @@ export function ComplaintCodePickerModal({ visible, onClose, faultCodes, loading
             keyExtractor={(item) => item}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            // Search box above stays focused/keyboard-up while typing —
+            // without this, the first tap on a row just dismisses the
+            // keyboard instead of picking it, needing a second tap.
+            keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.row} onPress={() => setSelectedSubCategory(item)}>
                 <Text style={styles.rowTitle}>{item}</Text>
@@ -171,6 +183,10 @@ export function ComplaintCodePickerModal({ visible, onClose, faultCodes, loading
             keyExtractor={(item) => item._id}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            // Search box above stays focused/keyboard-up while typing —
+            // without this, the first tap on a row just dismisses the
+            // keyboard instead of picking it, needing a second tap.
+            keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.codeRow} onPress={() => { onSelectCode(item); onClose(); }}>
                 <View style={styles.codeTag}>
