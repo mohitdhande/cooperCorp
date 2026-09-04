@@ -120,10 +120,10 @@ export function useCreateAssetCommissionController() {
         const token = await getToken();
         if (!token) return;
         const data = await getLocationMaster(token, digits);
-        // /location-master?search= returns a filtered list per the backend
-        // dev guide, not a single record — unwrap the first match. Handles
-        // a bare-object response too (list.entries, or the object itself)
-        // in case the real shape differs from what's documented.
+        // /location-master?pincode= returns a single flat record (or null
+        // when not found) per the backend dev guide. Defensively still
+        // unwraps a list/entries shape too, in case the real response ever
+        // differs from what's documented.
         const list = Array.isArray(data) ? data : Array.isArray(data?.entries) ? data.entries : Array.isArray(data?.results) ? data.results : null;
         const result = list ? list[0] : data;
         if (!result) return;
@@ -137,7 +137,11 @@ export function useCreateAssetCommissionController() {
     })();
   }, [pinCode]);
 
-  const [entryType, setEntryType] = useState('COMMISSIONING');
+  // Defaults to Revalidation when that's the only option the screen's Entry
+  // Type picker actually offers (dispatchType === 'revalidation' — the
+  // "Revalidation Required" banner) — everywhere else, Commissioning stays
+  // the default as before.
+  const [entryType, setEntryType] = useState(dispatchType === 'revalidation' ? 'REVALIDATION' : 'COMMISSIONING');
   const [entryDate, setEntryDate] = useState(formatDDMMYYYY(sapAsset?.commissioningDate) || todayDDMMYYYY());
   const [notes, setNotes] = useState('');
 

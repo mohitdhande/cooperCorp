@@ -11,7 +11,7 @@ import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Wrench, Clock, Check, X, CheckCircle2, XCircle,
-  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck,
+  RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck, FileDown,
 } from 'lucide-react-native';
 import { useSrDetailController } from '../../controllers/srDetailController';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
@@ -102,6 +102,7 @@ export default function SrDetailScreen() {
     workApprovalSaving, workApprovalError, handleAmWorkDecision, handleRsmWorkDecision,
     closingTicket, closeTicketError, handleCloseTicket,
     signedPhotoUrls, photosSigning, runningHoursPhotoUrl,
+    downloadingReport, downloadReportError, handleDownloadReport,
   } = useSrDetailController(initialTask);
 
   const [photosExpanded, setPhotosExpanded] = useState(true);
@@ -143,6 +144,18 @@ export default function SrDetailScreen() {
         gensetNumber: task.asset?.gensetNumber || '',
         engineNumber: task.asset?.engineNumber || '',
       },
+    } as any);
+  };
+
+  // Same navigation target serviceTasksController.ts's own goToTaskReport
+  // uses — the actual OTP-generate/verify + Close Ticket UI now lives in
+  // srTaskReport.tsx, not srTaskForm.tsx (moved there in an earlier
+  // cycle; the "Close Ticket →" banner below was never updated to match
+  // and was still sending people to the form instead).
+  const goToTaskReport = () => {
+    router.push({
+      pathname: '/screens/srTaskReport',
+      params: { task: JSON.stringify(task) },
     } as any);
   };
 
@@ -291,13 +304,22 @@ export default function SrDetailScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>SERVICE DETAILS</Text>
-        {/* No PDF download for Service (per explicit request — Service
-            reports aren't downloaded, unlike Commissioning's). Empty
-            same-size spacer keeps the title centered against the back
-            button on the left, matching every other screen's 3-slot
-            header layout instead of the title drifting to one side. */}
-        <View style={styles.headerButton} />
+        {/* Report PDF only exists once the task is actually done — per the
+            PDF implementation guide's "done" status list for Service
+            (COMPLETED/CLIENT_APPROVED/APPROVED/CLOSED). */}
+        {['COMPLETED', 'CLIENT_APPROVED', 'APPROVED', 'CLOSED'].includes(task.status) ? (
+          <TouchableOpacity style={styles.headerButton} onPress={handleDownloadReport} disabled={downloadingReport}>
+            {downloadingReport ? <ActivityIndicator size="small" color="#1E1951" /> : <FileDown size={20} color="#1E1951" />}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerButtonSpacer} />
+        )}
       </View>
+      {!!downloadReportError && (
+        <View style={[styles.detailErrorBanner, { marginHorizontal: hPad, marginBottom: 12 }]}>
+          <Text style={styles.detailErrorBannerText}>{downloadReportError}</Text>
+        </View>
+      )}
 
       <ScrollView
         style={{ flex: 1 }}
@@ -477,7 +499,7 @@ export default function SrDetailScreen() {
             says "need your approval decision", which would be wrong for a
             dealer/engineer who can only ever view this screen, never act on
             a part (see the Approve/Reject buttons below, same gate). */}
-        {canReviewParts && isCompletedView && pendingPartsCount > 0 && (
+        {canReviewParts && isCompletedView && workApprovalIsAmStage && pendingPartsCount > 0 && (
           <TouchableOpacity
             style={[styles.card, styles.acknowledgeCard, { marginTop: 20 }]}
             activeOpacity={0.8}
@@ -665,10 +687,11 @@ export default function SrDetailScreen() {
 
         {/* Fully confirmed, not yet closed — the one moment where closing
             the ticket is actually the next real action. The actual
-            OTP-generate/verify + Close Ticket UI lives in srTaskForm.tsx
-            (Step 5's Customer Sign-off card), not here — this banner just
-            needed a real way to get there instead of only telling the
-            viewer to go do it somewhere unspecified. */}
+            OTP-generate/verify + Close Ticket UI lives in srTaskReport.tsx
+            (moved there from srTaskForm.tsx's own Customer Sign-off card
+            in an earlier cycle), not here — this banner's own button
+            (goToTaskReport below) was still pointing at the form until
+            fixed, sending people to the wrong screen entirely. */}
         {isCompletedView && workApproval?.status === 'CONFIRMED' && (
           <View style={[styles.fullyApprovedBanner, { marginTop: 20 }]}>
             <CheckCircle2 size={22} color="#16A34A" />
@@ -681,7 +704,7 @@ export default function SrDetailScreen() {
           </View>
         )}
         {isCompletedView && workApproval?.status === 'CONFIRMED' && (
-          <TouchableOpacity style={[styles.completeServiceButton, { marginTop: 12 }]} onPress={goToTaskForm}>
+          <TouchableOpacity style={[styles.completeServiceButton, { marginTop: 12 }]} onPress={goToTaskReport}>
             <Text style={styles.acknowledgeButtonText}>Close Ticket →</Text>
           </TouchableOpacity>
         )}
@@ -829,7 +852,7 @@ export default function SrDetailScreen() {
                       <View style={styles.partBottom}>
                         <Text style={styles.partQty}>Qty: {val(p.quantity)}</Text>
                       </View>
-                      {canReviewParts && isCompletedView && decision === 'PENDING' && !!partInfo._id && rejectingPartId === partInfo._id ? (
+                      {canReviewParts && isCompletedView && workApprovalIsAmStage && decision === 'PENDING' && !!partInfo._id && rejectingPartId === partInfo._id ? (
                         <View style={styles.rejectForm}>
                           <TextInput
                             style={styles.rejectReasonInput}
@@ -864,7 +887,17 @@ export default function SrDetailScreen() {
                               <Text style={[styles.partDecisionText, { color: decisionStyle.text }]}>{decision}</Text>
                             </View>
                           )}
-                          {canReviewParts && isCompletedView && decision === 'PENDING' && !!partInfo._id && (
+                          {/* workApprovalIsAmStage — part review is only
+                              valid while work-approval is still at the AM
+                              stage (PENDING_AM). Once it's moved on to RSM
+                              (or further), the backend no longer considers
+                              parts approval pending for this entry at all,
+                              even if this one part's own decision is still
+                              "PENDING" — confirmed by the server actually
+                              rejecting the action with exactly that
+                              message when these buttons were shown without
+                              this check. */}
+                          {canReviewParts && isCompletedView && workApprovalIsAmStage && decision === 'PENDING' && !!partInfo._id && (
                             <View style={styles.partDecisionActions}>
                               <TouchableOpacity
                                 style={[styles.partRejectButton, amReviewSaving && styles.buttonDisabled]}
@@ -1119,12 +1152,17 @@ export default function SrDetailScreen() {
           </View>
         )}
 
-        {/* Edit & Resubmit is the engineer's own action (they're the one who
-            can actually change the fault codes/parts and re-send for
-            approval) — every other role just sees a read-only status banner
+        {/* Edit & Resubmit is whoever this task is actually ASSIGNED TO's
+            own action (they're the one who can actually change the fault
+            codes/parts and re-send for approval) — not tied to a specific
+            role. A dealer or area manager who self-assigned a service to
+            themselves needs this exactly as much as an engineer does;
+            gating on role === 'engineer' hid it from them even when it
+            was their own rejected task. Everyone else (viewing someone
+            else's task) still just sees a read-only status banner
             instead, same spot, above the bottom bar. */}
         {workApproval?.status === 'REJECTED' && (
-          role === 'engineer' ? (
+          isMyOwnTask ? (
             <TouchableOpacity style={styles.resubmitButton} onPress={openEditModal}>
               <RefreshCw size={18} color="#FFFFFF" />
               <Text style={styles.resubmitButtonText}>Edit & Resubmit</Text>
@@ -1144,7 +1182,12 @@ export default function SrDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalDragHandle} />
-            <Text style={styles.modalTitle}>Edit & Resubmit</Text>
+            <View style={styles.modalTitleRow}>
+              <Text style={styles.modalTitle}>Edit & Resubmit</Text>
+              <TouchableOpacity style={styles.modalCloseButton} onPress={closeEditModal}>
+                <X size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
               {!!workApproval?.rejectionNote && (
@@ -1198,8 +1241,8 @@ export default function SrDetailScreen() {
                   {editParts.map((p, index) => (
                     <View key={p.partId || index} style={styles.modalPartRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.plainPartName}>{p.name}</Text>
-                        <Text style={styles.plainPartSub}>{p.code} · {p.unit}</Text>
+                        <Text style={styles.plainPartName}>{p.description || '--'}</Text>
+                        <Text style={styles.plainPartSub}>{p.componentNumber || '--'}{p.subtitle ? ` · ${p.subtitle}` : ''}</Text>
                       </View>
                       <View style={styles.modalQtyStepper}>
                         <TouchableOpacity style={styles.modalQtyButton} onPress={() => changePartQuantity(index, -1)}>
@@ -1237,7 +1280,11 @@ export default function SrDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalDragHandle} />
-            <Text style={styles.modalTitle}>Rejection Note</Text>
+            {/* modalTitle's own marginBottom moved onto modalTitleRow (see
+                the Edit & Resubmit modal above, which needed a close
+                button next to its title) — restored inline here since
+                this modal still renders the title standalone. */}
+            <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Rejection Note</Text>
 
             <TextInput
               style={styles.workRejectInput}
@@ -1299,6 +1346,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
+  // Same footprint as headerButton, no fill — keeps the title centered
+  // when the PDF button is hidden (task not done yet) instead of showing
+  // an empty white circle.
+  headerButtonSpacer: { width: 48, height: 48 },
   headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
 
   card: {
@@ -1514,7 +1565,16 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 20,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#000000', marginBottom: 16 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#000000' },
+  modalTitleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalCloseButton: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center', alignItems: 'center',
+  },
 
   modalRejectionBox: {
     backgroundColor: '#FDF2F2',

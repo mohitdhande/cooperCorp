@@ -1259,16 +1259,14 @@ export const completeServiceTask = async (token: string, taskId: string, body: R
 
 // Looks up city/district/state/post-office for a 6-digit Indian PIN code —
 // called automatically once the Create Asset screen's PIN Code field
-// reaches 6 digits. Returns null (not an error) when the PIN isn't found.
-//
-// Uses `search`, not `pincode` — per the backend dev guide, /location-master
-// only documents search/state/district as valid query params (pincode isn't
-// one of them). The guide also describes this as returning a filtered
-// *list*, not a single record — the caller (createAssetCommissionController)
-// unwraps the first match rather than assuming a bare object shape.
+// reaches 6 digits. Per the backend dev guide's dedicated auto-fill
+// endpoint (`GET /location-master?pincode=`, distinct from the filtered-list
+// `?search=` used elsewhere), this returns a single flat record —
+// `{pincode, post_office, taluka, district, state}` — or `null` (not an
+// error) when the PIN isn't found.
 export const getLocationMaster = async (token: string, pincode: string) => {
   try {
-    const response = await axiosClient.get(`/api/location-master?search=${encodeURIComponent(pincode)}`, {
+    const response = await axiosClient.get(`/api/location-master?pincode=${encodeURIComponent(pincode)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     return response.data;
@@ -1292,6 +1290,33 @@ export const createAsset = async (token: string, body: Record<string, any>) => {
     return response.data;
   } catch (error: any) {
     console.log('Create Asset Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Generates (or reuses the cached) report PDF and returns a short-lived
+// signed GCS URL — per the PDF implementation guide, this is the preferred
+// path over the raw GET stream endpoint since the signed URL needs no
+// Authorization header to download, which is simpler/more reliable for
+// expo-file-system's File.downloadFileAsync (see utils/reportPdf.ts, the
+// actual download orchestration). Returns null only when the backend has
+// no GCS bucket configured (rare, dev-only) — callers fall back to the raw
+// GET stream endpoint in that case, same as the guide's own error table.
+export const generateReportPdf = async (
+  token: string,
+  entityType: 'service' | 'commissioning',
+  entryId: string,
+  force = false,
+): Promise<string | null> => {
+  try {
+    const response = await axiosClient.post(
+      `/api/${entityType}/${entryId}/pdf${force ? '?force=true' : ''}`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data?.pdfUrl ?? null;
+  } catch (error: any) {
+    console.log('Generate Report PDF Error:', error.response?.data || error.message);
     throw error;
   }
 };

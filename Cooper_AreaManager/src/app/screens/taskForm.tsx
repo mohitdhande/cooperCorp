@@ -180,6 +180,23 @@ export default function TaskFormScreen() {
   }, [vm.sectionSuccess["alternator"], vm.sectionSuccess["groupB"]]);
   const loadPhaseExpanded = !loadPhaseCollapsed || !!sectionReopened["loadAndPhase"];
 
+  // Revalidation's Step 2 checklist (Groups A-G, one shared Save button —
+  // see handleSaveValidationChecks) had the same gap as Load & Phase Check
+  // above: every GroupHeader's `saved` reflected vm.sectionSuccess, but none
+  // had onPress/expanded wired, so the whole card stayed open forever even
+  // right after a successful save. Group A's header now doubles as the
+  // whole card's collapse toggle (same "first header = master toggle"
+  // pattern as Step 1's sections); Groups B-G stay plain/non-interactive,
+  // same as before.
+  const [validationChecksCollapsed, setValidationChecksCollapsed] = useState(false);
+  useEffect(() => {
+    if (vm.sectionSuccess["validationChecks"]) {
+      setValidationChecksCollapsed(true);
+    }
+  }, [vm.sectionSuccess["validationChecks"]]);
+  const validationChecksExpanded = !validationChecksCollapsed || !!sectionReopened["validationChecks"];
+  const toggleValidationChecksReopen = () => toggleSectionReopen("validationChecks");
+
   const engineParamsExpanded = engineParamsCollapsed !== true || !!sectionReopened["engineParams"];
   const toggleEngineParamsReopen = () => toggleSectionReopen("engineParams");
   // Revalidation saves this card's own independent engineParameters slice
@@ -212,6 +229,25 @@ export default function TaskFormScreen() {
   // fields still blank stay editable for this task to fill in. Keyed by
   // the asset's own backend field names, not the local state names.
   const isAssetFieldLocked = (key: string) => !!vm.assetDetail?.[key];
+
+  // Genset Identification/Alternator & Panel's free-text fields (model
+  // names, serial numbers) are always stored in capital letters — forces
+  // every keystroke uppercase rather than relying on autoCapitalize (a
+  // keyboard hint only; it doesn't stop lowercase from paste or a
+  // physical/other-language keyboard).
+  const upper = (setter: (v: string) => void) => (v: string) => setter(v.toUpperCase());
+
+  // Whether every field on a Step 1 card is already locked (filled by an
+  // earlier task on this same asset — see isAssetFieldLocked above). When
+  // every field is locked there's nothing left this task could possibly
+  // change, so that card's Save button has nothing to do — hidden rather
+  // than shown greyed-out/no-op, since there's no unsaved edit it could
+  // ever submit. One unlocked field (still blank on the asset) is enough
+  // to keep the button around.
+  const GENSET_ID_FIELD_KEYS = ["gensetModel", "gensetNumber", "engineModel", "engineNumber", "kw", "engineType", "engineFamily", "fuelType", "applicationMaterial", "cpcb", "atsSerialNumber"];
+  const ALTERNATOR_PANEL_FIELD_KEYS = ["alternatorMake", "alternatorModel", "alternatorSerialNumber", "batteryType", "battery1SerialNumber", "battery2SerialNumber", "kva", "phase", "panelType", "controlPanelSerialNumber", "controllerType", "controllerSerialNumber"];
+  const gensetFullyLocked = GENSET_ID_FIELD_KEYS.every(isAssetFieldLocked);
+  const alternatorFullyLocked = ALTERNATOR_PANEL_FIELD_KEYS.every(isAssetFieldLocked);
 
   // Engine Parameters — shared JSX, rendered in one of two different spots
   // depending on the task type, since a plain commissioning/re-commissioning
@@ -557,7 +593,7 @@ export default function TaskFormScreen() {
                           <TextInput
                             style={[styles.fieldInput, isAssetFieldLocked("gensetModel") && styles.fieldInputReadOnly]}
                             value={vm.gensetModel}
-                            onChangeText={vm.setGensetModel}
+                            onChangeText={upper(vm.setGensetModel)}
                             editable={!isAssetFieldLocked("gensetModel")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -572,7 +608,7 @@ export default function TaskFormScreen() {
                             ref={register("gensetSrNumber")}
                             style={[styles.fieldInput, isAssetFieldLocked("gensetNumber") && styles.fieldInputReadOnly]}
                             value={vm.gensetSrNumber}
-                            onChangeText={vm.setGensetSrNumber}
+                            onChangeText={upper(vm.setGensetSrNumber)}
                             editable={!isAssetFieldLocked("gensetNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -588,7 +624,7 @@ export default function TaskFormScreen() {
                             ref={register("engineModel")}
                             style={[styles.fieldInput, isAssetFieldLocked("engineModel") && styles.fieldInputReadOnly]}
                             value={vm.engineModel}
-                            onChangeText={vm.setEngineModel}
+                            onChangeText={upper(vm.setEngineModel)}
                             editable={!isAssetFieldLocked("engineModel")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -603,7 +639,7 @@ export default function TaskFormScreen() {
                             ref={register("engineNumber")}
                             style={[styles.fieldInput, isAssetFieldLocked("engineNumber") && styles.fieldInputReadOnly]}
                             value={vm.engineNumber}
-                            onChangeText={vm.setEngineNumber}
+                            onChangeText={upper(vm.setEngineNumber)}
                             editable={!isAssetFieldLocked("engineNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -691,7 +727,7 @@ export default function TaskFormScreen() {
                             ref={register("atsSn")}
                             style={[styles.fieldInput, isAssetFieldLocked("atsSerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.atsSn}
-                            onChangeText={vm.setAtsSn}
+                            onChangeText={upper(vm.setAtsSn)}
                             editable={!isAssetFieldLocked("atsSerialNumber")}
                             returnKeyType="done"
                           />
@@ -703,11 +739,17 @@ export default function TaskFormScreen() {
                           {vm.sectionError["genset"]}
                         </Text>
                       ) : null}
-                      <SectionSaveButton
-                        onPress={vm.handleSaveGensetIdentification}
-                        saving={vm.sectionSaving["genset"]}
-                        done={vm.sectionSuccess["genset"]}
-                      />
+                      {/* Every field above already came from an earlier
+                      task on this same asset and is locked — nothing left
+                      here this task could change, so there's nothing to
+                      save. */}
+                      {!gensetFullyLocked && (
+                        <SectionSaveButton
+                          onPress={vm.handleSaveGensetIdentification}
+                          saving={vm.sectionSaving["genset"]}
+                          done={vm.sectionSuccess["genset"]}
+                        />
+                      )}
                     </>
                   )}
                 </View>
@@ -730,7 +772,7 @@ export default function TaskFormScreen() {
                           <TextInput
                             style={[styles.fieldInput, isAssetFieldLocked("alternatorMake") && styles.fieldInputReadOnly]}
                             value={vm.altMake}
-                            onChangeText={vm.setAltMake}
+                            onChangeText={upper(vm.setAltMake)}
                             editable={!isAssetFieldLocked("alternatorMake")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -743,7 +785,7 @@ export default function TaskFormScreen() {
                             ref={register("altModel")}
                             style={[styles.fieldInput, isAssetFieldLocked("alternatorModel") && styles.fieldInputReadOnly]}
                             value={vm.altModel}
-                            onChangeText={vm.setAltModel}
+                            onChangeText={upper(vm.setAltModel)}
                             editable={!isAssetFieldLocked("alternatorModel")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -759,7 +801,7 @@ export default function TaskFormScreen() {
                             ref={register("altSn")}
                             style={[styles.fieldInput, isAssetFieldLocked("alternatorSerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.altSn}
-                            onChangeText={vm.setAltSn}
+                            onChangeText={upper(vm.setAltSn)}
                             editable={!isAssetFieldLocked("alternatorSerialNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -770,12 +812,12 @@ export default function TaskFormScreen() {
                             Type plus two separate serial numbers, since a
                             genset can have 2 batteries. */}
                         <View style={styles.fieldHalf}>
-                          <Text style={styles.fieldLabel}>Battery Type</Text>
+                          <Text style={styles.fieldLabel}>Battery Make</Text>
                           <TextInput
                             ref={register("batteryType")}
                             style={[styles.fieldInput, isAssetFieldLocked("batteryType") && styles.fieldInputReadOnly]}
                             value={vm.batteryType}
-                            onChangeText={vm.setBatteryType}
+                            onChangeText={upper(vm.setBatteryType)}
                             editable={!isAssetFieldLocked("batteryType")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -791,7 +833,7 @@ export default function TaskFormScreen() {
                             ref={register("batterySn")}
                             style={[styles.fieldInput, isAssetFieldLocked("battery1SerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.batterySn}
-                            onChangeText={vm.setBatterySn}
+                            onChangeText={upper(vm.setBatterySn)}
                             editable={!isAssetFieldLocked("battery1SerialNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -804,7 +846,7 @@ export default function TaskFormScreen() {
                             ref={register("battery2Sn")}
                             style={[styles.fieldInput, isAssetFieldLocked("battery2SerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.battery2Sn}
-                            onChangeText={vm.setBattery2Sn}
+                            onChangeText={upper(vm.setBattery2Sn)}
                             editable={!isAssetFieldLocked("battery2SerialNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -855,7 +897,7 @@ export default function TaskFormScreen() {
                             ref={register("panelSn")}
                             style={[styles.fieldInput, isAssetFieldLocked("controlPanelSerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.panelSn}
-                            onChangeText={vm.setPanelSn}
+                            onChangeText={upper(vm.setPanelSn)}
                             editable={!isAssetFieldLocked("controlPanelSerialNumber")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -866,12 +908,12 @@ export default function TaskFormScreen() {
 
                       <View style={styles.fieldRow}>
                         <View style={styles.fieldHalf}>
-                          <Text style={styles.fieldLabel}>Controller Type</Text>
+                          <Text style={styles.fieldLabel}>Controller Make</Text>
                           <TextInput
                             ref={register("controllerType")}
                             style={[styles.fieldInput, isAssetFieldLocked("controllerType") && styles.fieldInputReadOnly]}
                             value={vm.controllerType}
-                            onChangeText={vm.setControllerType}
+                            onChangeText={upper(vm.setControllerType)}
                             editable={!isAssetFieldLocked("controllerType")}
                             returnKeyType="next"
                             submitBehavior="submit"
@@ -884,7 +926,7 @@ export default function TaskFormScreen() {
                             ref={register("controllerSr")}
                             style={[styles.fieldInput, isAssetFieldLocked("controllerSerialNumber") && styles.fieldInputReadOnly]}
                             value={vm.controllerSr}
-                            onChangeText={vm.setControllerSr}
+                            onChangeText={upper(vm.setControllerSr)}
                             editable={!isAssetFieldLocked("controllerSerialNumber")}
                             returnKeyType="done"
                           />
@@ -907,12 +949,18 @@ export default function TaskFormScreen() {
                       B_loadUnbalance), and this card is what actually
                       shows/edits that Yes/No + percentage value, so its
                       own Save button needs to send it too, the same as
-                      Step 2's "Load & Phase Check" card does. */}
-                      <SectionSaveButton
-                        onPress={vm.handleSaveLoadAndPhaseCheck}
-                        saving={vm.sectionSaving["alternator"] || vm.sectionSaving["groupB"]}
-                        done={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
-                      />
+                      Step 2's "Load & Phase Check" card does. Hidden once
+                      every field ABOVE is locked (pre-filled from an
+                      earlier task) — Load Unbalance itself still has its
+                      own identical Save button on Step 2's "Load & Phase
+                      Check" card, so nothing is lost by hiding this one. */}
+                      {!alternatorFullyLocked && (
+                        <SectionSaveButton
+                          onPress={vm.handleSaveLoadAndPhaseCheck}
+                          saving={vm.sectionSaving["alternator"] || vm.sectionSaving["groupB"]}
+                          done={vm.sectionSuccess["alternator"] && vm.sectionSuccess["groupB"]}
+                        />
+                      )}
                     </>
                   )}
                 </View>
@@ -1561,16 +1609,17 @@ export default function TaskFormScreen() {
 
                       <View style={styles.checkItemBlock}>
                         <Text style={styles.checkItemQuestion}>
-                          12. Exhaust Temp. on Load DOC (°C)
+                          12. Exhaust Temp. on Load (°C)
                         </Text>
                         <View style={styles.numericFieldRow}>
                           {(
                             [
-                              ["IN", "C12"],
-                              ["OUT", "C13"],
+                              ["DOC IN", "C12"],
+                              ["DOC OUT", "C13"],
+                              ["SCR Out", "C19"],
                             ] as const
                           ).map(([label, key]) => (
-                            <View key={key} style={{ width: "48%" }}>
+                            <View key={key} style={styles.numericFieldThird}>
                               <Text style={styles.numericFieldLabel}>
                                 {label}
                               </Text>
@@ -2021,7 +2070,11 @@ export default function TaskFormScreen() {
                     letter="A"
                     title="Air Intake System"
                     saved={vm.sectionSuccess["validationChecks"] || false}
+                    onPress={toggleValidationChecksReopen}
+                    expanded={validationChecksExpanded}
                   />
+                  {validationChecksExpanded && (
+                  <>
                   <TwoOptionToggleRow
                     index="1"
                     question="Air Cleaner Condition"
@@ -2422,6 +2475,8 @@ export default function TaskFormScreen() {
                     saving={vm.sectionSaving["validationChecks"]}
                     done={vm.sectionSuccess["validationChecks"]}
                   />
+                  </>
+                  )}
                 </View>
               </>
             )}

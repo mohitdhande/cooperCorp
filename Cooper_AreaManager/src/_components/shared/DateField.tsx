@@ -30,6 +30,7 @@ type Props = {
   value: string;
   onChangeText: (v: string) => void;
   placeholder?: string;
+  disabled?: boolean;
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<ViewStyle>;
   labelStyle?: StyleProp<TextStyle>;
@@ -38,7 +39,12 @@ type Props = {
 // Every "type a date" field in the app shares this: tapping opens the
 // native date picker instead of the keyboard, so the dd/mm/yyyy value is
 // always valid — no free-typing, no format mistakes.
-export function DateField({ label, required, labelExtra, value, onChangeText, placeholder, containerStyle, inputStyle, labelStyle }: Props) {
+//
+// disabled: locks the field once it already holds a genuinely pre-filled
+// value (e.g. pulled from SAP) — greys it out and blocks the picker from
+// opening, matching the read-only look/behavior used elsewhere for
+// pre-filled asset fields (styles.fieldInputReadOnly in taskForm.tsx).
+export function DateField({ label, required, labelExtra, value, onChangeText, placeholder, disabled, containerStyle, inputStyle, labelStyle }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -46,8 +52,13 @@ export function DateField({ label, required, labelExtra, value, onChangeText, pl
       <Text style={[styles.label, labelStyle]}>
         {label}{required ? <Text style={styles.required}> *</Text> : null}{labelExtra ? <> {labelExtra}</> : null}
       </Text>
-      <TouchableOpacity style={[styles.input, inputStyle]} onPress={() => setPickerOpen(true)} activeOpacity={0.7}>
-        <Text style={value ? styles.valueText : styles.placeholderText}>{value || placeholder}</Text>
+      <TouchableOpacity
+        style={[styles.input, disabled && styles.inputDisabled, inputStyle]}
+        onPress={() => { if (!disabled) setPickerOpen(true); }}
+        activeOpacity={disabled ? 1 : 0.7}
+        disabled={disabled}
+      >
+        <Text style={[value ? styles.valueText : styles.placeholderText, disabled && styles.valueTextDisabled]}>{value || placeholder}</Text>
         <Calendar size={16} color="#9CA3AF" />
       </TouchableOpacity>
 
@@ -83,4 +94,6 @@ const styles = StyleSheet.create({
   },
   valueText: { fontSize: 15, color: '#1F2937' },
   placeholderText: { fontSize: 15, color: '#9CA3AF' },
+  inputDisabled: { backgroundColor: '#F3F4F6' },
+  valueTextDisabled: { color: '#6B7280' },
 });

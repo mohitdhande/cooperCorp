@@ -9,7 +9,9 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, Bell, Check, CheckCheck, CheckCircle2, Clock, FileText, Play, Video as VideoIcon, X, Key, Star } from 'lucide-react-native';
+import { ChevronLeft, Check, CheckCheck, CheckCircle2, Clock, FileText, Play, X, Key, Star } from 'lucide-react-native';
+import { PdfActionsRow } from '../../_components/shared/PdfActionsRow';
+import { Toast } from '../../_components/shared/Toast';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
 import { NotesBulletList } from '../../_components/shared/NotesBulletList';
@@ -18,6 +20,7 @@ import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeade
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { MediaLocationButton } from '../../_components/shared/MediaLocationButton';
 import { useSrTaskReportController } from '../../controllers/srTaskReportController';
 import {
   val, formatDate, formatDateTime12h, formatAddress, getPriorityColor, getPriorityTextColor, getTaskPeople, videoFileName,
@@ -255,7 +258,7 @@ function VerifyOtpSheet({
                     onPress={onSaveRemark}
                     disabled={remarkSaving}
                   >
-                    {remarkSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Save & Close</Text>}
+                    {remarkSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.otpVerifyButtonText}>Save</Text>}
                   </TouchableOpacity>
                 </View>
               </>
@@ -282,9 +285,13 @@ export default function ServiceTaskReportScreen() {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
-    photos, signedPhotoUrls, photosSigning,
+    photos, signedPhotoUrls, photosSigning, mediaMeta,
     runningHoursPhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    downloadingReport, downloadReportError, handleDownloadReport,
+    generatingReport, handleGenerateReport,
+    regeneratingReport, handleRegenerateReport,
+    toastMessage, toastType, toastVisible,
     otpVerified, partsDone, workDone,
     isOtpPending,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
@@ -347,6 +354,7 @@ export default function ServiceTaskReportScreen() {
       <ScreenBackground />
 
       {isLoading && <LoadingOverlay message="Loading full report..." />}
+      <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
       {/* App bar is the ScrollView's own first child (not a fixed sibling
           above it) — the whole screen, header included, scrolls as one
@@ -366,10 +374,29 @@ export default function ServiceTaskReportScreen() {
           <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
             <ChevronLeft size={22} color="#979797" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Service Report</Text>
-          <View style={styles.headerButton}>
-            <Bell size={20} color="#979797" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle} numberOfLines={1}>Service Report</Text>
           </View>
+          {/* Report PDF only exists once the task is actually done — per
+              the PDF implementation guide's "done" status list for Service
+              (COMPLETED/CLIENT_APPROVED/APPROVED/CLOSED). This screen
+              never had a download action before — the notification bell
+              that used to sit here was purely decorative (no onPress),
+              same slot the Commissioning report screen's and Service
+              Details' own PDF actions use. */}
+          {['COMPLETED', 'CLIENT_APPROVED', 'APPROVED', 'CLOSED'].includes(task.status) ? (
+            <PdfActionsRow
+              isReady={!!task.pdfUrl}
+              generating={generatingReport}
+              downloading={downloadingReport}
+              regenerating={regeneratingReport}
+              onGenerate={handleGenerateReport}
+              onDownload={handleDownloadReport}
+              onRegenerate={handleRegenerateReport}
+            />
+          ) : (
+            <View style={styles.headerButtonSpacer} />
+          )}
         </View>
 
         {/* Surfaces a failed detail fetch instead of silently leaving the
@@ -377,6 +404,11 @@ export default function ServiceTaskReportScreen() {
         {!!detailError && (
           <View style={[styles.detailErrorBanner, { marginBottom: 16 }]}>
             <Text style={styles.detailErrorBannerText}>{detailError} Pull down to retry.</Text>
+          </View>
+        )}
+        {!!downloadReportError && (
+          <View style={[styles.detailErrorBanner, { marginBottom: 16 }]}>
+            <Text style={styles.detailErrorBannerText}>{downloadReportError}</Text>
           </View>
         )}
 
@@ -689,7 +721,7 @@ export default function ServiceTaskReportScreen() {
           — the old batterySerialNumber key is no longer what's saved). */}
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>BATTERY TYPE</Text>
+              <Text style={styles.fieldLabel}>BATTERY MAKE</Text>
               <Text style={styles.fieldValue}>{val(a.batteryType)}</Text>
             </View>
             <View style={styles.fieldHalf}>
@@ -729,7 +761,7 @@ export default function ServiceTaskReportScreen() {
           </View>
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>CONTROLLER TYPE</Text>
+              <Text style={styles.fieldLabel}>CONTROLLER MAKE</Text>
               <Text style={styles.fieldValue}>{val(a.controllerType)}</Text>
             </View>
             <View style={styles.fieldHalf}>
@@ -771,10 +803,23 @@ export default function ServiceTaskReportScreen() {
         <ReportSectionCard title="Running Hours" expanded={runningHoursExpanded} onToggle={() => setRunningHoursExpanded(!runningHoursExpanded)}>
           <InfoRow label="Running Hours" value={task?.runningHours} />
           {!!runningHoursPhotoUrl && (
-            <Image
-              source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
-              style={[styles.reportPhotoThumb, { marginTop: 12 }]}
-            />
+            <View style={[styles.reportThumbWrapper, { marginTop: 12 }]}>
+              <Image
+                source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
+                style={styles.reportPhotoThumb}
+              />
+              {/* Same read-only tag/location as the general Photos grid
+                  below — this photo just lives in its own section instead
+                  of that one, same info either way. */}
+              <View style={styles.reportThumbIconRow}>
+                <MediaLocationButton location={mediaMeta[runningHoursPhotoUrl]?.location} />
+              </View>
+              {!!mediaMeta[runningHoursPhotoUrl]?.tags?.[0] && (
+                <View style={styles.reportThumbLabelBar}>
+                  <Text style={styles.reportThumbLabelText} numberOfLines={1}>{mediaMeta[runningHoursPhotoUrl]!.tags![0]}</Text>
+                </View>
+              )}
+            </View>
           )}
         </ReportSectionCard>
 
@@ -905,9 +950,22 @@ export default function ServiceTaskReportScreen() {
           ) : (
             <View style={styles.reportPhotoGrid}>
               {photos.map((url: string, i: number) => (
-                <TouchableOpacity key={i} onPress={() => { setLightboxIndex(i); setLightboxVisible(true); }}>
-                  <Image source={{ uri: signedPhotoUrls[url] || url }} style={styles.reportPhotoThumb} />
-                </TouchableOpacity>
+                <View key={i} style={styles.reportThumbWrapper}>
+                  <TouchableOpacity onPress={() => { setLightboxIndex(i); setLightboxVisible(true); }}>
+                    <Image source={{ uri: signedPhotoUrls[url] || url }} style={styles.reportPhotoThumb} />
+                  </TouchableOpacity>
+                  {/* Same tag/location info shown while uploading (see
+                      PhotosVideoCard.tsx) — read-only here, no edit/remove
+                      icons since a finished report isn't editable. */}
+                  <View style={styles.reportThumbIconRow}>
+                    <MediaLocationButton location={mediaMeta[url]?.location} />
+                  </View>
+                  {!!mediaMeta[url]?.tags?.[0] && (
+                    <View style={styles.reportThumbLabelBar}>
+                      <Text style={styles.reportThumbLabelText} numberOfLines={1}>{mediaMeta[url]!.tags![0]}</Text>
+                    </View>
+                  )}
+                </View>
               ))}
             </View>
           )}
@@ -925,9 +983,14 @@ export default function ServiceTaskReportScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.videoReportFileName} numberOfLines={1}>{videoFileName(url)}</Text>
-                    <Text style={styles.videoReportTapToPlay}>Tap to play</Text>
+                    <View style={styles.reportRowMetaRow}>
+                      <Text style={styles.videoReportTapToPlay}>Tap to play</Text>
+                      {!!mediaMeta[url]?.tags?.[0] && (
+                        <Text style={styles.reportRowTagText} numberOfLines={1}>· {mediaMeta[url]!.tags![0]}</Text>
+                      )}
+                    </View>
                   </View>
-                  <VideoIcon size={18} color="#9CA3AF" />
+                  <MediaLocationButton location={mediaMeta[url]?.location} variant="inline" />
                 </TouchableOpacity>
               ))}
             </View>
@@ -957,9 +1020,14 @@ export default function ServiceTaskReportScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.videoReportFileName} numberOfLines={1}>{videoFileName(url)}</Text>
-                    <Text style={styles.videoReportTapToPlay}>Tap to view</Text>
+                    <View style={styles.reportRowMetaRow}>
+                      <Text style={styles.videoReportTapToPlay}>Tap to view</Text>
+                      {!!mediaMeta[url]?.tags?.[0] && (
+                        <Text style={styles.reportRowTagText} numberOfLines={1}>· {mediaMeta[url]!.tags![0]}</Text>
+                      )}
+                    </View>
                   </View>
-                  <FileText size={18} color="#9CA3AF" />
+                  <MediaLocationButton location={mediaMeta[url]?.location} variant="inline" />
                 </TouchableOpacity>
               ))}
               {!!documentError && <Text style={styles.closeServiceErrorText}>{documentError}</Text>}
@@ -1151,6 +1219,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     justifyContent: 'center', alignItems: 'center',
   },
+  // Same footprint as PdfActionsRow's single-action "Generate" state, no
+  // fill — keeps the title from re-centering when the PDF row is hidden
+  // (task not done yet) instead of showing an empty orange circle.
+  headerButtonSpacer: { width: 40, height: 40 },
   headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase' },
   statusPill: { borderRadius: 100, paddingHorizontal: 12, paddingVertical: 6 },
   statusPillText: { fontSize: 13, fontWeight: '700' },
@@ -1352,6 +1424,18 @@ const styles = StyleSheet.create({
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   reportPhotoThumb: { width: 100, height: 100, borderRadius: 8, backgroundColor: '#F3F4F6' },
   photosLoadingSpinner: { paddingVertical: 20 },
+  // Read-only tag/location overlay on a report thumbnail — same visual
+  // language as PhotosVideoCard.tsx's own thumbWrapper/thumbIconRow/
+  // thumbLabelBar (the form's upload view), just without the edit/remove
+  // icons a finished report doesn't need.
+  reportThumbWrapper: { width: 100, height: 100, borderRadius: 8, overflow: 'hidden' },
+  reportThumbIconRow: { position: 'absolute', top: 6, right: 6 },
+  reportThumbLabelBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6, paddingVertical: 4,
+  },
+  reportThumbLabelText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
 
   videoReportRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -1366,6 +1450,11 @@ const styles = StyleSheet.create({
   },
   videoReportFileName: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   videoReportTapToPlay: { fontSize: 12, fontWeight: '600', color: '#4F46E5', marginTop: 2 },
+  // Tag, shown inline next to "Tap to play/view" on a video/document row —
+  // same tag value the form's own MediaTagPicker sets, just plain text
+  // here since a finished report isn't editable.
+  reportRowMetaRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  reportRowTagText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginLeft: 4, flexShrink: 1 },
 
   footerCard: {
     backgroundColor: '#FFFFFF',

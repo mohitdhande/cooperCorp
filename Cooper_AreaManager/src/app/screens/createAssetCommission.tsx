@@ -115,6 +115,21 @@ function SummaryField({ label, value }: { label: string; value?: string | null }
   );
 }
 
+// Genuinely-pre-filled-from-SAP version of a date field: no input box at
+// all, just the label and the value as plain text — used instead of a
+// disabled/greyed-out DateField once a field's value is confirmed real SAP
+// data rather than a guess, since there's nothing left to edit or open.
+function ReadOnlyDateField({ label, required, value, containerStyle }: {
+  label: string; required?: boolean; value: string; containerStyle?: any;
+}) {
+  return (
+    <View style={containerStyle}>
+      <Text style={styles.fieldLabel}>{label}{required ? <Text style={styles.required}> *</Text> : null}</Text>
+      <Text style={styles.fieldReadOnlyValue}>{value || '--'}</Text>
+    </View>
+  );
+}
+
 // Reached from New Job's SAP-fallback card: a genset with real SAP dispatch/
 // commissioning history but no Asset record yet in this app. The form is
 // pre-filled from that SAP record (see createAssetCommissionController) but
@@ -158,6 +173,18 @@ export default function CreateAssetCommissionScreen() {
     entryType, setEntryType, entryDate, setEntryDate, notes, setNotes,
     handleCancel, handleConfirmCreate, creating, createError,
   } = useCreateAssetCommissionController();
+
+  // Revalidation only makes sense once the 6-month commissioning window has
+  // passed (dispatchType === 'revalidation') — while it's still open (the
+  // "Commissioning Window Open" banner), a fresh Revalidation entry would be
+  // meaningless, so hide it from the picker for that case. Conversely, once
+  // the window HAS passed ("Revalidation Required"), Revalidation is the
+  // only entry type that makes sense, so the other three are hidden instead.
+  const availableEntryTypes = dispatchType === 'window'
+    ? ENTRY_TYPES.filter((t) => t.value !== 'REVALIDATION')
+    : dispatchType === 'revalidation'
+    ? ENTRY_TYPES.filter((t) => t.value === 'REVALIDATION')
+    : ENTRY_TYPES;
 
   const entryTypeLabel = ENTRY_TYPES.find((t) => t.value === entryType)?.label || entryType;
 
@@ -247,13 +274,13 @@ export default function CreateAssetCommissionScreen() {
               </View>
               <View style={styles.summaryRow}>
                 <SummaryField label="INVOICE NO." value={sapAsset.invoiceNumber} />
-                {/* This read-only summary shows the same "29 Dec 2023" style
-                    as New Job/New Service Job's own SAP card — deliberately
-                    NOT the dispatchDate/entryDate state below, which stays
-                    in dd/mm/yyyy specifically because those feed the
-                    editable Dispatch Date/Entry Date text inputs further
-                    down this form. */}
-                <SummaryField label="BILLING DATE" value={sapAsset.billingDate ? formatDate(sapAsset.billingDate) : undefined} />
+                {/* Same underlying SAP field as the editable Dispatch Date
+                    input below (sapAsset.billingDate) — shown under this
+                    app's own name for it, not SAP's raw "Billing Date"
+                    label, since that's what "Dispatch Date" means
+                    everywhere else on this screen (DispatchStatusBanner,
+                    the Dispatch Date field itself). */}
+                <SummaryField label="DISPATCH DATE" value={sapAsset.billingDate ? formatDate(sapAsset.billingDate) : undefined} />
               </View>
               <View style={styles.summaryRow}>
                 <SummaryField label="MATERIAL NO." value={sapAsset.materialNo} />
@@ -265,10 +292,7 @@ export default function CreateAssetCommissionScreen() {
               </View>
               <View style={styles.summaryRow}>
                 <SummaryField label="COMMISSIONING DT" value={sapAsset.commissioningDate ? formatDate(sapAsset.commissioningDate) : undefined} />
-              </View>
-              <View style={[styles.summaryField, { marginTop: -4 }]}>
-                <Text style={styles.summaryLabel}>END CUSTOMER</Text>
-                <Text style={styles.summaryValue}>{sapAsset.endCustomerDetails || '--'}</Text>
+                <SummaryField label="END CUSTOMER" value={sapAsset.endCustomerDetails} />
               </View>
             </View>
           </>
@@ -306,10 +330,14 @@ export default function CreateAssetCommissionScreen() {
             <FormField label="Alternate Contact No." value={alternateContactNumber} onChangeText={setAlternateContactNumber} />
           </View>
           <View style={styles.fieldRow}>
-            <DateField
-              label="Dispatch Date" required value={dispatchDate} onChangeText={setDispatchDate} placeholder="dd/mm/yyyy"
-              containerStyle={styles.fieldHalf} inputStyle={styles.fieldInput}
-            />
+            {sapAsset?.billingDate ? (
+              <ReadOnlyDateField label="Dispatch Date" required value={dispatchDate} containerStyle={styles.fieldHalf} />
+            ) : (
+              <DateField
+                label="Dispatch Date" required value={dispatchDate} onChangeText={setDispatchDate} placeholder="dd/mm/yyyy"
+                containerStyle={styles.fieldHalf} inputStyle={styles.fieldInput}
+              />
+            )}
           </View>
         </View>
 
@@ -347,13 +375,13 @@ export default function CreateAssetCommissionScreen() {
             newServiceJob.tsx's "No asset found" card), this screen is a
             plain manual entry form: Asset Details, Client, Address, then
             straight to Cancel/Confirm & Create, nothing SAP-related below
-            it. Revalidation is excluded even when sapAsset IS present —
-            that's the asset dispatched over 6 months ago with no follow-up
-            commissioning entry on record, so "Date (pre-filled from SAP)"
-            would only ever be falling back to today's date, not a real SAP
-            value; the user goes through the normal New Job flow afterward
-            to create the real Revalidation entry instead. */}
-        {!!sapAsset && dispatchType !== 'revalidation' && (
+            it. Revalidation (dispatchType === 'revalidation', the "Dispatch
+            date is more than 6 months ago" banner) still shows this card —
+            the Entry Type dropdown just narrows to Revalidation only in
+            that case (see availableEntryTypes above); "Date" stays a plain
+            editable field defaulting to today since there's no real SAP
+            commissioning date to pre-fill it with here. */}
+        {!!sapAsset && (
           <>
             {/* Same callout as New Job's/New Service Job's SAP-found card —
                 repeated here since this is the screen that actually submits
@@ -379,6 +407,7 @@ export default function CreateAssetCommissionScreen() {
                   value={entryDate}
                   onChangeText={setEntryDate}
                   placeholder="dd/mm/yyyy"
+                  disabled={dispatchType === 'auto'}
                   inputStyle={styles.fieldInput}
                 />
               </View>
@@ -429,7 +458,7 @@ export default function CreateAssetCommissionScreen() {
       <Modal visible={entryTypePickerOpen} transparent animationType="fade" onRequestClose={() => setEntryTypePickerOpen(false)}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setEntryTypePickerOpen(false)}>
           <View style={styles.modalSheet}>
-            {ENTRY_TYPES.map((t) => (
+            {availableEntryTypes.map((t) => (
               <TouchableOpacity
                 key={t.value}
                 style={styles.modalRow}
@@ -520,6 +549,7 @@ const styles = StyleSheet.create({
   },
   fieldTextarea: { height: 90 },
   fieldValueText: { fontSize: 14, color: '#1F2937' },
+  fieldReadOnlyValue: { fontSize: 15, fontWeight: '700', color: '#1F2937', marginTop: 6 },
   dropdownInput: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#F9FAFB',

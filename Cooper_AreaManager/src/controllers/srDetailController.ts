@@ -10,9 +10,15 @@ import { parseApiError } from '../utils/apiError';
 import { getRole, Role } from '../constants/permissions';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
+import { downloadReportPdf } from '../utils/reportPdf';
 
 type EditFaultCode = { codeId: string; code: string; description: string; observation: string; rootCause: string; correctiveAction: string };
-type EditPart = { partId: string; name: string; code: string; unit: string; quantity: number };
+// description/componentNumber (not name/code) and cpcbNorm/engineFamily
+// (not unit) match the real Part schema — same fields the screen's own
+// working, read-only Parts Used display already uses (see its own
+// "2026-08-29 Part schema change" comment below); this used the old,
+// removed field names, which is why every row here silently showed blank.
+type EditPart = { partId: string; description: string; componentNumber: string; subtitle: string; quantity: number };
 
 // Drives the read-only "SR Detail" screen — reached by tapping an Active-tab
 // service card whose work-approval request is still awaiting the RSM
@@ -158,13 +164,16 @@ export function useSrDetailController(initialTask: any) {
       rootCause: fc.rootCause || '',
       correctiveAction: fc.correctiveAction || '',
     })));
-    setEditParts((task.partsUsed || []).map((p: any) => ({
-      partId: p.partId?._id || p.partId,
-      name: p.partId?.name || '',
-      code: p.partId?.code || '',
-      unit: p.partId?.unit || '',
-      quantity: p.quantity || 1,
-    })));
+    setEditParts((task.partsUsed || []).map((p: any) => {
+      const partInfo = p.partId || {};
+      return {
+        partId: partInfo._id || p.partId,
+        description: partInfo.description || '',
+        componentNumber: partInfo.componentNumber || '',
+        subtitle: [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · '),
+        quantity: p.quantity || 1,
+      };
+    }));
     setResubmitError('');
     setEditModalVisible(true);
   }, [task.faultCodes, task.partsUsed]);
@@ -374,6 +383,26 @@ export function useSrDetailController(initialTask: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photosKey]);
 
+  // Full SR report PDF — see utils/reportPdf.ts's downloadReportPdf for the
+  // actual POST-signed-URL → GET-stream → task.pdfUrl fallback chain,
+  // shared with taskReportController.ts's and srTaskReportController.ts's
+  // identical buttons.
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState('');
+
+  const handleDownloadReport = useCallback(async () => {
+    if (!task?._id) return;
+    setDownloadingReport(true);
+    setDownloadReportError('');
+    try {
+      await downloadReportPdf('service', task._id, task?.pdfUrl);
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to download the report. Please try again.').message);
+    } finally {
+      setDownloadingReport(false);
+    }
+  }, [task?._id, task?.pdfUrl]);
+
   return {
     task, asset, isLoading, role, isMyOwnTask,
     detailError, retryFetchDetail: fetchDetail,
@@ -386,5 +415,6 @@ export function useSrDetailController(initialTask: any) {
     workApprovalSaving, workApprovalError, handleAmWorkDecision, handleRsmWorkDecision,
     closingTicket, closeTicketError, handleCloseTicket,
     signedPhotoUrls, photosSigning, runningHoursPhotoUrl,
+    downloadingReport, downloadReportError, handleDownloadReport,
   };
 }

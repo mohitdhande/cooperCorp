@@ -20,9 +20,11 @@ type Props = {
 // maxQty (new field, not enforced server-side — purely a UI guardrail,
 // per the Parts API reference doc's "web app parts picker" notes):
 // - Always shown as its own "Max Qty: N" pill up top when set, regardless
-//   of the value.
+//   of the value — and again as a plain "Max qty is N" hint in the footer
+//   (used to only show that second hint for maxQty === 1 specifically,
+//   leaving every other max value with nothing there at all).
 // - maxQty === 1 skips the stepper entirely — nothing to adjust, so a
-//   bordered "×1" box shows instead, with "Max qty is 1" alongside it.
+//   bordered "×1" box shows instead.
 // - Otherwise the "+" button disables once quantity reaches maxQty.
 // - A part whose already-saved quantity exceeds maxQty (imported before
 //   the cap existed, or the cap was lowered afterward) shows a warning
@@ -64,8 +66,8 @@ export function SelectedPartCard({ part, onIncrease, onDecrease, onRemove }: Pro
         <View style={{ flex: 1 }}>
           {overMax ? (
             <Text style={styles.warningText}>Exceeds max qty ({part.maxQty})</Text>
-          ) : part.maxQty === 1 ? (
-            <Text style={styles.maxQtyHint}>Max qty is 1</Text>
+          ) : !!part.maxQty ? (
+            <Text style={styles.maxQtyHint}>Max qty is {part.maxQty}</Text>
           ) : null}
         </View>
         {part.maxQty === 1 ? (

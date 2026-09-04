@@ -4,11 +4,10 @@ import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info, Pencil } from 'lucide-react-native';
+import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
 import { DropdownField } from '../../_components/taskForm/DropdownField';
-import { NumberStepperField } from '../../_components/taskForm/NumberStepperField';
 import { PartPickerModal } from '../../_components/taskForm/PartPickerModal';
 import { SelectedPartCard } from '../../_components/taskForm/SelectedPartCard';
 import { ComplaintCodePickerModal } from '../../_components/taskForm/ComplaintCodePickerModal';
@@ -52,58 +51,6 @@ function ScreenBackground() {
         </Defs>
         <Rect width={size.width} height={size.height} fill="url(#srTaskFormBg)" />
       </Svg>
-    </View>
-  );
-}
-
-// Electrical Readings/Engine Parameters' own header — a light-blue pill with
-// an "Edit" button (hidden once editing starts) plus a chevron that always
-// collapses/expands the card, independent of whether it's mid-edit. Distinct
-// from GroupHeader (used by every other Step 1 section here) since those
-// sections have no read-only display mode at all — they're edit-only, and
-// only ever collapse once saved.
-function ReadingsSectionHeader({ title, expanded, onToggleExpanded, editing, onEditPress }: {
-  title: string; expanded: boolean; onToggleExpanded: () => void; editing: boolean; onEditPress: () => void;
-}) {
-  return (
-    <View style={styles.readingsHeaderPill}>
-      <Text style={styles.readingsHeaderTitle}>{title.toUpperCase()}</Text>
-      <View style={styles.readingsHeaderRight}>
-        {!editing && (
-          <TouchableOpacity style={styles.readingsEditButton} onPress={onEditPress} activeOpacity={0.8}>
-            <Pencil size={13} color="#374151" />
-            <Text style={styles.readingsEditButtonText}>Edit</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={onToggleExpanded} hitSlop={8}>
-          {expanded ? <ChevronUp size={18} color="#1E1951" /> : <ChevronDown size={18} color="#1E1951" />}
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-// One read-only row of the display grid — a value field ("AC Volt RY" ->
-// "null V" when unset, matching the reference's own literal "null"
-// placeholder rather than a blank or "--") or a status field (Oil/Coolant
-// Level -> a colored pill, green once "OK", red otherwise including unset).
-function ReadingsDisplayField({ item }: { item: { kind: 'value'; label: string; value: string; unit?: string } | { kind: 'status'; label: string; value: string } }) {
-  if (item.kind === 'status') {
-    const isOk = item.value === 'OK';
-    return (
-      <View>
-        <Text style={styles.readingsDisplayLabel}>{item.label}</Text>
-        <View style={[styles.readingsStatusPill, isOk && styles.readingsStatusPillOk]}>
-          <View style={[styles.readingsStatusDot, isOk && styles.readingsStatusDotOk]} />
-          <Text style={[styles.readingsStatusText, isOk && styles.readingsStatusTextOk]}>{item.value || 'null'}</Text>
-        </View>
-      </View>
-    );
-  }
-  return (
-    <View>
-      <Text style={styles.readingsDisplayLabel}>{item.label}</Text>
-      <Text style={styles.readingsDisplayValue}>{item.value || 'null'}{item.unit ? ` ${item.unit}` : ''}</Text>
     </View>
   );
 }
@@ -235,21 +182,22 @@ export default function SrTaskFormScreen() {
   // the asset's own backend field names, not the local state names.
   const isAssetFieldLocked = (key: string) => !!vm.assetDetail?.[key];
 
-  // Electrical Readings/Engine Parameters — unlike this step's other
-  // sections, these default to an always-visible read-only display (real
-  // values once saved, "null" placeholders until then) rather than
-  // collapsing away entirely; "Edit" swaps in the existing input fields,
-  // and a successful save swaps back to the display view automatically.
-  const [electricalExpanded, setElectricalExpanded] = useState(true);
-  const [electricalEditing, setElectricalEditing] = useState(false);
-  const [engineParamsExpanded, setEngineParamsExpanded] = useState(true);
-  const [engineParamsEditing, setEngineParamsEditing] = useState(false);
-  React.useEffect(() => {
-    if (vm.sectionSuccess['electrical']) setElectricalEditing(false);
-  }, [vm.sectionSuccess['electrical']]);
-  React.useEffect(() => {
-    if (vm.sectionSuccess['engineParams']) setEngineParamsEditing(false);
-  }, [vm.sectionSuccess['engineParams']]);
+  // Genset Identification/Alternator & Panel's free-text fields (model
+  // names, serial numbers) are always stored in capital letters — forces
+  // every keystroke uppercase rather than relying on autoCapitalize (a
+  // keyboard hint only; it doesn't stop lowercase from paste or a
+  // physical/other-language keyboard). Same helper as taskForm.tsx.
+  const upper = (setter: (v: string) => void) => (v: string) => setter(v.toUpperCase());
+
+  // Whether every field on a Step 1 card is already locked (filled by an
+  // earlier task on this same asset — see isAssetFieldLocked above). When
+  // every field is locked there's nothing left this task could possibly
+  // change, so that card's Save button has nothing to do — hidden rather
+  // than shown greyed-out/no-op. Same lists/logic as taskForm.tsx.
+  const GENSET_ID_FIELD_KEYS = ['gensetModel', 'gensetNumber', 'engineModel', 'engineNumber', 'kw', 'engineType', 'engineFamily', 'fuelType', 'applicationMaterial', 'cpcb', 'atsSerialNumber'];
+  const ALTERNATOR_PANEL_FIELD_KEYS = ['alternatorMake', 'alternatorModel', 'alternatorSerialNumber', 'batteryType', 'battery1SerialNumber', 'battery2SerialNumber', 'kva', 'phase', 'panelType', 'controlPanelSerialNumber', 'controllerType', 'controllerSerialNumber'];
+  const gensetFullyLocked = GENSET_ID_FIELD_KEYS.every(isAssetFieldLocked);
+  const alternatorFullyLocked = ALTERNATOR_PANEL_FIELD_KEYS.every(isAssetFieldLocked);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -364,7 +312,7 @@ export default function SrTaskFormScreen() {
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Genset Model</Text>
                         <TextInput
-                          style={[styles.fieldInput, isAssetFieldLocked('gensetModel') && styles.fieldInputReadOnly]} value={vm.gensetModel} onChangeText={vm.setGensetModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('gensetModel') && styles.fieldInputReadOnly]} value={vm.gensetModel} onChangeText={upper(vm.setGensetModel)}
                           editable={!isAssetFieldLocked('gensetModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('gensetSrNumber')}
                         />
@@ -373,7 +321,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Genset SR Number</Text>
                         <TextInput
                           ref={register('gensetSrNumber')}
-                          style={[styles.fieldInput, isAssetFieldLocked('gensetNumber') && styles.fieldInputReadOnly]} value={vm.gensetSrNumber} onChangeText={vm.setGensetSrNumber}
+                          style={[styles.fieldInput, isAssetFieldLocked('gensetNumber') && styles.fieldInputReadOnly]} value={vm.gensetSrNumber} onChangeText={upper(vm.setGensetSrNumber)}
                           editable={!isAssetFieldLocked('gensetNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineModel')}
                         />
@@ -384,7 +332,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Engine Model</Text>
                         <TextInput
                           ref={register('engineModel')}
-                          style={[styles.fieldInput, isAssetFieldLocked('engineModel') && styles.fieldInputReadOnly]} value={vm.engineModel} onChangeText={vm.setEngineModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('engineModel') && styles.fieldInputReadOnly]} value={vm.engineModel} onChangeText={upper(vm.setEngineModel)}
                           editable={!isAssetFieldLocked('engineModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineNumber')}
                         />
@@ -393,7 +341,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Engine SR Number</Text>
                         <TextInput
                           ref={register('engineNumber')}
-                          style={[styles.fieldInput, isAssetFieldLocked('engineNumber') && styles.fieldInputReadOnly]} value={vm.engineNumber} onChangeText={vm.setEngineNumber}
+                          style={[styles.fieldInput, isAssetFieldLocked('engineNumber') && styles.fieldInputReadOnly]} value={vm.engineNumber} onChangeText={upper(vm.setEngineNumber)}
                           editable={!isAssetFieldLocked('engineNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('engineKw')}
                         />
@@ -435,7 +383,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>ATS S/N</Text>
                         <TextInput
                           ref={register('atsSn')}
-                          style={[styles.fieldInput, isAssetFieldLocked('atsSerialNumber') && styles.fieldInputReadOnly]} value={vm.atsSn} onChangeText={vm.setAtsSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('atsSerialNumber') && styles.fieldInputReadOnly]} value={vm.atsSn} onChangeText={upper(vm.setAtsSn)}
                           editable={!isAssetFieldLocked('atsSerialNumber')}
                           returnKeyType="done"
                         />
@@ -443,11 +391,16 @@ export default function SrTaskFormScreen() {
                     </View>
 
                     {vm.sectionError['genset'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['genset']}</Text> : null}
-                    <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('genset')}
-                      saving={vm.sectionSaving['genset']}
-                      done={vm.sectionSuccess['genset']}
-                    />
+                    {/* Every field above already came from an earlier task
+                    on this same asset and is locked — nothing left here
+                    this task could change, so there's nothing to save. */}
+                    {!gensetFullyLocked && (
+                      <SectionSaveButton
+                        onPress={() => vm.handleSaveAssetSection('genset')}
+                        saving={vm.sectionSaving['genset']}
+                        done={vm.sectionSuccess['genset']}
+                      />
+                    )}
                   </>
                 )}
               </View>
@@ -467,7 +420,7 @@ export default function SrTaskFormScreen() {
                       <View style={styles.fieldHalf}>
                         <Text style={styles.fieldLabel}>Alt. Make</Text>
                         <TextInput
-                          style={[styles.fieldInput, isAssetFieldLocked('alternatorMake') && styles.fieldInputReadOnly]} value={vm.altMake} onChangeText={vm.setAltMake}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorMake') && styles.fieldInputReadOnly]} value={vm.altMake} onChangeText={upper(vm.setAltMake)}
                           editable={!isAssetFieldLocked('alternatorMake')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('altModel')}
                         />
@@ -476,7 +429,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Alt. Model</Text>
                         <TextInput
                           ref={register('altModel')}
-                          style={[styles.fieldInput, isAssetFieldLocked('alternatorModel') && styles.fieldInputReadOnly]} value={vm.altModel} onChangeText={vm.setAltModel}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorModel') && styles.fieldInputReadOnly]} value={vm.altModel} onChangeText={upper(vm.setAltModel)}
                           editable={!isAssetFieldLocked('alternatorModel')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('altSn')}
                         />
@@ -487,7 +440,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Alt. S/N</Text>
                         <TextInput
                           ref={register('altSn')}
-                          style={[styles.fieldInput, isAssetFieldLocked('alternatorSerialNumber') && styles.fieldInputReadOnly]} value={vm.altSn} onChangeText={vm.setAltSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('alternatorSerialNumber') && styles.fieldInputReadOnly]} value={vm.altSn} onChangeText={upper(vm.setAltSn)}
                           editable={!isAssetFieldLocked('alternatorSerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batteryType')}
                         />
@@ -496,10 +449,10 @@ export default function SrTaskFormScreen() {
                           plus two separate serial numbers, since a genset
                           can have 2 batteries. */}
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>Battery Type</Text>
+                        <Text style={styles.fieldLabel}>Battery Make</Text>
                         <TextInput
                           ref={register('batteryType')}
-                          style={[styles.fieldInput, isAssetFieldLocked('batteryType') && styles.fieldInputReadOnly]} value={vm.batteryType} onChangeText={vm.setBatteryType}
+                          style={[styles.fieldInput, isAssetFieldLocked('batteryType') && styles.fieldInputReadOnly]} value={vm.batteryType} onChangeText={upper(vm.setBatteryType)}
                           editable={!isAssetFieldLocked('batteryType')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('batterySn')}
                         />
@@ -510,7 +463,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Battery 1 S/N</Text>
                         <TextInput
                           ref={register('batterySn')}
-                          style={[styles.fieldInput, isAssetFieldLocked('battery1SerialNumber') && styles.fieldInputReadOnly]} value={vm.batterySn} onChangeText={vm.setBatterySn}
+                          style={[styles.fieldInput, isAssetFieldLocked('battery1SerialNumber') && styles.fieldInputReadOnly]} value={vm.batterySn} onChangeText={upper(vm.setBatterySn)}
                           editable={!isAssetFieldLocked('battery1SerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('battery2Sn')}
                         />
@@ -519,7 +472,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Battery 2 S/N</Text>
                         <TextInput
                           ref={register('battery2Sn')}
-                          style={[styles.fieldInput, isAssetFieldLocked('battery2SerialNumber') && styles.fieldInputReadOnly]} value={vm.battery2Sn} onChangeText={vm.setBattery2Sn}
+                          style={[styles.fieldInput, isAssetFieldLocked('battery2SerialNumber') && styles.fieldInputReadOnly]} value={vm.battery2Sn} onChangeText={upper(vm.setBattery2Sn)}
                           editable={!isAssetFieldLocked('battery2SerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('kva')}
                         />
@@ -547,7 +500,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Panel S/N</Text>
                         <TextInput
                           ref={register('panelSn')}
-                          style={[styles.fieldInput, isAssetFieldLocked('controlPanelSerialNumber') && styles.fieldInputReadOnly]} value={vm.panelSn} onChangeText={vm.setPanelSn}
+                          style={[styles.fieldInput, isAssetFieldLocked('controlPanelSerialNumber') && styles.fieldInputReadOnly]} value={vm.panelSn} onChangeText={upper(vm.setPanelSn)}
                           editable={!isAssetFieldLocked('controlPanelSerialNumber')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerType')}
                         />
@@ -555,10 +508,10 @@ export default function SrTaskFormScreen() {
                     </View>
                     <View style={styles.fieldRow}>
                       <View style={styles.fieldHalf}>
-                        <Text style={styles.fieldLabel}>Controller Type</Text>
+                        <Text style={styles.fieldLabel}>Controller Make</Text>
                         <TextInput
                           ref={register('controllerType')}
-                          style={[styles.fieldInput, isAssetFieldLocked('controllerType') && styles.fieldInputReadOnly]} value={vm.controllerType} onChangeText={vm.setControllerType}
+                          style={[styles.fieldInput, isAssetFieldLocked('controllerType') && styles.fieldInputReadOnly]} value={vm.controllerType} onChangeText={upper(vm.setControllerType)}
                           editable={!isAssetFieldLocked('controllerType')}
                           returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => focusNext('controllerSr')}
                         />
@@ -567,7 +520,7 @@ export default function SrTaskFormScreen() {
                         <Text style={styles.fieldLabel}>Controller S/R</Text>
                         <TextInput
                           ref={register('controllerSr')}
-                          style={[styles.fieldInput, isAssetFieldLocked('controllerSerialNumber') && styles.fieldInputReadOnly]} value={vm.controllerSr} onChangeText={vm.setControllerSr}
+                          style={[styles.fieldInput, isAssetFieldLocked('controllerSerialNumber') && styles.fieldInputReadOnly]} value={vm.controllerSr} onChangeText={upper(vm.setControllerSr)}
                           editable={!isAssetFieldLocked('controllerSerialNumber')}
                           returnKeyType="done"
                         />
@@ -575,11 +528,16 @@ export default function SrTaskFormScreen() {
                     </View>
 
                     {vm.sectionError['alternator'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['alternator']}</Text> : null}
-                    <SectionSaveButton
-                      onPress={() => vm.handleSaveAssetSection('alternator')}
-                      saving={vm.sectionSaving['alternator']}
-                      done={vm.sectionSuccess['alternator']}
-                    />
+                    {/* Every field above already came from an earlier task
+                    on this same asset and is locked — nothing left here
+                    this task could change, so there's nothing to save. */}
+                    {!alternatorFullyLocked && (
+                      <SectionSaveButton
+                        onPress={() => vm.handleSaveAssetSection('alternator')}
+                        saving={vm.sectionSaving['alternator']}
+                        done={vm.sectionSuccess['alternator']}
+                      />
+                    )}
                   </>
                 )}
               </View>
@@ -661,44 +619,64 @@ export default function SrTaskFormScreen() {
             <>
               {/* Engine Parameters — first now, then Genset Electrical
                   Readings, Running Hours, Load Unbalance. Same
-                  display/edit toggle either way. */}
+                  collapse-after-save GroupHeader pattern as every other
+                  section on this form (and as Commissioning's own
+                  taskForm.tsx) — no separate read-only display mode/Edit
+                  button anymore; the fields themselves are always what's
+                  shown, editable until saved, then collapsed. */}
               <View style={styles.sectionCard}>
-                <ReadingsSectionHeader
+                <GroupHeader
                   title="Engine Parameters"
-                  expanded={engineParamsExpanded}
-                  onToggleExpanded={() => setEngineParamsExpanded((v) => !v)}
-                  editing={engineParamsEditing}
-                  onEditPress={() => setEngineParamsEditing(true)}
+                  saved={!!vm.sectionSuccess['engineParams']}
+                  onPress={() => toggleSectionReopen('engineParams')}
+                  expanded={isSectionExpanded('engineParams')}
                 />
 
-                {engineParamsExpanded && (engineParamsEditing ? (
+                {isSectionExpanded('engineParams') && (
                   <>
-                    <View style={styles.fieldRow}>
-                      <NumberStepperField label="RPM" value={vm.rpm} onChangeValue={vm.setRpm} />
-                      <NumberStepperField label="FREQUENCY" value={vm.frequency} onChangeValue={vm.setFrequency} unit="Hz" />
-                    </View>
-                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="DC VOLTAGE" value={vm.dcVoltage} onChangeValue={vm.setDcVoltage} unit="V" />
-                      <NumberStepperField label="OIL PRESSURE" value={vm.oilPressure} onChangeValue={vm.setOilPressure} />
-                    </View>
-                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="COOLANT TEMP" value={vm.coolantTemp} onChangeValue={vm.setCoolantTemp} unit="°C" />
-                      {/* DEF Level only applies to gensets rated 75 KVA or
-                      above — locked (not just hidden, so a value entered
-                      before a later KVA edit dropped it below 75 isn't
-                      silently lost) until that threshold is met. */}
-                      <NumberStepperField
-                        label="DEF LEVEL"
-                        value={vm.defLevel}
-                        onChangeValue={vm.setDefLevel}
-                        unit="%"
-                        readOnly={(parseFloat(vm.kva) || 0) < 75}
-                      />
-                    </View>
+                    {/* Plain 3-per-row TextInput grid — same layout as
+                    Commissioning's own Engine Parameters card
+                    (taskForm.tsx's engineParametersCard); no +/- stepper. */}
+                    {(
+                      [
+                        ['RPM', vm.rpm, vm.setRpm, false],
+                        ['Frequency (HZ)', vm.frequency, vm.setFrequency, false],
+                        ['DC Voltage (V)', vm.dcVoltage, vm.setDcVoltage, false],
+                        ['Oil Pressure', vm.oilPressure, vm.setOilPressure, false],
+                        ['Coolant Temp (°C)', vm.coolantTemp, vm.setCoolantTemp, false],
+                        // DEF Level only applies to gensets rated 75 KVA or
+                        // above — locked (not just hidden, so a value
+                        // entered before a later KVA edit dropped it below
+                        // 75 isn't silently lost) until that threshold is
+                        // met.
+                        ['DEF Level (%)', vm.defLevel, vm.setDefLevel, (parseFloat(vm.kva) || 0) < 75],
+                      ] as Array<[string, string, (v: string) => void, boolean]>
+                    )
+                      .reduce<Array<[string, string, (v: string) => void, boolean]>[]>((rows, field, i) => {
+                        if (i % 3 === 0) rows.push([]);
+                        rows[rows.length - 1].push(field);
+                        return rows;
+                      }, [])
+                      .map((row, i) => (
+                        <View key={i} style={[styles.fieldRow, i === 0 && { marginTop: 4 }]}>
+                          {row.map(([label, value, setter, locked]) => (
+                            <View key={label} style={styles.fieldThird}>
+                              <Text style={styles.fieldLabelStatic}>{label}</Text>
+                              <TextInput
+                                style={[styles.fieldInput, locked && styles.fieldInputReadOnly]}
+                                value={value}
+                                onChangeText={setter}
+                                keyboardType="numeric"
+                                editable={!locked}
+                              />
+                            </View>
+                          ))}
+                        </View>
+                      ))}
 
                     {([
-                      ['OIL LEVEL', vm.oilLevel, vm.setOilLevel, vm.oilLevelComment, vm.setOilLevelComment],
-                      ['COOLANT LEVEL', vm.coolantLevel, vm.setCoolantLevel, vm.coolantLevelComment, vm.setCoolantLevelComment],
+                      ['Oil Level', vm.oilLevel, vm.setOilLevel, vm.oilLevelComment, vm.setOilLevelComment],
+                      ['Coolant Level', vm.coolantLevel, vm.setCoolantLevel, vm.coolantLevelComment, vm.setCoolantLevelComment],
                     ] as const).map(([label, value, setter, comment, setComment], i) => (
                       <View key={label} style={{ marginTop: i === 0 ? 18 : 16 }}>
                         <Text style={styles.fieldLabelStatic}>{label}</Text>
@@ -732,71 +710,77 @@ export default function SrTaskFormScreen() {
                       done={vm.sectionSuccess['engineParams']}
                     />
                   </>
-                ) : (
-                  <View style={styles.readingsDisplayGrid}>
-                    <View style={[styles.readingsDisplayRow, { marginTop: 4 }]}>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'RPM', value: vm.rpm }} /></View>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'Frequency', value: vm.frequency, unit: 'Hz' }} /></View>
-                    </View>
-                    <View style={styles.readingsDisplayRow}>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'DC Voltage', value: vm.dcVoltage, unit: 'V' }} /></View>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'status', label: 'Oil Level', value: vm.oilLevel }} /></View>
-                    </View>
-                    <View style={styles.readingsDisplayRow}>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'Oil Pressure', value: vm.oilPressure }} /></View>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'status', label: 'Coolant Level', value: vm.coolantLevel }} /></View>
-                    </View>
-                    <View style={styles.readingsDisplayRow}>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'Coolant Temp', value: vm.coolantTemp, unit: '°C' }} /></View>
-                      <View style={styles.readingsDisplayHalf}><ReadingsDisplayField item={{ kind: 'value', label: 'DEF Level', value: vm.defLevel, unit: '%' }} /></View>
-                    </View>
-                  </View>
-                ))}
+                )}
               </View>
 
-              {/* Electrical Readings — read-only display by default (real
-                  values once saved, "null" placeholders until then); "Edit"
-                  swaps in the input fields below. */}
+              {/* Genset Electrical Readings — same GroupHeader collapse-
+                  after-save pattern as Engine Parameters above (and as
+                  Commissioning's own taskForm.tsx); no separate read-only
+                  display mode/Edit button anymore. */}
               <View style={styles.sectionCard}>
-                <ReadingsSectionHeader
+                <GroupHeader
                   title="Genset Electrical Readings"
-                  expanded={electricalExpanded}
-                  onToggleExpanded={() => setElectricalExpanded((v) => !v)}
-                  editing={electricalEditing}
-                  onEditPress={() => setElectricalEditing(true)}
+                  saved={!!vm.sectionSuccess['electrical']}
+                  onPress={() => toggleSectionReopen('electrical')}
+                  expanded={isSectionExpanded('electrical')}
                 />
 
-                {electricalExpanded && (electricalEditing ? (
+                {isSectionExpanded('electrical') && (
                   <>
-                    {([
-                      [['AC VOLT RY', vm.acVoltRY, vm.setAcVoltRY, 'V'], ['AC VOLT YB', vm.acVoltYB, vm.setAcVoltYB, 'V']],
-                      [['AC VOLT BR', vm.acVoltBR, vm.setAcVoltBR, 'V'], ['AC AMP R', vm.acAmpR, vm.setAcAmpR, 'A']],
-                      [['AC AMP Y', vm.acAmpY, vm.setAcAmpY, 'A'], ['AC AMP B', vm.acAmpB, vm.setAcAmpB, 'A']],
-                      [['LOAD KW R', vm.loadKwR, vm.setLoadKwR, undefined], ['LOAD KW Y', vm.loadKwY, vm.setLoadKwY, undefined]],
-                    ] as const).map((row, i) => (
-                      <View key={i} style={[styles.fieldRow, { marginTop: i === 0 ? 0 : 14 }]}>
-                        {row.map(([label, value, setter, unit]) => (
-                          <NumberStepperField key={label} label={label} value={value} onChangeValue={setter} unit={unit} />
-                        ))}
-                      </View>
-                    ))}
-                    <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="LOAD KW B" value={vm.loadKwB} onChangeValue={vm.setLoadKwB} />
-                      <View style={{ flex: 1 }} />
-                    </View>
+                    {/* Same plain 3-per-row TextInput grid as Commissioning's
+                    own Genset Electrical Readings card (taskForm.tsx) — no
+                    +/- stepper, no unit suffix shown (Commissioning's
+                    equivalent card doesn't show one either). */}
+                    {(
+                      [
+                        ['AC VOLT R-Y', vm.acVoltRY, vm.setAcVoltRY],
+                        ['AC VOLT Y-B', vm.acVoltYB, vm.setAcVoltYB],
+                        ['AC VOLT B-R', vm.acVoltBR, vm.setAcVoltBR],
+                        ['AC AMP R', vm.acAmpR, vm.setAcAmpR],
+                        ['AC AMP Y', vm.acAmpY, vm.setAcAmpY],
+                        ['AC AMP B', vm.acAmpB, vm.setAcAmpB],
+                        ['Load KW R', vm.loadKwR, vm.setLoadKwR],
+                        ['Load KW Y', vm.loadKwY, vm.setLoadKwY],
+                        ['Load KW B', vm.loadKwB, vm.setLoadKwB],
+                      ] as Array<[string, string, (v: string) => void]>
+                    )
+                      .reduce<Array<[string, string, (v: string) => void]>[]>((rows, field, i) => {
+                        if (i % 3 === 0) rows.push([]);
+                        rows[rows.length - 1].push(field);
+                        return rows;
+                      }, [])
+                      .map((row, i) => (
+                        <View key={i} style={[styles.fieldRow, i === 0 && { marginTop: 4 }]}>
+                          {row.map(([label, value, setter]) => (
+                            <View key={label} style={styles.fieldThird}>
+                              <Text style={styles.fieldLabelStatic}>{label}</Text>
+                              <TextInput
+                                style={styles.fieldInput}
+                                value={value}
+                                onChangeText={setter}
+                                keyboardType="numeric"
+                              />
+                            </View>
+                          ))}
+                        </View>
+                      ))}
                     {/* Total Load KW / Load % — both read-only now, both
                     computed off other fields (see useSrTaskForm.ts's own
                     effects), neither separately typed in. */}
                     <View style={[styles.fieldRow, { marginTop: 14 }]}>
-                      <NumberStepperField label="TOTAL LOAD KW" value={vm.totalKw} onChangeValue={() => {}} readOnly />
-                      <NumberStepperField
-                        label="LOAD %"
-                        value={vm.loadPercent}
-                        onChangeValue={() => {}}
-                        unit="%"
-                        readOnly
-                        placeholder={vm.kva ? undefined : "KVA Rating not filled"}
-                      />
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabelStatic}>Total Load KW</Text>
+                        <TextInput style={[styles.fieldInput, styles.fieldInputReadOnly]} value={vm.totalKw} editable={false} />
+                      </View>
+                      <View style={styles.fieldHalf}>
+                        <Text style={styles.fieldLabelStatic}>Load (%)</Text>
+                        <TextInput
+                          style={[styles.fieldInput, styles.fieldInputReadOnly]}
+                          value={vm.loadPercent}
+                          editable={false}
+                          placeholder={vm.kva ? undefined : "KVA Rating not filled"}
+                        />
+                      </View>
                     </View>
 
                     {vm.sectionError['electrical'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['electrical']}</Text> : null}
@@ -806,43 +790,7 @@ export default function SrTaskFormScreen() {
                       done={vm.sectionSuccess['electrical']}
                     />
                   </>
-                ) : (
-                  <View style={styles.readingsDisplayGrid}>
-                    {([
-                      [{ kind: 'value', label: 'AC Volt RY', value: vm.acVoltRY, unit: 'V' }, { kind: 'value', label: 'AC Volt YB', value: vm.acVoltYB, unit: 'V' }],
-                      [{ kind: 'value', label: 'AC Volt BR', value: vm.acVoltBR, unit: 'V' }, { kind: 'value', label: 'AC Amp R', value: vm.acAmpR, unit: 'A' }],
-                      [{ kind: 'value', label: 'AC Amp Y', value: vm.acAmpY, unit: 'A' }, { kind: 'value', label: 'AC Amp B', value: vm.acAmpB, unit: 'A' }],
-                      [{ kind: 'value', label: 'Load KW R', value: vm.loadKwR }, { kind: 'value', label: 'Load KW Y', value: vm.loadKwY }],
-                      [{ kind: 'value', label: 'Load KW B', value: vm.loadKwB }],
-                      [
-                        { kind: 'value', label: 'Total Load KW', value: vm.totalKw },
-                        // Blank Load % means KVA Rating isn't filled yet
-                        // (can't compute a % of an unknown capacity) —
-                        // says so explicitly here too, matching the
-                        // editable NumberStepperField's own placeholder,
-                        // instead of falling through to this grid's usual
-                        // literal "null" for an unset value.
-                        vm.kva
-                          ? ({ kind: 'value', label: 'Load %', value: vm.loadPercent, unit: '%' } as const)
-                          : ({ kind: 'value', label: 'Load %', value: 'KVA Rating not filled' } as const),
-                      ],
-                    ] as const).map((row, i) => (
-                      <View key={i} style={[styles.readingsDisplayRow, i === 0 && { marginTop: 4 }]}>
-                        {row.map((item) => (
-                          // 11 fields, 2 per row, doesn't divide evenly —
-                          // Load KW B is the odd one left alone in its own
-                          // row. Rather than leave dead space where a
-                          // second column would be (readingsDisplayHalf is
-                          // a fixed 48%), a lone item in a row spans the
-                          // full width instead.
-                          <View key={item.label} style={row.length === 1 ? styles.readingsDisplayFull : styles.readingsDisplayHalf}>
-                            <ReadingsDisplayField item={item} />
-                          </View>
-                        ))}
-                      </View>
-                    ))}
-                  </View>
-                ))}
+                )}
               </View>
 
               {/* Running Hours — new field, no confirmed backend key yet
@@ -1423,6 +1371,10 @@ const styles = StyleSheet.create({
 
   fieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14, gap: 12 },
   fieldHalf: { width: '48%' },
+  // Same 3-per-row grid as Commissioning's own Engine Parameters/Genset
+  // Electrical Readings (taskForm.tsx's fieldThird) — used now that these
+  // two cards are plain TextInput grids here too, not the stepper layout.
+  fieldThird: { width: '31%' },
   fieldFull: { marginTop: 14 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: '#6B7280', marginBottom: 6 },
   // Same spec as fieldLabel (Step 1's Genset Identification labels) —
@@ -1447,41 +1399,6 @@ const styles = StyleSheet.create({
   toggleTextActive: { color: '#fff' },
 
   sectionErrorText: { color: '#DC2626', fontSize: 12, fontWeight: '500', marginTop: 10 },
-
-  readingsHeaderPill: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: '#DBEAFE',
-    borderRadius: 100,
-    paddingVertical: 10, paddingHorizontal: 16,
-  },
-  readingsHeaderTitle: { fontSize: 14, fontWeight: '700', color: '#1E1951', letterSpacing: 0.4 },
-  readingsHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  readingsEditButton: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 20,
-    paddingVertical: 6, paddingHorizontal: 12,
-  },
-  readingsEditButtonText: { fontSize: 13, fontWeight: '700', color: '#374151' },
-
-  readingsDisplayGrid: { marginTop: 4 },
-  readingsDisplayRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, gap: 12 },
-  readingsDisplayHalf: { width: '48%' },
-  readingsDisplayFull: { width: '100%' },
-  readingsDisplayLabel: { fontSize: 14, fontWeight: '500', color: '#9CA3AF', marginBottom: 6 },
-  readingsDisplayValue: { fontSize: 18, fontWeight: '700', color: '#000000' },
-  readingsStatusPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: '#FEE2E2',
-    borderRadius: 20,
-    paddingVertical: 5, paddingHorizontal: 12,
-  },
-  readingsStatusPillOk: { backgroundColor: '#DCFCE7' },
-  readingsStatusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#DC2626' },
-  readingsStatusDotOk: { backgroundColor: '#16A34A' },
-  readingsStatusText: { fontSize: 14, fontWeight: '700', color: '#DC2626' },
-  readingsStatusTextOk: { color: '#15803D' },
 
   okNotOkRow: { flexDirection: 'row' },
   okButton: {

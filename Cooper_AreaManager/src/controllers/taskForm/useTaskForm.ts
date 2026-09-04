@@ -36,7 +36,10 @@ const GROUP_A_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6a', 'A6b', 'A6c', 'A7',
 const GROUP_A_COMMENT_FIELDS = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6a', 'A6b', 'A6c', 'A7', 'A8', 'A9', 'A10', 'A14', 'A15', 'A16', 'A17', 'A18', 'A19', 'A11', 'A12', 'A13'];
 const GROUP_B_FIELDS = ['B1', 'B2', 'B3', 'B4a', 'B4b', 'B4c', 'B4d', 'B5R', 'B5Y', 'B5B'];
 const GROUP_B_COMMENT_FIELDS = ['B1', 'B2', 'B3', 'B4a', 'B4b', 'B4c', 'B4d'];
-const GROUP_C_FIELDS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18'];
+// C19 — SCR Out, added alongside C12/C13 (DOC IN/OUT) under question 12
+// ("Exhaust Temp. on Load (°C)"); same plain-numeric shape as those two,
+// no comment field.
+const GROUP_C_FIELDS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18', 'C19'];
 const GROUP_C_COMMENT_FIELDS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11', 'C14', 'C15', 'C16', 'C17'];
 const LOAD_STAGE_PREFIXES = ['D0', 'D25', 'D50', 'D75', 'D100'];
 const LOAD_STAGE_SUFFIXES = ['LR', 'LY', 'LB', 'VR', 'VY', 'VB', 'F', 'BV', 'REM'];
@@ -398,9 +401,17 @@ export function useTaskForm() {
   // live on the Genset Identification card, so their "missing" count and
   // save payload moved with them.
   const gensetMissingCount = [gensetModel, engineModel, engineFamily, fuelType, application, cpcbNorm, atsSn].filter(v => !v).length;
+  // loadUnbalance was wrongly counted here — it's not a field on this card
+  // at all (it lives on Step 2's separate "Load & Phase Check" card), so an
+  // Alternator & Panel with every one of its own fields filled still showed
+  // "1 missing" whenever Load & Phase Check hadn't been saved yet, with no
+  // way to clear it from this card. Pre-Commissioning made it worse — it
+  // never collects Load & Phase Check at all, so loadUnbalance stays null
+  // forever there and this pill was permanently stuck at "1 missing" no
+  // matter what was actually filled in.
   const altMissingCount = [
     altMake, altModel, altSn, batteryType, batterySn, battery2Sn, kva, phase, panelType, panelSn,
-    controllerType, controllerSr, loadUnbalance,
+    controllerType, controllerSr,
   ].filter(v => !v).length;
 
   // ── Step 2 — commissioning checks (Group A/B/C/D/E) ──

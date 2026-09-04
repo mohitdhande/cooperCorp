@@ -9,8 +9,10 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, FileDown, CheckCheck, FileText, Play, Video as VideoIcon, X, Key, Check } from 'lucide-react-native';
+import { ChevronLeft, CheckCheck, FileText, Play, X, Key, Check } from 'lucide-react-native';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
+import { PdfActionsRow } from '../../_components/shared/PdfActionsRow';
+import { Toast } from '../../_components/shared/Toast';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
 import { NotesBulletList } from '../../_components/shared/NotesBulletList';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
@@ -18,6 +20,7 @@ import { AssetIdentityHeader } from '../../_components/shared/AssetIdentityHeade
 import { PhotoLightboxModal } from '../../_components/shared/PhotoLightboxModal';
 import { VideoPlayerModal } from '../../_components/shared/VideoPlayerModal';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { MediaLocationButton } from '../../_components/shared/MediaLocationButton';
 import { useTaskReportController } from '../../controllers/taskReportController';
 import {
   val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName, getTaskPeople,
@@ -212,10 +215,13 @@ export default function TaskReportScreen() {
   const {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
-    runningHoursPhotoUrl,
+    runningHoursPhotoUrl, mediaMeta,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
+    generatingReport, handleGenerateReport,
+    regeneratingReport, handleRegenerateReport,
+    toastMessage, toastType, toastVisible,
     canClose, closingTicket, closeTicketError, handleCloseTicket,
     isOtpPending, completionOtp,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
@@ -302,15 +308,32 @@ export default function TaskReportScreen() {
       <ScreenBackground />
 
       {isLoading && <LoadingOverlay message="Loading full report..." />}
+      <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
       <View style={[styles.header, { paddingHorizontal: headerPad }]}>
         <TouchableOpacity style={styles.headerButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{typeLabel || 'Commissioning'}</Text>
-        <TouchableOpacity style={styles.headerDownloadButton} onPress={handleDownloadReport} disabled={downloadingReport}>
-          {downloadingReport ? <ActivityIndicator size="small" color="#FFFFFF" /> : <FileDown size={20} color="#FFFFFF" />}
-        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle} numberOfLines={1}>{typeLabel || 'Commissioning'}</Text>
+        </View>
+        {/* Report PDF only exists once the task is actually done — per the
+            PDF implementation guide's "done" status list for Commissioning
+            (COMPLETED/APPROVED/CLOSED); an empty placeholder keeps the
+            title from re-centering when the row is hidden. */}
+        {['COMPLETED', 'APPROVED', 'CLOSED'].includes(task.status) ? (
+          <PdfActionsRow
+            isReady={!!task.pdfUrl}
+            generating={generatingReport}
+            downloading={downloadingReport}
+            regenerating={regeneratingReport}
+            onGenerate={handleGenerateReport}
+            onDownload={handleDownloadReport}
+            onRegenerate={handleRegenerateReport}
+          />
+        ) : (
+          <View style={styles.headerButtonSpacer} />
+        )}
       </View>
       {!!downloadReportError && (
         <View style={[styles.detailErrorBanner, { marginHorizontal: hPad, marginBottom: 12 }]}>
@@ -472,7 +495,7 @@ export default function TaskReportScreen() {
           Controller Type/S/R are new fields too. */}
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>BATTERY TYPE</Text>
+              <Text style={styles.fieldLabel}>BATTERY MAKE</Text>
               <Text style={styles.fieldValue}>{val(a.batteryType)}</Text>
             </View>
             <View style={styles.fieldHalf}>
@@ -496,21 +519,28 @@ export default function TaskReportScreen() {
               <Text style={styles.fieldValue}>{val(a.panelType)}</Text>
             </View>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>CONTROLLER TYPE</Text>
+              <Text style={styles.fieldLabel}>CONTROLLER MAKE</Text>
               <Text style={styles.fieldValue}>{val(a.controllerType)}</Text>
             </View>
           </View>
+          {/* Load Unbalance isn't collected for Pre-Commissioning at all
+              (its only input, the "Load & Phase Check" card, is hidden
+              for that type in taskForm.tsx) — hidden here to match, same
+              reasoning as Phase Difference (A) below already being
+              gated on isPreCommissioning. */}
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}>
+            <View style={isPreCommissioning ? styles.fieldFull : styles.fieldHalf}>
               <Text style={styles.fieldLabel}>CONTROLLER S/R</Text>
               <Text style={styles.fieldValue}>{val(a.controllerSerialNumber)}</Text>
             </View>
-            <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
-              <Text style={styles.fieldValue}>{reportLoadUnbalance === true ? 'Yes' : reportLoadUnbalance === false ? 'No' : '--'}</Text>
-            </View>
+            {!isPreCommissioning && (
+              <View style={styles.fieldHalf}>
+                <Text style={styles.fieldLabel}>LOAD UNBALANCE</Text>
+                <Text style={styles.fieldValue}>{reportLoadUnbalance === true ? 'Yes' : reportLoadUnbalance === false ? 'No' : '--'}</Text>
+              </View>
+            )}
           </View>
-          {reportLoadUnbalance && (
+          {!isPreCommissioning && reportLoadUnbalance && (
             <View style={styles.fieldFull}>
               <Text style={styles.fieldLabel}>UNBALANCE %</Text>
               <Text style={styles.fieldValue}>{val(reportLoadUnbalancePercentage)}</Text>
@@ -566,9 +596,10 @@ export default function TaskReportScreen() {
 
                 {renderCheckGroup('C', 'CPCB IV+ ATS System Check Points', COMMISSIONING_GROUP_C, commissioningChecks)}
                 <View style={{ marginBottom: 18 }}>
-                  <Text style={styles.subGroupTitle}>Exhaust Temp. on Load DOC (°C)</Text>
-                  <InfoRow label="IN" value={commissioningChecks.C12} />
-                  <InfoRow label="OUT" value={commissioningChecks.C13} />
+                  <Text style={styles.subGroupTitle}>Exhaust Temp. on Load (°C)</Text>
+                  <InfoRow label="DOC IN" value={commissioningChecks.C12} />
+                  <InfoRow label="DOC OUT" value={commissioningChecks.C13} />
+                  <InfoRow label="SCR Out" value={commissioningChecks.C19} />
                   <InfoRow label="DEF Make" value={commissioningChecks.C18} />
                 </View>
 
@@ -625,10 +656,23 @@ export default function TaskReportScreen() {
         >
           <InfoRow label="Running Hours" value={task.runningHours ?? commissioningChecks.runningHours} />
           {!!runningHoursPhotoUrl && (
-            <Image
-              source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
-              style={[styles.reportPhotoThumb, { marginTop: 12 }]}
-            />
+            <View style={[styles.reportThumbWrapper, { marginTop: 12 }]}>
+              <Image
+                source={{ uri: signedPhotoUrls[runningHoursPhotoUrl] || runningHoursPhotoUrl }}
+                style={styles.reportPhotoThumb}
+              />
+              {/* Same read-only tag/location as the general Photos grid
+                  below — this photo just lives in its own section instead
+                  of that one, same info either way. */}
+              <View style={styles.reportThumbIconRow}>
+                <MediaLocationButton location={mediaMeta[runningHoursPhotoUrl]?.location} />
+              </View>
+              {!!mediaMeta[runningHoursPhotoUrl]?.tags?.[0] && (
+                <View style={styles.reportThumbLabelBar}>
+                  <Text style={styles.reportThumbLabelText} numberOfLines={1}>{mediaMeta[runningHoursPhotoUrl]!.tags![0]}</Text>
+                </View>
+              )}
+            </View>
           )}
         </ReportSectionCard>
 
@@ -770,9 +814,22 @@ export default function TaskReportScreen() {
           ) : (
             <View style={styles.reportPhotoGrid}>
               {photos.map((url: string, i: number) => (
-                <TouchableOpacity key={i} onPress={() => { setLightboxIndex(i); setLightboxVisible(true); }}>
-                  <Image source={{ uri: signedPhotoUrls[url] || url }} style={styles.reportPhotoThumb} />
-                </TouchableOpacity>
+                <View key={i} style={styles.reportThumbWrapper}>
+                  <TouchableOpacity onPress={() => { setLightboxIndex(i); setLightboxVisible(true); }}>
+                    <Image source={{ uri: signedPhotoUrls[url] || url }} style={styles.reportPhotoThumb} />
+                  </TouchableOpacity>
+                  {/* Same tag/location info shown while uploading (see
+                      PhotosVideoCard.tsx) — read-only here, no edit/remove
+                      icons since a finished report isn't editable. */}
+                  <View style={styles.reportThumbIconRow}>
+                    <MediaLocationButton location={mediaMeta[url]?.location} />
+                  </View>
+                  {!!mediaMeta[url]?.tags?.[0] && (
+                    <View style={styles.reportThumbLabelBar}>
+                      <Text style={styles.reportThumbLabelText} numberOfLines={1}>{mediaMeta[url]!.tags![0]}</Text>
+                    </View>
+                  )}
+                </View>
               ))}
             </View>
           )}
@@ -790,9 +847,14 @@ export default function TaskReportScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.videoReportFileName} numberOfLines={1}>{videoFileName(url)}</Text>
-                    <Text style={styles.videoReportTapToPlay}>Tap to play</Text>
+                    <View style={styles.reportRowMetaRow}>
+                      <Text style={styles.videoReportTapToPlay}>Tap to play</Text>
+                      {!!mediaMeta[url]?.tags?.[0] && (
+                        <Text style={styles.reportRowTagText} numberOfLines={1}>· {mediaMeta[url]!.tags![0]}</Text>
+                      )}
+                    </View>
                   </View>
-                  <VideoIcon size={18} color="#9CA3AF" />
+                  <MediaLocationButton location={mediaMeta[url]?.location} variant="inline" />
                 </TouchableOpacity>
               ))}
             </View>
@@ -823,9 +885,14 @@ export default function TaskReportScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.videoReportFileName} numberOfLines={1}>{videoFileName(url)}</Text>
-                    <Text style={styles.videoReportTapToPlay}>Tap to view</Text>
+                    <View style={styles.reportRowMetaRow}>
+                      <Text style={styles.videoReportTapToPlay}>Tap to view</Text>
+                      {!!mediaMeta[url]?.tags?.[0] && (
+                        <Text style={styles.reportRowTagText} numberOfLines={1}>· {mediaMeta[url]!.tags![0]}</Text>
+                      )}
+                    </View>
                   </View>
-                  <FileText size={18} color="#9CA3AF" />
+                  <MediaLocationButton location={mediaMeta[url]?.location} variant="inline" />
                 </TouchableOpacity>
               ))}
               {!!documentError && <Text style={styles.closeServiceErrorText}>{documentError}</Text>}
@@ -1355,11 +1422,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   headerTitle: { fontSize: 22, fontWeight: '900', color: '#000000', textTransform: 'uppercase'  },
-  headerDownloadButton: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#F26722',
-    justifyContent: 'center', alignItems: 'center',
-  },
+  // Same footprint as PdfActionsRow's single-action "Generate" state, no
+  // fill — keeps the title from re-centering when the PDF row is hidden
+  // (task not done yet) instead of showing an empty orange circle.
+  headerButtonSpacer: { width: 40, height: 40 },
 
   // Identity card — AssetIdentityHeader (SR ribbon + genset/engine pill +
   // avatars, same component TaskPreviewCard/the task form's own header
@@ -1468,6 +1534,18 @@ const styles = StyleSheet.create({
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   reportPhotoThumb: { width: 100, height: 100, borderRadius: 8, backgroundColor: '#F3F4F6' },
   photosLoadingSpinner: { paddingVertical: 20 },
+  // Read-only tag/location overlay on a report thumbnail — same visual
+  // language as PhotosVideoCard.tsx's own thumbWrapper/thumbIconRow/
+  // thumbLabelBar (the form's upload view), just without the edit/remove
+  // icons a finished report doesn't need.
+  reportThumbWrapper: { width: 100, height: 100, borderRadius: 8, overflow: 'hidden' },
+  reportThumbIconRow: { position: 'absolute', top: 6, right: 6 },
+  reportThumbLabelBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 6, paddingVertical: 4,
+  },
+  reportThumbLabelText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
 
   videoReportRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -1482,6 +1560,11 @@ const styles = StyleSheet.create({
   },
   videoReportFileName: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
   videoReportTapToPlay: { fontSize: 12, fontWeight: '600', color: '#4F46E5', marginTop: 2 },
+  // Tag, shown inline next to "Tap to play/view" on a video/document row —
+  // same tag value the form's own MediaTagPicker sets, just plain text
+  // here since a finished report isn't editable.
+  reportRowMetaRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  reportRowTagText: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginLeft: 4, flexShrink: 1 },
 
   savedByText: { fontSize: 12, color: '#9CA3AF', marginTop: 4 },
 

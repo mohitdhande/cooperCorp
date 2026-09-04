@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Alert, AppState, AppStateStatus, Linking, TextInput } from 'react-native';
-import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getToken } from '../utils/tokenStore';
 import { UserProfile } from '../models/Login';
@@ -13,12 +12,14 @@ import { getRole, Role } from '../constants/permissions';
 import { parseApiError } from '../utils/apiError';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
-import { API_URL } from '../constants/StringConstants';
+import { downloadReportPdf, regenerateReportPdf } from '../utils/reportPdf';
+import { useToast } from '../utils/useToast';
 
 // Loads the full commissioning task detail + asset for the report screen.
 // `initialTask` is the summary object handed over via navigation params —
 // shown immediately while the fuller detail loads in the background.
 export function useTaskReportController(initialTask: any) {
+  const { toastMessage, toastType, toastVisible, showToast } = useToast();
   const [detail, setDetail] = useState<any>(null);
   const [asset, setAsset] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -193,7 +194,7 @@ export function useTaskReportController(initialTask: any) {
   // tag itself is what makes "which step this came from" recoverable at
   // all. Downstream rendering still just wants plain gcsUrl arrays, same
   // shape as before this migration — only how they're derived changed.
-  const media: { type: string; gcsUrl: string; tags?: string[] }[] = task?.media || [];
+  const media: { type: string; gcsUrl: string; tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }[] = task?.media || [];
   const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
   const siteMedia = media.filter((m) => !isRunningHours(m));
   const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
@@ -201,6 +202,19 @@ export function useTaskReportController(initialTask: any) {
   const photos = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
   const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
   const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
+
+  // Tag + location per file — shown read-only in the report (same info
+  // the form itself shows while uploading, see PhotosVideoCard.tsx's own
+  // thumbLabelBar/MediaLocationButton), keyed by gcsUrl so the screen can
+  // look it up for whichever url it's already rendering from the plain
+  // photos/videos/documents arrays above, without changing their shape.
+  // Built from the FULL media array, not siteMedia — siteMedia has the
+  // Running Hours item filtered out (it gets its own section below
+  // instead of showing in the general Photos grid), but its own tag/
+  // location still needs to be looked up here too, or that section would
+  // silently show neither.
+  const mediaMeta: Record<string, { tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }> = {};
+  media.forEach((m) => { mediaMeta[m.gcsUrl] = { tags: m.tags, location: m.location }; });
 
   // Photos are raw GCS URLs (private bucket) — batch-sign just the photo
   // subset (plus the Running Hours photo, signed the same way) in one
@@ -281,60 +295,81 @@ export function useTaskReportController(initialTask: any) {
     }
   }, []);
 
-  // The full "Installation & Commissioning Report" PDF — GET /:id/pdf
-  // streams the raw PDF bytes directly (confirmed: the response starts
-  // with "%PDF-1.3..."), not a JSON url wrapper, so this can't go through
-  // axiosClient (its default json/text parsing corrupts binary). Downloads
-  // straight to a local file via expo-file-system instead, which handles
-  // the raw bytes correctly, then hands that local file off to the OS.
-  // This is the PRIMARY route, not task.pdfUrl (the raw GCS link the task
-  // record also carries) — confirmed live that the GCS bucket rejects
-  // anonymous/unsigned reads of that link with AccessDenied, so it only
-  // works if our backend's service-account credentials fetch it, which is
-  // exactly what this endpoint does server-side. task.pdfUrl is kept only
-  // as a last-resort fallback in case this endpoint itself is unavailable.
+  // The full "Installation & Commissioning Report" PDF — only shown on the
+  // screen once the task is actually done (see taskReport.tsx's own status
+  // check on this button). Mirrors the web Records screen's icon row:
+  // isPdfReady false → a single "Generate" action; true → Preview +
+  // "already generated" checkmark + Download + Regenerate, per
+  // taskReport.tsx's own render logic. See utils/reportPdf.ts's
+  // downloadReportPdf for the actual POST-signed-URL → GET-stream →
+  // task.pdfUrl fallback chain, shared with srDetail.tsx's and
+  // srTaskReport.tsx's own buttons.
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [downloadReportError, setDownloadReportError] = useState('');
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [regeneratingReport, setRegeneratingReport] = useState(false);
 
+  // Generate (first tap, before any PDF exists) — deliberately does NOT
+  // open the OS's PDF viewer the way Preview/Download do (openAfterDownload
+  // false): the point of this tap is just to confirm one now exists, not
+  // to immediately hand the user's screen over to a file viewer. A toast
+  // confirms success instead, and fetchDetail() flips task.pdfUrl so the
+  // row switches to the Ready state (Preview/checkmark/Download/Regenerate).
+  const handleGenerateReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    setGeneratingReport(true);
+    setDownloadReportError('');
+    try {
+      await downloadReportPdf('commissioning', initialTask._id, task?.pdfUrl, false, false);
+      await fetchDetail();
+      showToast('PDF generated. You can download it now.', 'success');
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to generate the report. Please try again.').message);
+    } finally {
+      setGeneratingReport(false);
+    }
+  }, [initialTask?._id, task?.pdfUrl, fetchDetail, showToast]);
+
+  // Preview/Download (Ready state) — this one DOES open the file; there's
+  // no in-app PDF viewer, so "look at it" and "save it" are the same
+  // hand-off-to-the-OS action.
   const handleDownloadReport = useCallback(async () => {
     if (!initialTask?._id) return;
-    console.log('[PDF] Download requested for task', initialTask._id);
     setDownloadingReport(true);
     setDownloadReportError('');
     try {
-      const token = await getToken();
-      if (!token) {
-        console.log('[PDF] No auth token available — aborting download');
-        return;
-      }
-      // idempotent: true — re-downloading the same task's report overwrites
-      // the previous local copy instead of throwing DestinationAlreadyExists.
-      const destination = new File(Paths.cache, `commissioning-report-${initialTask._id}.pdf`);
-      const sourceUrl = `${API_URL}/api/commissioning/${initialTask._id}/pdf`;
-      console.log('[PDF] Downloading from', sourceUrl, 'to', destination.uri);
-      try {
-        const file = await File.downloadFileAsync(
-          sourceUrl,
-          destination,
-          { headers: { Authorization: `Bearer ${token}` }, idempotent: true }
-        );
-        console.log('[PDF] Downloaded to local file:', file.uri);
-        await Linking.openURL(file.uri);
-        console.log('[PDF] Linking.openURL resolved for local file');
-      } catch (primaryError: any) {
-        console.log('[PDF] Backend download failed, falling back to task.pdfUrl:', primaryError?.response?.status || primaryError?.message || primaryError);
-        if (!task?.pdfUrl) throw primaryError;
-        console.log('[PDF] Using stored pdfUrl:', task.pdfUrl);
-        await Linking.openURL(task.pdfUrl);
-        console.log('[PDF] Linking.openURL resolved for pdfUrl');
-      }
+      await downloadReportPdf('commissioning', initialTask._id, task?.pdfUrl);
+      await fetchDetail();
     } catch (error: any) {
-      console.log('[PDF] Download failed:', error?.response?.status || error?.message || error);
       setDownloadReportError(parseApiError(error, 'Failed to download the report. Please try again.').message);
     } finally {
       setDownloadingReport(false);
     }
-  }, [initialTask?._id, task?.pdfUrl]);
+  }, [initialTask?._id, task?.pdfUrl, fetchDetail]);
+
+  // Regenerate — see regenerateReportPdf's own comment: the backend's
+  // force-rebuild route (POST /:id/pdf?force=true) 404s on this deployment
+  // (confirmed live via Postman), so this can't actually force a rebuild
+  // right now — it just re-fetches the same cached-or-fresh GET a plain
+  // Download would, without opening it (same reasoning as Generate above —
+  // a toast confirms it, the user opens it via Download/Preview
+  // afterward). No confirm prompt (nothing destructive is actually
+  // happening today); swap this back to a real force-regenerate confirm
+  // once that backend route exists.
+  const handleRegenerateReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    setRegeneratingReport(true);
+    setDownloadReportError('');
+    try {
+      await regenerateReportPdf('commissioning', initialTask._id, false);
+      await fetchDetail();
+      showToast('PDF generated. You can download it now.', 'success');
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to regenerate the report. Please try again.').message);
+    } finally {
+      setRegeneratingReport(false);
+    }
+  }, [initialTask?._id, fetchDetail, showToast]);
 
   // Client OTP verification — moved here from the task form (taskForm.tsx
   // used to handle this in-place on step 6; Complete now navigates
@@ -500,10 +535,13 @@ export function useTaskReportController(initialTask: any) {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
     detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
-    runningHoursPhotoUrl,
+    runningHoursPhotoUrl, mediaMeta,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
+    generatingReport, handleGenerateReport,
+    regeneratingReport, handleRegenerateReport,
+    toastMessage, toastType, toastVisible,
     canClose, closingTicket, closeTicketError, handleCloseTicket,
     isOtpPending, completionOtp,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,

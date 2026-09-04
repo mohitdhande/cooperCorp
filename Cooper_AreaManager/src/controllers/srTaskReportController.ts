@@ -11,11 +11,14 @@ import {
 import { parseApiError } from '../utils/apiError';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError } from '../utils/syncEngine';
+import { downloadReportPdf, regenerateReportPdf } from '../utils/reportPdf';
+import { useToast } from '../utils/useToast';
 
 // Loads the full SR (service) task detail + asset for the report screen.
 // `initialTask` is the summary object handed over via navigation params —
 // shown immediately while the fuller detail loads in the background.
 export function useSrTaskReportController(initialTask: any) {
+  const { toastMessage, toastType, toastVisible, showToast } = useToast();
   const [detail, setDetail] = useState<any>(null);
   const [asset, setAsset] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -198,13 +201,26 @@ export function useSrTaskReportController(initialTask: any) {
   // out into its own runningHoursPhotoUrl instead of the general photos
   // list — same distinction the commissioning report makes, see its own
   // comment in taskReportController.ts.
-  const media: { type: string; gcsUrl: string; tags?: string[] }[] = task?.media || [];
+  const media: { type: string; gcsUrl: string; tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }[] = task?.media || [];
   const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
   const siteMedia = media.filter((m) => !isRunningHours(m));
   const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
 
   const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
   const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
+
+  // Tag + location per file — shown read-only in the report (same info
+  // the form itself shows while uploading, see PhotosVideoCard.tsx's own
+  // thumbLabelBar/MediaLocationButton), keyed by gcsUrl so the screen can
+  // look it up for whichever url it's already rendering from the plain
+  // photos/videos/documents arrays, without changing their shape.
+  // Built from the FULL media array, not siteMedia — siteMedia has the
+  // Running Hours item filtered out (it gets its own section below
+  // instead of showing in the general Photos grid), but its own tag/
+  // location still needs to be looked up here too, or that section would
+  // silently show neither.
+  const mediaMeta: Record<string, { tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }> = {};
+  media.forEach((m) => { mediaMeta[m.gcsUrl] = { tags: m.tags, location: m.location }; });
 
   const [documentOpeningUrl, setDocumentOpeningUrl] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState('');
@@ -282,7 +298,14 @@ export function useSrTaskReportController(initialTask: any) {
     try {
       const token = await getToken();
       if (!token || !initialTask?._id) return;
-      await closeServiceTask(token, initialTask._id);
+      // The customer remark was typed and "Saved" earlier (see
+      // handleSaveRemark below) but never actually sent to the server —
+      // there's no standalone endpoint for it, only this /close call
+      // accepts customerFeedback, so it rides along with the real close
+      // now that it's actually allowed to happen.
+      const savedRemark = (await AsyncStorage.getItem(remarkStorageKey(initialTask._id)))?.trim();
+      await closeServiceTask(token, initialTask._id, savedRemark || undefined);
+      await AsyncStorage.removeItem(remarkStorageKey(initialTask._id));
       await fetchDetail();
     } catch (error: any) {
       setCloseTicketError(parseApiError(error, 'Failed to close this ticket. Please try again.').message);
@@ -291,16 +314,101 @@ export function useSrTaskReportController(initialTask: any) {
     }
   }, [initialTask?._id, fetchDetail]);
 
+  // Full SR report PDF — only shown on the screen once the task is
+  // actually done (see srTaskReport.tsx's own status check on this
+  // button). Mirrors the web Records screen's icon row: isPdfReady false
+  // → a single "Generate" action; true → Preview + "already generated"
+  // checkmark + Download + Regenerate. See utils/reportPdf.ts's
+  // downloadReportPdf for the actual POST-signed-URL → GET-stream →
+  // task.pdfUrl fallback chain, shared with srDetailController.ts's and
+  // taskReportController.ts's own buttons.
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState('');
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [regeneratingReport, setRegeneratingReport] = useState(false);
+
+  // Generate (first tap, before any PDF exists) — deliberately does NOT
+  // open the OS's PDF viewer the way Preview/Download do (openAfterDownload
+  // false): the point of this tap is just to confirm one now exists, not
+  // to immediately hand the user's screen over to a file viewer. A toast
+  // confirms success instead, and fetchDetail() flips task.pdfUrl so the
+  // row switches to the Ready state (Preview/checkmark/Download/Regenerate).
+  const handleGenerateReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    setGeneratingReport(true);
+    setDownloadReportError('');
+    try {
+      await downloadReportPdf('service', initialTask._id, task?.pdfUrl, false, false);
+      await fetchDetail();
+      showToast('PDF generated. You can download it now.', 'success');
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to generate the report. Please try again.').message);
+    } finally {
+      setGeneratingReport(false);
+    }
+  }, [initialTask?._id, task?.pdfUrl, fetchDetail, showToast]);
+
+  // Preview/Download (Ready state) — this one DOES open the file; there's
+  // no in-app PDF viewer, so "look at it" and "save it" are the same
+  // hand-off-to-the-OS action.
+  const handleDownloadReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    setDownloadingReport(true);
+    setDownloadReportError('');
+    try {
+      await downloadReportPdf('service', initialTask._id, task?.pdfUrl);
+      await fetchDetail();
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to download the report. Please try again.').message);
+    } finally {
+      setDownloadingReport(false);
+    }
+  }, [initialTask?._id, task?.pdfUrl, fetchDetail]);
+
+  // Regenerate — see regenerateReportPdf's own comment: the backend's
+  // force-rebuild route (POST /:id/pdf?force=true) 404s on this deployment
+  // (confirmed live via Postman), so this can't actually force a rebuild
+  // right now — it just re-fetches the same cached-or-fresh GET a plain
+  // Download would, without opening it (same reasoning as Generate above —
+  // a toast confirms it, the user opens it via Download/Preview
+  // afterward). No confirm prompt (nothing destructive is actually
+  // happening today); swap this back to a real force-regenerate confirm
+  // once that backend route exists.
+  const handleRegenerateReport = useCallback(async () => {
+    if (!initialTask?._id) return;
+    setRegeneratingReport(true);
+    setDownloadReportError('');
+    try {
+      await regenerateReportPdf('service', initialTask._id, false);
+      await fetchDetail();
+      showToast('PDF generated. You can download it now.', 'success');
+    } catch (error: any) {
+      setDownloadReportError(parseApiError(error, 'Failed to regenerate the report. Please try again.').message);
+    } finally {
+      setRegeneratingReport(false);
+    }
+  }, [initialTask?._id, fetchDetail, showToast]);
+
   // Client OTP verification — moved here from srTaskForm.tsx (Customer
   // Sign-off used to live inline on Step 5), same as commissioning's own
   // OTP step living on taskReport.tsx instead of taskForm.tsx. Same 3-step
   // shape as commissioning: Generate OTP -> Customer Enters OTP -> Customer
-  // Remark (optional feedback, saved via PUT /:id/feedback — no status
-  // restriction). A successful verify moves status to CLIENT_APPROVED (not
-  // an auto-close like commissioning's COMPLETED → CLOSED) — Close Service
-  // above stays a separate, later step once partApproval/workApproval also
-  // clear.
+  // Remark. A successful verify moves status to CLIENT_APPROVED (not an
+  // auto-close like commissioning's COMPLETED → CLOSED) — Close Ticket
+  // above stays a separate, later step, gated on partApproval/workApproval
+  // also clearing (canCloseTicket above).
   const isOtpPending = task?.status === 'COMPLETED' && !task?.completionOtp?.verified;
+
+  // Step 3's "Save" only saves the remark text locally (see handleSaveRemark
+  // below) — there's no standalone "just save the remark" endpoint on the
+  // backend (PUT /:id/feedback 404s for service tasks), only PUT /:id/close
+  // accepts customerFeedback, and that requires every close gate to already
+  // be clear. So the remark is held here — persisted to AsyncStorage, not
+  // just component state, so it survives leaving/reopening this screen
+  // while waiting on AM/RSM approval — until Close Ticket is actually
+  // pressed and eligible, at which point handleCloseTicket sends it along
+  // with the real close.
+  const remarkStorageKey = (id: string) => `sr_pending_remark_${id}`;
 
   const [otpSheetOpen, setOtpSheetOpen] = useState(false);
   const [otpStep, setOtpStep] = useState<1 | 2 | 3>(1);
@@ -313,6 +421,16 @@ export function useSrTaskReportController(initialTask: any) {
   const [remark, setRemark] = useState('');
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkError, setRemarkError] = useState('');
+
+  // Restores a remark that was typed and "Saved" in an earlier sitting on
+  // this same task, before Close Ticket was actually pressed/eligible.
+  useEffect(() => {
+    if (!initialTask?._id) return;
+    AsyncStorage.getItem(remarkStorageKey(initialTask._id))
+      .then((saved) => { if (saved) setRemark(saved); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTask?._id]);
 
   const openOtpSheet = useCallback(() => {
     setOtpSheetOpen(true);
@@ -401,59 +519,45 @@ export function useSrTaskReportController(initialTask: any) {
     }
   }, [customerOtp, initialTask?._id, fetchDetail]);
 
-  // Save & Close always calls PUT /:id/close — there's no separate
-  // /:id/feedback route for service tasks (confirmed: it 404s), unlike
-  // commissioning's own equivalent endpoint. Same partsDone/workDone gate
-  // handleCloseTicket enforces below — checked client-side before ever
-  // calling the API instead of just trusting the backend to reject an
-  // ineligible close (confirmed the backend doesn't always reject this
-  // reliably, which let a ticket close once with both approvals still
-  // PENDING).
+  // Save-only now — no longer also closes the ticket. Just persists the
+  // remark text locally (see remarkStorageKey's own comment above for why
+  // it can't hit a real endpoint yet) and drops back to the report screen;
+  // Close Ticket is its own separate action below, gated on
+  // parts/work approval clearing (canCloseTicket), same as before. No
+  // partsDone/workDone check needed here anymore — saving the remark isn't
+  // an attempt to close, so it always succeeds regardless of approval
+  // status.
   const handleSaveRemark = useCallback(async () => {
-    if (!partsDone || !workDone) {
-      // Same wording the backend itself used to reject this — kept
-      // consistent so the message reads the same whether the client or
-      // the server ends up being the one that catches it.
-      setRemarkError(
-        !partsDone && !workDone
-          ? 'Parts and work approval must be reviewed before closing.'
-          : !partsDone
-          ? 'Parts must be reviewed by AM before closing.'
-          : 'Work approval must be confirmed before closing.'
-      );
-      return;
-    }
-
     setRemarkSaving(true);
     setRemarkError('');
     try {
-      const token = await getToken();
-      if (!token || !initialTask?._id) return;
+      if (!initialTask?._id) return;
       const trimmed = remark.trim();
-
-      // PUT /:id/close is the only endpoint that exists for this — there's
-      // no separate /:id/feedback route on the backend for service tasks
-      // (confirmed: it 404s). The remark rides its customerFeedback field,
-      // sent whenever there's actually something to send.
-      await closeServiceTask(token, initialTask._id, trimmed || undefined);
-
+      if (trimmed) {
+        await AsyncStorage.setItem(remarkStorageKey(initialTask._id), trimmed);
+      } else {
+        await AsyncStorage.removeItem(remarkStorageKey(initialTask._id));
+      }
       setOtpSheetOpen(false);
-      await fetchDetail();
     } catch (error: any) {
       setRemarkError(parseApiError(error, 'Failed to save. Please try again.').message);
     } finally {
       setRemarkSaving(false);
     }
-  }, [remark, initialTask?._id, fetchDetail, partsDone, workDone]);
+  }, [remark, initialTask?._id]);
 
   return {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
     detailError, isOffline,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
-    photos: photoUrls, signedPhotoUrls, photosSigning,
+    photos: photoUrls, signedPhotoUrls, photosSigning, mediaMeta,
     runningHoursPhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
+    downloadingReport, downloadReportError, handleDownloadReport,
+    generatingReport, handleGenerateReport,
+    regeneratingReport, handleRegenerateReport,
+    toastMessage, toastType, toastVisible,
     otpVerified, partsDone, workDone,
     isOtpPending,
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
