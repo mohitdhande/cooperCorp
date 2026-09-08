@@ -119,8 +119,13 @@ const styles = StyleSheet.create({
   },
   countBadgeText: { fontSize: 12, fontWeight: '700', color: '#1E1951' },
   list: { gap: 12 },
+  // alignItems: 'flex-start' (not 'center') — once the tag chip can wrap
+  // to 2 lines (a long label like "AMC CAMC part Requirement format"), a
+  // centered delete button drifted down to float awkwardly next to the
+  // tag/location row instead of sitting up by the file icon/name where it
+  // reads as "belonging" to the row as a whole.
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
     backgroundColor: '#F8F8F8',
     borderRadius: 16,
     padding: 12,
@@ -132,7 +137,16 @@ const styles = StyleSheet.create({
   },
   fileName: { fontSize: 15, fontWeight: '700', color: '#000000' },
   meta: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
-  rowActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  // No flexWrap — the tag chip and location pin always stay on one line.
+  // The chip itself has flexShrink: 1 and the location button doesn't
+  // shrink at all (React Native's own View default), so a long tag label
+  // (e.g. "AMC CAMC part Requirement format") shrinks the chip down to
+  // whatever width is left and wraps its OWN text onto a second line
+  // in place, rather than pushing the location pin down to a new row.
+  // alignItems: 'flex-start' so the pin sits level with the chip's first
+  // line instead of trying to vertically center against a taller,
+  // 2-line-wrapped chip.
+  rowActionsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 2 },
   deleteButton: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: '#FEE2E2',

@@ -284,8 +284,13 @@ export default function ProfileScreen() {
         {/* Moved here from the login screen. Reads app.json's own "version"
         field directly (via EAS's remote-managed, auto-incrementing build
         version — see eas.json) rather than a separately hardcoded copy
-        that could drift out of sync. */}
-        <Text style={styles.versionText}>v{Constants.expoConfig?.version}</Text>
+        that could drift out of sync. A small centered pill instead of a
+        bare line of grey text — the number is what someone screenshots
+        when reporting a bug, so it should read clearly at a glance rather
+        than blend into the background. */}
+        <View style={styles.versionBadge}>
+          <Text style={styles.versionBadgeText}>V {Constants.expoConfig?.version}</Text>
+        </View>
       </ScrollView>
 
       <Modal visible={optionsVisible} transparent animationType="fade" onRequestClose={() => setOptionsVisible(false)}>
@@ -420,12 +425,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 14,
   },
   actionText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#1F2937' },
-  versionText: {
+  versionBadge: {
+    alignSelf: 'center',
     marginTop: 20,
     marginBottom: 8,
-    textAlign: 'center',
-    fontSize: 12,
-    color: '#9CA3AF',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 100,
+    backgroundColor: '#F3F4F6',
+  },
+  versionBadgeText: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    color: '#6B7280',
   },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },

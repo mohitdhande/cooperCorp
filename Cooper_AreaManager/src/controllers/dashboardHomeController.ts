@@ -16,7 +16,9 @@ import { formatTaskType, formatAssetLabel } from '../utils/reportFormatters';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
-import { logLocationForAction } from '../utils/locationLogger';
+import { logLocationForAction, registerLocationOffWarning, checkLocationBlocked } from '../utils/locationLogger';
+import { handleLocationOffWarning, showLocationOffAlert } from '../utils/locationOffAlert';
+import { useToast } from '../utils/useToast';
 import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 // Backend doesn't send a greeting string — purely a function of the
@@ -37,6 +39,14 @@ function getGreeting() {
 // in a single round trip.
 export function useDashboardHomeController() {
   const router = useRouter();
+  const { toastMessage, toastType, toastVisible, showToast } = useToast();
+  // Shows once per screen visit, the first time Start (the one
+  // location-needing action on this screen) finds location services off —
+  // see locationLogger.ts's own comment on registerLocationOffWarning.
+  useEffect(() => {
+    registerLocationOffWarning((reason) => handleLocationOffWarning(reason, showToast));
+    return () => registerLocationOffWarning(null);
+  }, [showToast]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -398,6 +408,16 @@ export function useDashboardHomeController() {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
+      // Same hard gate as a photo upload (checkLocationBlocked's own
+      // comment) — Start needs a real location, not just a best-effort one.
+      // Checked before the API call is even made: if GPS/permission is
+      // off, nothing is sent to the server at all, just the Turn On/Open
+      // Settings alert. Only a weak/no GPS *fix* still lets Start through.
+      const blockReason = await checkLocationBlocked();
+      if (blockReason) {
+        showLocationOffAlert(blockReason);
+        return;
+      }
       const kind = task.__kind === 'service' ? 'service' : 'commissioning';
       const assetLabel = formatAssetLabel(task.asset?.gensetNumber, task.asset?.engineNumber, taskId);
       // Location is captured only at Start, photo upload, and Complete —
@@ -519,6 +539,7 @@ export function useDashboardHomeController() {
   }, [assignPickerTask, fetchSummary]);
 
   return {
+    toastMessage, toastType, toastVisible,
     profile, permissions,
     greeting: getGreeting(),
     // Raw summary handed through as-is (rather than picking out yet more

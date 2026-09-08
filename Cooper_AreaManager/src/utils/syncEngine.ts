@@ -2,6 +2,17 @@ import axiosClient from '../viewModel/axiosClient';
 import { getToken } from './tokenStore';
 import { enqueueAction, getQueue, getQueueCount, removeFromQueue, recordSyncFailure, getSyncFailures, clearSyncFailures } from './offlineQueue';
 import { devLog } from './devLog';
+import { checkLocationBlocked } from './locationLogger';
+
+// Matches exactly the dedupeKeys handleStartTask/handleStartActiveTask
+// (commissioning_start_/service_start_) and handleMarkComplete/
+// handleFinishService (commissioning_complete_/service_finish_) use — the
+// same 3 checkpoints (Start, upload, Complete) that require a real,
+// interactively-confirmed location before their live tap-driven call is
+// even attempted (see checkLocationBlocked). Deliberately narrow (anchored
+// to these exact prefixes) so it can never accidentally catch an unrelated
+// queued save like commissioning_accept_ or sr_notes_.
+const LOCATION_GATED_DEDUPE_KEY = /^(commissioning|service)_(start|complete|finish)_/;
 
 // True only for a genuine connectivity failure (the request never reached
 // the server, or never got a response back) — axios sets `request` but
@@ -148,6 +159,20 @@ export async function runSync(): Promise<{ synced: number; failed: number }> {
     const token = await getToken();
     if (!token) return { synced: 0, failed: 0 };
     for (const action of queue) {
+      // A Start/Complete that got queued for an unrelated reason (a real
+      // network failure at the time, or simply queued before this location
+      // requirement existed) must NOT get silently replayed here without
+      // location — that would defeat the whole point of gating the live
+      // tap-driven call in commissioningTasksController.ts/
+      // serviceTasksController.ts/useTaskFormOtp.ts/useSrTaskForm.ts. Left
+      // in the queue (not synced, not dropped as failed) so it's retried
+      // again on the next sync tick — it goes through automatically the
+      // moment location is actually back on, with no alert spammed on every
+      // 20s tick in the meantime (the interactive Start/Complete tap
+      // already shows that; the pending-changes banner covers the rest).
+      if (LOCATION_GATED_DEDUPE_KEY.test(action.dedupeKey) && await checkLocationBlocked()) {
+        continue;
+      }
       try {
         await axiosClient.put(action.url, action.body, { headers: { Authorization: `Bearer ${token}` } });
         await removeFromQueue(action.id);

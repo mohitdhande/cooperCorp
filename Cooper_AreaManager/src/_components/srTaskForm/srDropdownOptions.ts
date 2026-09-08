@@ -1,21 +1,25 @@
-// Shared asset dropdown options used by both the Commissioning and SR task forms.
-export const ENGINE_TYPE_OPTIONS = ['TC 3000', 'NA 3000', 'TC 1500', 'NA 1500', 'Other'];
+// Shared asset dropdown options used by both the Commissioning and SR task
+// forms' own Step 1 — every option here is upper case (matching Step 1's
+// text fields, which already force every keystroke uppercase via the
+// `upper()` wrapper in taskForm.tsx/srTaskForm.tsx) so a dropdown pick and
+// a typed field read consistently on the same step.
+export const ENGINE_TYPE_OPTIONS = ['TC 3000', 'NA 3000', 'TC 1500', 'NA 1500', 'OTHER'];
 
 export const ENGINE_FAMILY_OPTIONS = [
-  'Single cylinder', 'V Twin', '2 cylinder CRDI', '2 cylinder MECH',
-  '3 cylinder Bosch', '3 cylinder stanadyne',
-  '4 cylinder 4.5 Ltr', '6 cylinder 6.8 Ltr', '6 cylinder 7.8 Ltr',
-  'Escort Kubota', 'VECV',
+  'SINGLE CYLINDER', 'V TWIN', '2 CYLINDER CRDI', '2 CYLINDER MECH',
+  '3 CYLINDER BOSCH', '3 CYLINDER STANADYNE',
+  '4 CYLINDER 4.5 LTR', '6 CYLINDER 6.8 LTR', '6 CYLINDER 7.8 LTR',
+  'ESCORT KUBOTA', 'VECV',
 ];
 
-export const FUEL_TYPE_OPTIONS = ['Diesel', 'CNG', 'LNG', 'LPG', 'PNG', 'Biogas'];
+export const FUEL_TYPE_OPTIONS = ['DIESEL', 'CNG', 'LNG', 'LPG', 'PNG', 'BIOGAS'];
 
 export const APPLICATION_OPTIONS = [
-  'Genset', 'G-Drive', 'Fire Pump', 'Marine', 'APU',
-  'Pump Set', 'Compressor', 'Lighting Tower', 'Other'
+  'GENSET', 'G-DRIVE', 'FIRE PUMP', 'MARINE', 'APU',
+  'PUMP SET', 'COMPRESSOR', 'LIGHTING TOWER', 'OTHER'
 ];
 
-export const PHASE_OPTIONS = ['Single Phase', 'Three Phase'];
+export const PHASE_OPTIONS = ['SINGLE PHASE', 'THREE PHASE'];
 
 export const PANEL_TYPE_OPTIONS = ['STD', 'ASAS', 'AMF', 'SYNC'];
 

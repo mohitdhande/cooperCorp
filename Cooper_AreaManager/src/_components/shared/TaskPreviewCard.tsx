@@ -1,7 +1,8 @@
 import { formatDate, formatDateTime12h, formatTimeAgoLabel, initials, taskTypeLabel, getTaskPeople } from '../../utils/reportFormatters';
 import { View, TouchableOpacity, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Text } from '@/_components/AppText';
-import { ArrowRight, BookmarkCheck, CalendarCheck, Check, ChevronRight, Clock, FileText, RefreshCw, Settings, UserCog } from 'lucide-react-native';
+import { ArrowRight, BookmarkCheck, CalendarCheck, Check, ChevronRight, Clock, FileText, Minus, RefreshCw, Settings, UserCog } from 'lucide-react-native';
+import { getRole } from '../../constants/permissions';
 import { SERVICE_CATEGORIES } from '../srTaskForm/srDropdownOptions';
 import { AssetIdentityHeader } from './AssetIdentityHeader';
 import { AssetLocationContact } from './AssetLocationContact';
@@ -96,8 +97,20 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
   // that; Accept and Assign are already mutually exclusive at the prop
   // level for any single card.
   const showAcceptButton = !isDone && isAssigned && !!onAcceptPress;
-  const showAssignButton = !isDone && !!onAssignPress;
-  const showManagerAssignRow = !isDone && !!onManagerAssignPress;
+  // Assign/Reassign specifically means "hand the remaining field work to
+  // someone else" — once a Service task is COMPLETED, there's no more field
+  // work left to hand off, only the customer's own OTP sign-off, which
+  // isn't something a different engineer/dealer could go do instead. Used
+  // to reuse isDone here, which deliberately keeps Service's COMPLETED
+  // "not done" for other reasons (still shows the OTP-pending banner, still
+  // routes the arrow button to Continue/View, etc. — those stay correct);
+  // this is a narrower, Assign-specific check so fixing "reassignable" for
+  // a completed task doesn't also make it look Done everywhere else it
+  // shouldn't yet. Commissioning is unaffected — its own isDone already
+  // treats COMPLETED as done, matching what's wanted here too.
+  const canReassign = isService ? !['COMPLETED', 'CLIENT_APPROVED', 'CLOSED'].includes(status) : !isDone;
+  const showAssignButton = canReassign && !!onAssignPress;
+  const showManagerAssignRow = canReassign && !!onManagerAssignPress;
   // Some callers (the Dashboard's Active Task preview) are read-only —
   // time + status only, no action circle at all — rather than a disabled
   // ghost button, when literally none of the action handlers were passed.
@@ -216,10 +229,24 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
         // previously left this slot stuck showing "Pending" even once RSM
         // had already signed off (a state that can't actually happen).
         const amDone = !!task.workApproval.amDecidedAt || task.workApproval.status === 'PENDING_RSM' || task.workApproval.status === 'CONFIRMED';
+        // Per mobile-approvals-guide.md §5 — a task an Area Manager assigned
+        // to themself has no one "above" that AM to meaningfully review
+        // their own work, so amDone here reflects this app's own
+        // auto-approve workaround (srDetailController.ts's handleResubmit),
+        // not a real human decision. Same fix as srDetail.tsx's own
+        // Approval Request card: isAMSelf alone decides "Skipped", shown
+        // instead of a false "Approved" — this was the exact card left
+        // unfixed there (a separate, shared component, not the one already
+        // patched).
+        const isAMSelf = getRole(task?.assignedTo?.role || '') === 'areaManager';
         return (
         <View style={styles.approvalChainBox}>
           <View style={styles.approvalChainSlot}>
-            {amDone ? (
+            {isAMSelf ? (
+              <View style={styles.approvalAvatarSkipped}>
+                <Minus size={14} color="#9CA3AF" />
+              </View>
+            ) : amDone ? (
               <View style={styles.approvalAvatarDone}>
                 <Text style={styles.approvalAvatarDoneText}>{initials(task.workApproval.amDecidedBy?.name || 'AM')}</Text>
                 <View style={styles.approvalBadgeDone}>
@@ -236,8 +263,10 @@ export function TaskPreviewCard({ task, effectiveStatus, isLoading, errorMsg, on
             )}
             <View>
               <Text style={styles.approvalSlotLabel}>AM</Text>
-              <Text style={amDone ? styles.approvalSlotTimeDone : styles.approvalSlotPending}>
-                {task.workApproval.amDecidedAt
+              <Text style={isAMSelf ? styles.approvalSlotSkipped : amDone ? styles.approvalSlotTimeDone : styles.approvalSlotPending}>
+                {isAMSelf
+                  ? 'Skipped'
+                  : task.workApproval.amDecidedAt
                   ? formatTimeAgoLabel(task.workApproval.amDecidedAt)
                   : amDone ? 'Approved' : 'Pending'}
               </Text>
@@ -462,9 +491,18 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: '#FDF2F2',
     justifyContent: 'center', alignItems: 'center',
   },
+  // Neutral grey, distinct from both the "done" navy and "pending" faded
+  // avatar — an AM-self-assigned task's AM step never really happened, so
+  // it shouldn't look like either a real approval or a real wait.
+  approvalAvatarSkipped: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center', alignItems: 'center',
+  },
   approvalSlotLabel: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
   approvalSlotTimeDone: { fontSize: 11, fontWeight: '600', color: '#166534', marginTop: 1 },
   approvalSlotPending: { fontSize: 14, fontWeight: '700', color: '#DC2626', marginTop: 1 },
+  approvalSlotSkipped: { fontSize: 14, fontWeight: '700', color: '#9CA3AF', marginTop: 1 },
 
   errorBox: { backgroundColor: '#FEE2E2', borderRadius: 12, padding: 10 },
   errorText: { color: '#DC2626', fontSize: 13, fontWeight: '500', textAlign: 'center' },

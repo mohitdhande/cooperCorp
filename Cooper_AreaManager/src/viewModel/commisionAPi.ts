@@ -1033,6 +1033,15 @@ const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string
       err.name = 'AbortError';
       return err;
     };
+    // Tagged the same way onerror's NetworkError below is — a stall isn't a
+    // user cancel, it's exactly the kind of connectivity failure
+    // useMediaUploadQueue's isRetryableFailure is meant to catch (so it
+    // gets persisted for automatic retry instead of just vanishing).
+    const stallError = () => {
+      const err: any = new Error("Upload stalled — no response from the server");
+      err.name = 'NetworkError';
+      return err;
+    };
 
     if (signal?.aborted) {
       reject(abortError());
@@ -1041,19 +1050,48 @@ const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string
 
     const xhr = new XMLHttpRequest();
     let aborted = false;
+    let stalled = false;
+
+    // This raw XHR PUT (the actual file bytes, straight to GCS) previously
+    // had NO timeout at all — every other call in the app times out after
+    // 10s (axiosClient), but a dropped/stalled connection here (weak signal
+    // on-site, a tower handoff, etc.) just hung forever: no onload, no
+    // onerror, ever. The progress bar froze mid-upload with no error shown,
+    // and since the queue (useMediaUploadQueue.ts's pump()) uploads one
+    // item at a time, everything queued behind it looked stuck too.
+    //
+    // A flat total-request timeout would be wrong here — a large video can
+    // legitimately take minutes on a slow but *working* connection. Instead
+    // this is an inactivity watchdog: it only fires if no progress (and no
+    // completion) happens for STALL_TIMEOUT_MS in a row, and gets pushed
+    // back on every real progress event, so a slow-but-still-moving upload
+    // is never killed — only a genuinely dead one.
+    const STALL_TIMEOUT_MS = 30000;
+    let stallTimer: ReturnType<typeof setTimeout>;
+    const resetStallTimer = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (aborted) return;
+        stalled = true;
+        xhr.abort();
+      }, STALL_TIMEOUT_MS);
+    };
+    resetStallTimer();
+
     xhr.open('PUT', uploadUrl);
     xhr.setRequestHeader('Content-Type', contentType);
-    if (onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) onProgress(clampPercent(Math.round((event.loaded / event.total) * 100)));
-      };
-    }
+    xhr.upload.onprogress = (event) => {
+      resetStallTimer();
+      if (onProgress && event.lengthComputable) onProgress(clampPercent(Math.round((event.loaded / event.total) * 100)));
+    };
     xhr.onload = () => {
+      clearTimeout(stallTimer);
       if (aborted) return;
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`GCS video upload failed with status ${xhr.status}`));
     };
     xhr.onerror = () => {
+      clearTimeout(stallTimer);
       if (aborted) return;
       // Tagged the same way abortError() tags its own Error — this has no
       // axios request/response object for isNetworkError (syncEngine.ts) to
@@ -1064,8 +1102,9 @@ const putFileToGcsUrl = (uploadUrl: string, fileUri: string, contentType: string
       reject(err);
     };
     xhr.onabort = () => {
+      clearTimeout(stallTimer);
       aborted = true;
-      reject(abortError());
+      reject(stalled ? stallError() : abortError());
     };
     if (signal) {
       signal.addEventListener('abort', () => xhr.abort(), { once: true });

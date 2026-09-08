@@ -27,8 +27,19 @@ import {
 } from '../../utils/reportFormatters';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { safeJsonParse } from '../../utils/safeJsonParse';
+import { useKeyboardHeight } from '../../utils/useKeyboardHeight';
 
 const REF_WIDTH = 420;
+
+// Same 3-state pill colors as srDetail.tsx's own Parts review card — kept
+// as its own local copy rather than a shared import since neither screen
+// exports it and this app doesn't otherwise centralize small per-screen
+// style constants like this.
+const PART_DECISION_PILL: Record<string, { bg: string; text: string }> = {
+  PENDING: { bg: '#F3F4F6', text: '#6B7280' },
+  APPROVED: { bg: '#DCFCE7', text: '#15803D' },
+  REJECTED: { bg: '#FEE2E2', text: '#DC2626' },
+};
 
 // Voice of Customer's 1-5 star rating, labeled the same way srTaskForm.tsx's
 // own (editable) star input does.
@@ -131,6 +142,9 @@ function VerifyOtpSheet({
   onChangeRemark: (text: string) => void;
   onSaveRemark: () => void;
 }) {
+  const { height } = useWindowDimensions();
+  const kbHeight = useKeyboardHeight();
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       {/* Dismissible by tap-outside/X/back at every step, including step 3
@@ -141,7 +155,13 @@ function VerifyOtpSheet({
           can legitimately fail (e.g. parts still pending AM review) and
           that left the sheet with no way out at all. */}
       <Pressable style={styles.otpModalOverlay} onPress={onClose}>
-        <Pressable style={styles.otpSheet} onPress={(e) => e.stopPropagation()}>
+        {/* RN's Modal window doesn't pan/resize for the keyboard on either
+            platform, so lift the sheet ourselves: pad its bottom by the
+            live keyboard height and cap the scroll area to the space left
+            above the keyboard. That keeps the remark field and every
+            action button (Generate / Verify / Save) fully visible, not
+            just partially. */}
+        <Pressable style={[styles.otpSheet, { paddingBottom: 32 + kbHeight }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.otpSheetHandle} />
           <View style={styles.otpSheetHeaderRow}>
             <View>
@@ -155,7 +175,7 @@ function VerifyOtpSheet({
 
           <OtpStepper step={step} />
 
-          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: kbHeight > 0 ? Math.max(150, height - kbHeight - 220) : 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
             {step === 1 && (
               <View style={styles.otpStepCard}>
                 <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
@@ -922,6 +942,12 @@ export default function ServiceTaskReportScreen() {
               // replacement for "extra info about this part", shown only
               // when actually set.
               const partSubtitle = [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · ');
+              // This report previously never showed decision/decisionReason
+              // at all, even though srDetail.tsx's own Parts review card
+              // already displays both for this exact same field shape —
+              // a rejected part (and why) was invisible here.
+              const decision = p.decision;
+              const decisionStyle = PART_DECISION_PILL[decision] || PART_DECISION_PILL.PENDING;
               return (
                 <View key={p._id || i} style={styles.partReportCard}>
                   <View style={styles.partReportTop}>
@@ -932,10 +958,20 @@ export default function ServiceTaskReportScreen() {
                       <Text style={styles.partNameReport}>{val(partInfo.description)}</Text>
                       {!!partSubtitle && <Text style={styles.partCategoryReport}>{partSubtitle}</Text>}
                     </View>
+                    {!!decision && (
+                      <View style={[styles.partDecisionPillReport, { backgroundColor: decisionStyle.bg }]}>
+                        <Text style={[styles.partDecisionPillTextReport, { color: decisionStyle.text }]}>{decision}</Text>
+                      </View>
+                    )}
                   </View>
                   <View style={styles.partReportBottom}>
                     <Text style={styles.partQtyReport}>Qty: {val(p.quantity)}</Text>
                   </View>
+                  {decision === 'REJECTED' && !!p.decisionReason && (
+                    <View style={styles.partRejectionNoteBoxReport}>
+                      <Text style={styles.partRejectionNoteTextReport}>{p.decisionReason}</Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -1159,6 +1195,7 @@ export default function ServiceTaskReportScreen() {
             {!!closeTicketError && <Text style={styles.closeServiceErrorText}>{closeTicketError}</Text>}
           </View>
         )}
+
       </View>
 
       <VideoPlayerModal
@@ -1420,6 +1457,19 @@ const styles = StyleSheet.create({
   // so this row now only ever holds Qty, right-aligned.
   partReportBottom: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
   partQtyReport: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
+  partDecisionPillReport: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 100,
+  },
+  partDecisionPillTextReport: { fontSize: 11, fontWeight: '700' },
+  partRejectionNoteBoxReport: {
+    marginTop: 10,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    padding: 10,
+  },
+  partRejectionNoteTextReport: { fontSize: 13, color: '#B91C1C', fontStyle: 'italic' },
 
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   reportPhotoThumb: { width: 100, height: 100, borderRadius: 8, backgroundColor: '#F3F4F6' },

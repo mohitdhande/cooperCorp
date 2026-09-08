@@ -86,8 +86,15 @@ function useScrollIntoViewOnFocus() {
   return { fieldRef, onFocus };
 }
 
-function FormField({ label, required, value, onChangeText, placeholder }: {
+function FormField({ label, required, value, onChangeText, placeholder, keyboardType, maxLength }: {
   label: string; required?: boolean; value: string; onChangeText: (v: string) => void; placeholder?: string;
+  // Contact No. fields pass 'number-pad' + maxLength={10} — the actual
+  // digits-only/10-digit-cap enforcement happens in the controller's own
+  // onChangeText wrapper (handlePrimaryContactNumberChange/
+  // handleAlternateContactNumberChange), maxLength here is just the
+  // matching on-screen keyboard behavior, not the source of truth.
+  keyboardType?: 'default' | 'number-pad';
+  maxLength?: number;
 }) {
   const { fieldRef, onFocus } = useScrollIntoViewOnFocus();
 
@@ -101,6 +108,8 @@ function FormField({ label, required, value, onChangeText, placeholder }: {
         placeholder={placeholder}
         placeholderTextColor="#9CA3AF"
         onFocus={onFocus}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
       />
     </View>
   );
@@ -301,8 +310,8 @@ export default function CreateAssetCommissionScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>ASSET DETAILS</Text>
           <View style={styles.fieldRow}>
-            <FormField label="Genset S/N" required value={gensetSn} onChangeText={setGensetSn} />
-            <FormField label="Engine S/N" required value={engineSn} onChangeText={setEngineSn} />
+            <FormField label="Genset SR Number" required value={gensetSn} onChangeText={setGensetSn} />
+            <FormField label="Engine SR Number" required value={engineSn} onChangeText={setEngineSn} />
           </View>
         </View>
 
@@ -321,13 +330,13 @@ export default function CreateAssetCommissionScreen() {
             <FormField label="Primary Contact Name" required value={primaryContactName} onChangeText={setPrimaryContactName} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Primary Contact No." required value={primaryContactNumber} onChangeText={setPrimaryContactNumber} />
+            <FormField label="Primary Contact No." required value={primaryContactNumber} onChangeText={setPrimaryContactNumber} keyboardType="number-pad" maxLength={10} />
           </View>
           <View style={styles.fieldRow}>
             <FormField label="Alternate Contact Name" value={alternateContactName} onChangeText={setAlternateContactName} />
           </View>
           <View style={styles.fieldRow}>
-            <FormField label="Alternate Contact No." value={alternateContactNumber} onChangeText={setAlternateContactNumber} />
+            <FormField label="Alternate Contact No." value={alternateContactNumber} onChangeText={setAlternateContactNumber} keyboardType="number-pad" maxLength={10} />
           </View>
           <View style={styles.fieldRow}>
             {sapAsset?.billingDate ? (

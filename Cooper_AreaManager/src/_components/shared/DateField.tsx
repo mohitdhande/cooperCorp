@@ -71,6 +71,12 @@ export function DateField({ label, required, labelExtra, value, onChangeText, pl
         <DateTimePicker
           value={parseDDMMYYYYToDate(value) || new Date()}
           mode="date"
+          // Every date field in the app (Dispatch Date, Commissioning
+          // Entry Date) records something that already happened or is
+          // happening now — never a future date — so the native picker
+          // itself blocks picking past today, rather than accepting one
+          // and catching it as a validation error afterward.
+          maximumDate={new Date()}
           onValueChange={(_event, date) => {
             onChangeText(dateToDDMMYYYY(date));
             setPickerOpen(false);

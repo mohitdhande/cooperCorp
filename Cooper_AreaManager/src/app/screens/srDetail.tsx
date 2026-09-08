@@ -14,6 +14,8 @@ import {
   RefreshCw, FileText, Package, Minus, Plus, BookmarkCheck, FileDown,
 } from 'lucide-react-native';
 import { useSrDetailController } from '../../controllers/srDetailController';
+import { getRole } from '../../constants/permissions';
+import { useKeyboardHeight } from '../../utils/useKeyboardHeight';
 import { ActivityHistoryCard } from '../../_components/shared/ActivityHistoryCard';
 import { ReportSectionCard } from '../../_components/shared/ReportSectionCard';
 import { NotesBulletList } from '../../_components/shared/NotesBulletList';
@@ -85,6 +87,14 @@ function ScreenBackground() {
 export default function SrDetailScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  // RN's <Modal> never pans/resizes for the keyboard on either platform —
+  // every bottom-sheet Modal on this screen (Edit & Resubmit, Reject,
+  // Approve) previously had no keyboard handling at all, so a note/field
+  // near the bottom of a longer form (or the sheet's own Confirm/Resubmit
+  // button, pinned below the scroll area) could end up covered while
+  // typing. Same fix already proven on taskReport.tsx/srTaskReport.tsx's
+  // own OTP sheet — see useKeyboardHeight's own comment for why.
+  const kbHeight = useKeyboardHeight();
   const hPad = width * (20 / REF_WIDTH);
   const headerPad = width * (30 / REF_WIDTH);
   const params = useLocalSearchParams<{ task: string }>();
@@ -132,6 +142,16 @@ export default function SrDetailScreen() {
   const [workRejectVisible, setWorkRejectVisible] = useState(false);
   const [workRejectNote, setWorkRejectNote] = useState('');
   const closeWorkRejectSheet = () => { setWorkRejectVisible(false); setWorkRejectNote(''); };
+
+  // Same idea for Approve/Confirm — previously fired straight off the
+  // button tap with no way to type a real note at all (submitAmWorkApproval/
+  // submitRsmWorkApproval just got a hardcoded "Approved"/"Confirmed"
+  // fallback). Optional here, unlike the reject note above — approving is
+  // the default/expected path, so there's nothing to force typing before
+  // it's allowed to submit.
+  const [workApproveVisible, setWorkApproveVisible] = useState(false);
+  const [workApproveNote, setWorkApproveNote] = useState('');
+  const closeWorkApproveSheet = () => { setWorkApproveVisible(false); setWorkApproveNote(''); };
 
   // IN_PROGRESS's "Complete Service" card — same navigation target
   // serviceTasksController.ts's goToTaskForm uses for an Active-tab card.
@@ -189,7 +209,23 @@ export default function SrDetailScreen() {
   // an engineer viewing their own task, or a dealer reviewing a subordinate
   // engineer's) but were never allowed to actually decide a part, so the
   // Approve/Reject buttons shouldn't render for them at all.
-  const canReviewParts = role === 'areaManager' || role === 'admin';
+  //
+  // Previously missing entirely (per mobile-approvals-guide.md §5/§7): an
+  // area_manager was allowed through here regardless of
+  // partApproval.approvalRequiredBy — including on their OWN
+  // self-assigned task, whose parts always require RSM review (never AM),
+  // exactly the case the "Skipped"/"RSM Review Needed" changes above are
+  // about. That let an AM see live Approve/Reject buttons that would 403
+  // the moment they were tapped. 'admin' still passes unconditionally —
+  // this app has no dedicated 'rsm' role, admin stands in for that tier
+  // too, so it's the right reviewer for both 'AM' and 'RSM' tiers.
+  // approvalRequiredBy can still be unset (the mid-task
+  // parts/request-approval path, before completion sets it — see §4b) —
+  // stay permissive for an area_manager in that case rather than guessing,
+  // since the backend's own review endpoint already re-derives the correct
+  // tier live when it's missing.
+  const partApprovalRequiredBy = task?.partApproval?.approvalRequiredBy;
+  const canReviewParts = role === 'admin' || (role === 'areaManager' && partApprovalRequiredBy !== 'RSM');
 
   // Task-level category/sub-category (distinct from each fault code/part's
   // own category/subCategory fields) — task.category is the letter (A-G);
@@ -276,6 +312,19 @@ export default function SrDetailScreen() {
   const amDone = !!workApproval && workApproval.status !== 'PENDING_AM';
   const amApproved = amDone && !amRejected;
   const amTime = workApproval?.amDecidedAt ? formatTimeAgoLabel(workApproval.amDecidedAt) : '';
+  // Per mobile-approvals-guide.md §5 — a task an Area Manager assigned to
+  // themself has no one "above" that AM to meaningfully review their own
+  // work, so the AM tier doesn't really apply to it at all. This app's own
+  // resubmit flow (srDetailController.ts's handleResubmit) papers over that
+  // by auto-submitting an APPROVED decision on the AM's behalf so the task
+  // can still move on to PENDING_RSM — which means amDecidedBy actually
+  // does get set here, unlike the guide's own "amDecidedBy is never set"
+  // description of a purely backend-driven skip. Rendering this as
+  // "Approved" would still be misleading (no human reviewed it, the AM
+  // just approved their own work by default) — isAMSelf alone decides
+  // "Skipped" here, regardless of whether an auto-approve record exists.
+  const isAMSelf = getRole(task?.assignedTo?.role || '') === 'areaManager';
+  const amSkipped = isAMSelf && !amRejected;
 
   const rsmRejected = workApproval?.status === 'REJECTED' && workApproval?.rejectedBy === 'RSM';
   const rsmConfirmed = workApproval?.status === 'CONFIRMED';
@@ -584,11 +633,14 @@ export default function SrDetailScreen() {
               <View style={styles.approvalChainStep}>
                 <View style={[
                   styles.approvalChainAvatar,
-                  amApproved && styles.approvalChainAvatarDone,
+                  amApproved && !amSkipped && styles.approvalChainAvatarDone,
                   amRejected && styles.approvalChainAvatarRejected,
+                  amSkipped && styles.approvalChainAvatarSkipped,
                 ]}>
                   {amRejected ? (
                     <X size={18} color="#FFFFFF" />
+                  ) : amSkipped ? (
+                    <Minus size={18} color="#9CA3AF" />
                   ) : amApproved ? (
                     workApproval?.amDecidedBy?.userId ? (
                       <UserAvatar userId={workApproval.amDecidedBy.userId} name={workApproval.amDecidedBy.name || ''} size={40} bg="#16A34A" />
@@ -601,13 +653,18 @@ export default function SrDetailScreen() {
                 </View>
                 <Text style={styles.approvalChainLabel}>AM</Text>
                 <View style={styles.approvalChainStatusRow}>
-                  <Clock size={10} color={amRejected ? '#DC2626' : amApproved ? '#16A34A' : '#B45309'} />
+                  {amSkipped ? (
+                    <Minus size={10} color="#9CA3AF" />
+                  ) : (
+                    <Clock size={10} color={amRejected ? '#DC2626' : amApproved ? '#16A34A' : '#B45309'} />
+                  )}
                   <Text style={[
                     styles.approvalChainStatus,
-                    amApproved && styles.approvalChainStatusDone,
+                    amApproved && !amSkipped && styles.approvalChainStatusDone,
                     amRejected && styles.approvalChainStatusRejected,
+                    amSkipped && styles.approvalChainStatusSkipped,
                   ]}>
-                    {amRejected ? 'Rejected' : amApproved ? (amTime || 'Approved') : 'Pending'}
+                    {amRejected ? 'Rejected' : amSkipped ? 'Skipped' : amApproved ? (amTime || 'Approved') : 'Pending'}
                   </Text>
                 </View>
               </View>
@@ -669,7 +726,7 @@ export default function SrDetailScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.approvalReqApproveButton, workApprovalSaving && styles.buttonDisabled]}
-                  onPress={() => (workApprovalIsAmStage ? handleAmWorkDecision('APPROVED') : handleRsmWorkDecision('CONFIRMED'))}
+                  onPress={() => (workApprovalIsAmStage ? handleAmWorkDecision('APPROVED') : setWorkApproveVisible(true))}
                   disabled={workApprovalSaving}
                 >
                   {workApprovalSaving ? <ActivityIndicator color="#fff" size="small" /> : (
@@ -815,7 +872,17 @@ export default function SrDetailScreen() {
               onToggle={() => setPartsExpanded(!partsExpanded)}
               badge={
                 pendingPartsCount > 0
-                  ? { label: 'AM Review Needed', bg: '#FEF3C7', text: '#B45309' }
+                  ? {
+                      // Per mobile-approvals-guide.md §7 — this used to
+                      // hardcode "AM Review Needed" regardless of who
+                      // actually needs to review it. partApproval.
+                      // approvalRequiredBy is 'RSM' specifically for an
+                      // AM-self-assigned task's parts (§5) — that badge
+                      // was wrong for exactly the same tasks the AM step
+                      // above now shows as "Skipped".
+                      label: partApprovalRequiredBy === 'RSM' ? 'RSM Review Needed' : 'AM Review Needed',
+                      bg: '#FEF3C7', text: '#B45309',
+                    }
                   : hasReviewedParts
                   ? { label: 'Reviewed', bg: '#DCFCE7', text: '#15803D' }
                   : undefined
@@ -1180,7 +1247,7 @@ export default function SrDetailScreen() {
 
       <Modal visible={editModalVisible} transparent animationType="slide" onRequestClose={closeEditModal}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { paddingBottom: 24 + kbHeight }]}>
             <View style={styles.modalDragHandle} />
             <View style={styles.modalTitleRow}>
               <Text style={styles.modalTitle}>Edit & Resubmit</Text>
@@ -1278,7 +1345,7 @@ export default function SrDetailScreen() {
           REJECTED + this typed note instead of the default fallback text. */}
       <Modal visible={workRejectVisible} transparent animationType="slide" onRequestClose={closeWorkRejectSheet}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { paddingBottom: 24 + kbHeight }]}>
             <View style={styles.modalDragHandle} />
             {/* modalTitle's own marginBottom moved onto modalTitleRow (see
                 the Edit & Resubmit modal above, which needed a close
@@ -1310,6 +1377,49 @@ export default function SrDetailScreen() {
               disabled={!workRejectNote.trim() || workApprovalSaving}
             >
               {workApprovalSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.workRejectConfirmButtonText}>Confirm Reject</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Confirming the work-approval request — RSM stage only. AM's own
+          Approve fires directly with no note (see the Approve button's
+          onPress above) — explicitly asked for: AM approval stays a plain,
+          one-tap action, only RSM's confirm step collects an optional note.
+          AM's Reject still has its own required-note sheet above,
+          untouched. Same sheet pattern as Reject, just with an optional
+          note instead of a required one (confirming is the default/
+          expected path here, unlike reject). */}
+      <Modal visible={workApproveVisible} transparent animationType="slide" onRequestClose={closeWorkApproveSheet}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { paddingBottom: 24 + kbHeight }]}>
+            <View style={styles.modalDragHandle} />
+            <Text style={[styles.modalTitle, { marginBottom: 16 }]}>Confirmation Note</Text>
+
+            <TextInput
+              style={styles.workRejectInput}
+              placeholder="Add a note for this confirmation (optional)..."
+              placeholderTextColor="#9CA3AF"
+              value={workApproveNote}
+              onChangeText={setWorkApproveNote}
+              multiline
+            />
+
+            {!!workApprovalError && (
+              <View style={styles.errorBoxModal}>
+                <Text style={styles.errorTextModal}>{workApprovalError}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.workRejectConfirmButton, workApprovalSaving && styles.workRejectConfirmButtonDisabled, { backgroundColor: '#16A34A' }]}
+              onPress={async () => {
+                await handleRsmWorkDecision('CONFIRMED', workApproveNote);
+                closeWorkApproveSheet();
+              }}
+              disabled={workApprovalSaving}
+            >
+              {workApprovalSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.workRejectConfirmButtonText}>Confirm</Text>}
             </TouchableOpacity>
           </View>
         </View>
@@ -1752,12 +1862,17 @@ const styles = StyleSheet.create({
   },
   approvalChainAvatarDone: { backgroundColor: '#16A34A' },
   approvalChainAvatarRejected: { backgroundColor: '#DC2626' },
+  // Neutral grey, distinct from both the green "done" and amber "pending"
+  // states — an AM-self-assigned task's AM step never really happened, so
+  // it shouldn't look like either a real approval or a real wait.
+  approvalChainAvatarSkipped: { backgroundColor: '#E5E7EB' },
   approvalChainAvatarQ: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
   approvalChainLabel: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
   approvalChainStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   approvalChainStatus: { fontSize: 11, color: '#9CA3AF', fontWeight: '600' },
   approvalChainStatusDone: { color: '#16A34A' },
   approvalChainStatusRejected: { color: '#DC2626' },
+  approvalChainStatusSkipped: { color: '#9CA3AF' },
 
   approvalReqButtonsRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
   approvalReqRejectButton: {
@@ -1769,7 +1884,7 @@ const styles = StyleSheet.create({
   approvalReqRejectText: { fontSize: 15, fontWeight: '700', color: '#DC2626' },
   approvalReqApproveButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    flex: 1.4,
+    flex: 1,
     backgroundColor: '#16A34A', borderRadius: 100,
     paddingVertical: 14,
   },

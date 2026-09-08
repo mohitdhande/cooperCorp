@@ -20,6 +20,8 @@ import { putOrQueue, isNetworkError } from '../../utils/syncEngine';
 import { getPendingBody } from '../../utils/offlineQueue';
 import { getRole, Role } from '../../constants/permissions';
 import { formatAssetLabel } from '../../utils/reportFormatters';
+import { registerLocationOffWarning } from '../../utils/locationLogger';
+import { handleLocationOffWarning } from '../../utils/locationOffAlert';
 
 // The old steps 7 (Review) and 8 (Work Completion OTP) were folded into
 // step 6 itself — the completion summary and OTP verification now render
@@ -109,6 +111,18 @@ export function useTaskForm() {
     setToastVisible(true);
     setTimeout(() => setToastVisible(false), 3000);
   }, []);
+
+  // Shows once per screen visit, the first time any location-needing
+  // action on this screen (Accept/Start/every section Save/Complete/every
+  // photo upload — all funnel through logLocationForAction/
+  // resolveUploadLocation) actually finds location services switched off.
+  // Registering on mount / clearing on unmount is what gives each fresh
+  // visit its own "not warned yet" state — see locationLogger.ts's own
+  // comment on registerLocationOffWarning.
+  useEffect(() => {
+    registerLocationOffWarning((reason) => handleLocationOffWarning(reason, showToast));
+    return () => registerLocationOffWarning(null);
+  }, [showToast]);
 
   // Offline queueing (putOrQueue below) is scoped to engineer only — dealer/
   // area_manager can also reach this form (per permissions.ts), but a
@@ -787,9 +801,77 @@ export function useTaskForm() {
     }
   }, [apiData, selectedComplaintCodes]);
 
+  // Restores whatever complaint codes were already saved on this task —
+  // was missing entirely, the same gap selectedParts' own hydration effect
+  // just below used to have (see its own comment): task loaded fine, but
+  // nothing ever read task.faultCodes back into selectedComplaintCodes, so
+  // leaving this step (e.g. back to the dashboard) and reopening the task
+  // showed a blank complaint-code list even though it was genuinely saved.
+  // Also overlays a still-queued-offline save (handleSaveFaultCodes's own
+  // commissioning_faultcodes_ dedupeKey) so a save that hasn't synced yet
+  // doesn't get reverted by this same fresh-task hydration — pending
+  // entries only carry the flat {codeId, observation, rootCause,
+  // correctiveAction} shape actually sent to the server (see
+  // useTaskFormApiData.ts's saveFaultCodes), not the populated codeId
+  // object task.faultCodes carries, so this merges each pending entry onto
+  // its matching task entry (keeping that entry's rich code/title/
+  // priority/category details) and only falls back to a bare, unlabeled
+  // entry for a codeId the task has never seen at all (a brand-new pick
+  // made while still offline).
+  useEffect(() => {
+    if (!taskId) return;
+    (async () => {
+      let faultCodesList: any[] = task?.faultCodes || [];
+      const pendingFaultCodes = await getPendingBody(`commissioning_faultcodes_${taskId}`);
+      if (pendingFaultCodes?.faultCodes?.length) {
+        faultCodesList = pendingFaultCodes.faultCodes.map((pending: any) => {
+          const serverMatch = faultCodesList.find((entry: any) => (entry.codeId?._id || entry.codeId) === pending.codeId);
+          return serverMatch
+            ? { ...serverMatch, observation: pending.observation, rootCause: pending.rootCause, correctiveAction: pending.correctiveAction }
+            : { codeId: { _id: pending.codeId }, observation: pending.observation, rootCause: pending.rootCause, correctiveAction: pending.correctiveAction };
+        });
+      }
+      if (!faultCodesList.length) return;
+      setSelectedComplaintCodes(faultCodesList.map((entry: any, index: number) => ({
+        uid: `${entry.codeId?._id || index}-${Date.now()}-${index}`,
+        codeId: entry.codeId?._id,
+        code: entry.codeId?.code,
+        priority: entry.codeId?.priority,
+        title: entry.codeId?.description,
+        categoryName: entry.codeId?.category,
+        subcategoryName: entry.codeId?.subCategory,
+        observation: entry.observation ?? '',
+        rootCause: entry.rootCause ?? '',
+        correctiveAction: entry.correctiveAction ?? '',
+      })));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task, taskId]);
+
   // ── Step 4 — parts used ──
   const [partPickerVisible, setPartPickerVisible] = useState(false);
   const [selectedParts, setSelectedParts] = useState<SelectedPart[]>([]);
+
+  // Restores whatever parts were already saved on this task — task loads
+  // exactly once (setTask above only ever fires from that one mount
+  // effect), so this only ever hydrates from a fresh task, never re-fires
+  // and stomps a part the user just added locally. Was missing entirely
+  // before (unlike srTaskForm.tsx's equivalent, which existed but read
+  // stale pre-"2026-08-29 Part schema change" field names) — leaving and
+  // reopening a task with saved parts showed an empty Parts Used list.
+  useEffect(() => {
+    if (!task?.partsUsed?.length) return;
+    setSelectedParts(task.partsUsed.map((entry: any) => ({
+      partId: entry.partId?._id,
+      componentNumber: entry.partId?.componentNumber,
+      description: entry.partId?.description,
+      engineFamily: entry.partId?.engineFamily,
+      cpcbNorm: entry.partId?.cpcbNorm,
+      maxQty: entry.partId?.maxQty,
+      quantity: entry.quantity ?? 1,
+    })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task]);
 
   // Adding a part, changing its quantity, or removing it all persist right
   // away — no separate per-card save button. savePartsUsed always sends

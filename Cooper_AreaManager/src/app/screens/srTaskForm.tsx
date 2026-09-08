@@ -17,6 +17,7 @@ import { StepperRow } from '../../_components/shared/StepperRow';
 import { useSrTaskForm, SR_STEP_SEQUENCE } from '../../controllers/srTaskForm/useSrTaskForm';
 import { TaskSummaryHeader } from '../../_components/shared/TaskSummaryHeader';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { Toast } from '../../_components/shared/Toast';
 import { MediaUploadOverlay } from '../../_components/shared/MediaUploadOverlay';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
 import { CompleteTaskButton } from '../../_components/shared/CompleteTaskButton';
@@ -65,6 +66,18 @@ export default function SrTaskFormScreen() {
   const vm = useSrTaskForm();
   const insets = useSafeAreaInsets();
   const sheetPaddingBottom = Math.max(insets.bottom, 16) + 14;
+
+  // All 6 steps share one ScrollView (each step's content is just
+  // conditionally rendered inside it, not a separate screen/ScrollView) —
+  // switching steps alone doesn't reset scroll position, so arriving at a
+  // new step could silently land wherever the previous step happened to be
+  // scrolled to instead of that step's own top. Jumps back to the top every
+  // time currentStep changes — reuses vm.scrollViewRef (already attached to
+  // this same ScrollView below for the focus-scroll-into-view mechanism),
+  // not a second ref. Same fix as taskForm.tsx's own.
+  useEffect(() => {
+    vm.scrollViewRef?.current?.scrollTo({ y: 0, animated: false });
+  }, [vm.currentStep]);
 
   // Auto-jump-to-next-field, same as the commissioning form and the login
   // screen — only wired for Asset Information's identification sections
@@ -203,6 +216,7 @@ export default function SrTaskFormScreen() {
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
       {isBusy && <LoadingOverlay />}
+      <Toast visible={vm.toastVisible} message={vm.toastMessage} type={vm.toastType} />
       {/* Both mounted here so whichever one is actually running (site
           photos vs. the Running Hours photo) shows its own overlay. */}
       <MediaUploadOverlay
@@ -674,34 +688,40 @@ export default function SrTaskFormScreen() {
                         </View>
                       ))}
 
+                    {/* Full-width stacked rows, not the old side-by-side
+                        2-column layout — matches Commissioning's own
+                        Engine Parameters card (taskForm.tsx) exactly,
+                        which was reverted back to this same stacked
+                        layout earlier after it briefly became cramped
+                        2-column. */}
                     {([
-                      ['Oil Level', vm.oilLevel, vm.setOilLevel, vm.oilLevelComment, vm.setOilLevelComment],
-                      ['Coolant Level', vm.coolantLevel, vm.setCoolantLevel, vm.coolantLevelComment, vm.setCoolantLevelComment],
-                    ] as const).map(([label, value, setter, comment, setComment], i) => (
-                      <View key={label} style={{ marginTop: i === 0 ? 18 : 16 }}>
-                        <Text style={styles.fieldLabelStatic}>{label}</Text>
-                        <View style={styles.okNotOkRow}>
-                          <TouchableOpacity style={[styles.okButton, value === 'OK' && styles.okButtonActive]} onPress={() => setter('OK')}>
-                            <Text style={[styles.okButtonText, value === 'OK' && styles.okButtonTextActive]}>OK</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={[styles.notOkButton, value === 'Not OK' && styles.notOkButtonActive]} onPress={() => setter('Not OK')}>
-                            <Text style={[styles.notOkButtonText, value === 'Not OK' && styles.notOkButtonTextActive]}>Not OK</Text>
-                          </TouchableOpacity>
-                        </View>
-                        {value === 'Not OK' && (
-                          <View style={{ marginTop: 12 }}>
-                            <Text style={styles.fieldLabel}>Description</Text>
-                            <TextInput
-                              style={styles.fieldInput}
-                              value={comment}
-                              onChangeText={setComment}
-                              placeholder={`Describe ${label.toLowerCase()} issue...`}
-                              placeholderTextColor="#9CA3AF"
-                            />
+                        ['Oil Level', vm.oilLevel, vm.setOilLevel, vm.oilLevelComment, vm.setOilLevelComment],
+                        ['Coolant Level', vm.coolantLevel, vm.setCoolantLevel, vm.coolantLevelComment, vm.setCoolantLevelComment],
+                      ] as const).map(([label, value, setter, comment, setComment], i) => (
+                        <View key={label} style={i === 0 ? { marginTop: 18 } : { marginTop: 16 }}>
+                          <Text style={styles.fieldLabelStatic}>{label}</Text>
+                          <View style={styles.okNotOkRow}>
+                            <TouchableOpacity style={[styles.okButton, value === 'OK' && styles.okButtonActive]} onPress={() => setter('OK')}>
+                              <Text style={[styles.okButtonText, value === 'OK' && styles.okButtonTextActive]}>OK</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.notOkButton, value === 'Not OK' && styles.notOkButtonActive]} onPress={() => setter('Not OK')}>
+                              <Text style={[styles.notOkButtonText, value === 'Not OK' && styles.notOkButtonTextActive]}>Not OK</Text>
+                            </TouchableOpacity>
                           </View>
-                        )}
-                      </View>
-                    ))}
+                          {value === 'Not OK' && (
+                            <View style={{ marginTop: 12 }}>
+                              <Text style={styles.fieldLabel}>Description</Text>
+                              <TextInput
+                                style={styles.fieldInput}
+                                value={comment}
+                                onChangeText={setComment}
+                                placeholder={`Describe ${label.toLowerCase()} issue...`}
+                                placeholderTextColor="#9CA3AF"
+                              />
+                            </View>
+                          )}
+                        </View>
+                      ))}
 
                     {vm.sectionError['engineParams'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['engineParams']}</Text> : null}
                     <SectionSaveButton
@@ -807,23 +827,23 @@ export default function SrTaskFormScreen() {
 
                 {isSectionExpanded('runningHours') && (
                   <>
-                    <TextInput
-                      style={[styles.fieldInput, { marginTop: 12 }]}
-                      value={vm.runningHours}
-                      onChangeText={(v) => {
-                        console.log('[Service] Running Hours input changed to:', v);
-                        vm.setRunningHours(v);
-                      }}
-                      placeholder="Enter running hours..."
-                      keyboardType="numeric"
-                    />
+                    <View style={[styles.fieldRow, { marginTop: 12, alignItems: 'center', gap: 12 }]}>
+                      <TextInput
+                        style={[styles.fieldInput, { flex: 1 }]}
+                        value={vm.runningHours}
+                        onChangeText={vm.setRunningHours}
+                        placeholder="Enter running hours..."
+                        keyboardType="numeric"
+                      />
+                      <SectionSaveButton
+                        onPress={vm.handleSaveRunningHours}
+                        saving={vm.sectionSaving['runningHours']}
+                        done={vm.sectionSuccess['runningHours']}
+                        style={{ marginTop: 0, alignSelf: 'center' }}
+                      />
+                    </View>
 
                     {vm.sectionError['runningHours'] ? <Text style={styles.sectionErrorText}>{vm.sectionError['runningHours']}</Text> : null}
-                    <SectionSaveButton
-                      onPress={vm.handleSaveRunningHours}
-                      saving={vm.sectionSaving['runningHours']}
-                      done={vm.sectionSuccess['runningHours']}
-                    />
 
                     {/* Running Hours' own single photo — same pairing
                         Commissioning's form has for its Running Hours

@@ -26,8 +26,19 @@ import {
   val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName, getTaskPeople,
 } from '../../utils/reportFormatters';
 import { safeJsonParse } from '../../utils/safeJsonParse';
+import { useKeyboardHeight } from '../../utils/useKeyboardHeight';
 
 const REF_WIDTH = 420;
+
+// Same 3-state pill colors as srDetail.tsx's own Parts review card — kept
+// as its own local copy rather than a shared import since neither screen
+// exports it and this app doesn't otherwise centralize small per-screen
+// style constants like this.
+const PART_DECISION_PILL: Record<string, { bg: string; text: string }> = {
+  PENDING: { bg: '#F3F4F6', text: '#6B7280' },
+  APPROVED: { bg: '#DCFCE7', text: '#15803D' },
+  REJECTED: { bg: '#FEE2E2', text: '#DC2626' },
+};
 
 const formatTaskType = (type: string) => {
   if (!type) return '';
@@ -206,7 +217,8 @@ const LOAD_STAGES = [
 // photos, customer feedback, and work-completion status.
 export default function TaskReportScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const kbHeight = useKeyboardHeight();
   const hPad = width * (20 / REF_WIDTH);
   const headerPad = width * (30 / REF_WIDTH);
   const params = useLocalSearchParams<{ task: string }>();
@@ -753,6 +765,15 @@ export default function TaskReportScreen() {
               // replacement for "extra info about this part", shown only
               // when actually set.
               const partSubtitle = [partInfo.cpcbNorm, partInfo.engineFamily?.join(', ')].filter(Boolean).join(' · ');
+              // Commissioning's own parts/review endpoint (per
+              // mobile-approvals-guide.md §4e) writes the same
+              // decision/decisionReason shape onto partsUsed[] as
+              // Service's does — this report previously never showed
+              // either, so a rejected part (and why) was invisible here
+              // even though srDetail.tsx's own Parts review card already
+              // displays it for Service.
+              const decision = p.decision;
+              const decisionStyle = PART_DECISION_PILL[decision] || PART_DECISION_PILL.PENDING;
               return (
                 <View key={p._id || i} style={styles.partReportCard}>
                   <View style={styles.partReportTop}>
@@ -763,10 +784,20 @@ export default function TaskReportScreen() {
                       <Text style={styles.partNameReport}>{val(partInfo.description)}</Text>
                       {!!partSubtitle && <Text style={styles.partCategoryReport}>{partSubtitle}</Text>}
                     </View>
+                    {!!decision && (
+                      <View style={[styles.partDecisionPillReport, { backgroundColor: decisionStyle.bg }]}>
+                        <Text style={[styles.partDecisionPillTextReport, { color: decisionStyle.text }]}>{decision}</Text>
+                      </View>
+                    )}
                   </View>
                   <View style={styles.partReportBottom}>
                     <Text style={styles.partQtyReport}>Qty: {val(p.quantity)}</Text>
                   </View>
+                  {decision === 'REJECTED' && !!p.decisionReason && (
+                    <View style={styles.partRejectionNoteBoxReport}>
+                      <Text style={styles.partRejectionNoteTextReport}>{p.decisionReason}</Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -996,9 +1027,12 @@ export default function TaskReportScreen() {
           footer's actual height (taller when an action button is also
           showing) so the last card never ends up hidden behind it. */}
       <View style={styles.floatingFooter} pointerEvents="box-none">
-        {/* Close (APPROVED → CLOSED) — the one lifecycle-ending action this
-            report screen exposes, gated by role and the task's current
-            status. */}
+        {/* Close (→ CLOSED) — the one lifecycle-ending action this report
+            screen exposes, gated by role and canClose (otpVerified &&
+            not already CLOSED — see taskReportController.ts). Shows once
+            OTP is verified, exactly like Service's own Close Ticket
+            button; it's a separate explicit tap, not something OTP
+            verification does on its own. */}
         {canClose && (
           <View style={[styles.closeServiceBar, { paddingHorizontal: hPad }]}>
             <TouchableOpacity
@@ -1016,6 +1050,7 @@ export default function TaskReportScreen() {
             {!!closeTicketError && <Text style={styles.closeServiceErrorText}>{closeTicketError}</Text>}
           </View>
         )}
+
 
         {/* COMPLETED but the customer's OTP isn't verified yet — same
             condition TaskPreviewCard's own "OTP Pending" banner uses.
@@ -1064,11 +1099,28 @@ export default function TaskReportScreen() {
           restriction feedback endpoint) before the sheet closes. */}
       <Modal visible={otpSheetOpen} transparent animationType="slide" onRequestClose={otpStep === 3 ? () => {} : closeOtpSheet}>
         {/* Dismissible by tap-outside/X/back on steps 1-2 only — once OTP is
-            verified (step 3), the task is already CLOSED server-side, and
-            the only way out is explicitly saving (or leaving blank) the
-            customer remark via Save & Close below. */}
+            verified (step 3), stepping back out doesn't make sense anymore
+            (the code has already run), so the only way out is explicitly
+            saving (or leaving blank) the customer remark via Save & Close
+            below. Confirmed against the real backend: the feedback save
+            call this button makes (saveCommissioningFeedback, PUT
+            /commissioning/:id/feedback) closes the task as a side effect —
+            unlike Service, where saving the remark and closing really are
+            two independent steps. So despite this screen's own separate
+            Close Ticket button existing below (still valid for a task that
+            reaches APPROVED some other, non-OTP way), a task that got here
+            via OTP verification is already CLOSED by the time this sheet
+            shuts — hence "Save & Close", not just "Save". */}
         <Pressable style={styles.otpModalOverlay} onPress={otpStep === 3 ? undefined : closeOtpSheet}>
-          <Pressable style={styles.otpSheet} onPress={(e) => e.stopPropagation()}>
+          {/* RN's Modal window doesn't pan/resize for the keyboard on
+              either platform, so lift the sheet ourselves: pad its bottom
+              by the live keyboard height and cap the scroll area to the
+              space left above the keyboard. That keeps the remark field
+              and every action button (Generate / Verify / Save & Close)
+              fully visible, not just partially. keyboardShouldPersistTaps
+              below still lets the first tap on a button register while an
+              input is focused. */}
+          <Pressable style={[styles.otpSheet, { paddingBottom: 32 + kbHeight }]} onPress={(e) => e.stopPropagation()}>
             <View style={styles.otpSheetHandle} />
             <View style={styles.otpSheetHeaderRow}>
               <View>
@@ -1091,7 +1143,7 @@ export default function TaskReportScreen() {
                 digit input still has focus only dismisses the keyboard
                 instead of registering as a press; a second tap was needed
                 to actually fire the button. */}
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: kbHeight > 0 ? Math.max(150, height - kbHeight - 220) : 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
               {otpStep === 1 && (
                 <View style={styles.otpStepCard}>
                   <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
@@ -1530,6 +1582,19 @@ const styles = StyleSheet.create({
   // so this row now only ever holds Qty, right-aligned.
   partReportBottom: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
   partQtyReport: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
+  partDecisionPillReport: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 100,
+  },
+  partDecisionPillTextReport: { fontSize: 11, fontWeight: '700' },
+  partRejectionNoteBoxReport: {
+    marginTop: 10,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    padding: 10,
+  },
+  partRejectionNoteTextReport: { fontSize: 13, color: '#B91C1C', fontStyle: 'italic' },
 
   reportPhotoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   reportPhotoThumb: { width: 100, height: 100, borderRadius: 8, backgroundColor: '#F3F4F6' },

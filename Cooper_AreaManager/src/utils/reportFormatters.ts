@@ -406,6 +406,57 @@ export function bucketTaskStatus(status: string, kind: 'commissioning' | 'servic
   return 'active';
 }
 
+// Per mobile-service-list-api.md §5 — GET /me/team's own entries each carry
+// a server-computed `statusGroup` ('active'|'completed'|'closed') that is
+// the single source of truth for bucketing, specifically BECAUSE this
+// mapping has already changed once on the backend without this app
+// noticing: bucketTaskStatus above still hardcodes Service's older rule
+// (COMPLETED reads as "active" until CLIENT_APPROVED) per its own comment
+// citing an earlier dev guide, but the current guide states COMPLETED now
+// belongs in "completed" instead. Hardcoding either version here is exactly
+// what breaks the next time the backend changes its mind — so this reads
+// the task's own statusGroup first, and only falls back to the (possibly
+// stale) local guess if a given task genuinely has none, e.g. a cached
+// response fetched before the backend started sending this field.
+export function resolveTaskStatusGroup(task: { status: string; statusGroup?: TaskStatusBucket }, kind: 'commissioning' | 'service' = 'commissioning'): TaskStatusBucket {
+  return task.statusGroup ?? bucketTaskStatus(task.status, kind);
+}
+
+// Task list ordering, per tab — same rule for both commissioning and
+// service, so this is the one shared place both controllers call it from
+// rather than three near-identical .sort() calls scattered around.
+// - Active: oldest-assigned first, most-recently-assigned last (ascending)
+//   — the newest arrival sits at the bottom of the list, not buried among
+//   older ones at the top.
+// - Completed/Closed: most-recently-finished first (descending) — what
+//   just wrapped up is the first thing you see, not the oldest one.
+// Falls back to the task's own `date` field when the real lifecycle
+// timestamp (assignedAt/completedAt/closedAt) isn't present — same
+// fallback chain already used elsewhere for these fields (TaskPreviewCard,
+// srDetail.tsx's own lifecycle timeline). Missing/unparseable dates sort
+// to the very end regardless of tab, rather than clumping at a fake "0".
+export function sortTasksForTab(tasks: any[], tab: 'active' | 'completed' | 'closed'): any[] {
+  const dateField = tab === 'active' ? 'assignedAt' : tab === 'completed' ? 'completedAt' : 'closedAt';
+  const ascending = tab === 'active';
+  const timeOf = (t: any): number => {
+    const raw = t?.[dateField] || t?.date;
+    return raw ? new Date(raw).getTime() : NaN;
+  };
+  return [...tasks].sort((a, b) => {
+    const aTime = timeOf(a);
+    const bTime = timeOf(b);
+    const aMissing = isNaN(aTime);
+    const bMissing = isNaN(bTime);
+    // Pushed to the end no matter which way the rest of the list sorts —
+    // never let an unparseable/missing date jump to the front just because
+    // the tab happens to sort newest-first.
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+    return ascending ? aTime - bTime : bTime - aTime;
+  });
+}
+
 // Flattens myTasks + every dealer's ownTasks + every engineer's tasks for
 // one entry kind ('commissioning' or 'service') into a single array — the
 // AM's full team, task list, not paginated or status-filtered yet.

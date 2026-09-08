@@ -484,12 +484,15 @@ export function useTaskReportController(initialTask: any) {
     }
   }, [customerOtp, initialTask?._id, fetchDetail]);
 
-  // No separate close call here — the backend already moves the task
-  // straight to CLOSED as soon as the OTP is verified (confirmed: calling
-  // /close afterward gets rejected with CONFLICT, "Entry cannot be closed
-  // in its current state", since /close only accepts APPROVED tasks, same
-  // precondition handleCloseTicket below already checks). This just saves
-  // the optional feedback and refreshes so the already-CLOSED status shows.
+  // No separate close call here, and none is needed — confirmed against
+  // the real backend that saveCommissioningFeedback's own endpoint (PUT
+  // /commissioning/:id/feedback) closes the task as a side effect of
+  // saving the remark. This does NOT match srTaskReportController.ts's
+  // save/close split (Service's backend keeps those genuinely
+  // independent) — Commissioning's UI button is labeled "Save & Close"
+  // rather than just "Save" specifically because of this difference.
+  // fetchDetail() below just reveals the already-CLOSED status the
+  // feedback call itself produced.
   const handleSaveRemark = useCallback(async () => {
     setRemarkSaving(true);
     setRemarkError('');
@@ -507,11 +510,24 @@ export function useTaskReportController(initialTask: any) {
     }
   }, [remark, initialTask?._id, fetchDetail]);
 
-  // Close (APPROVED → CLOSED) — the one lifecycle-ending action this report
-  // screen exposes. Roles per the backend dev guide: admin|rsm|dealer|
+  // otpVerified mirrors srTaskReportController.ts's own derivation exactly
+  // (status already moved past the OTP gate, OR completionOtp.verified is
+  // true outright) — checked instead of a single hardcoded status string,
+  // since it shouldn't matter which exact status the backend leaves the
+  // task in right after OTP verification, only that OTP is done and it
+  // isn't CLOSED yet. canClose used to require status === 'APPROVED'
+  // specifically, which meant a task that reached this point via OTP
+  // verification (rather than some other approval path landing it on
+  // APPROVED) never showed a Close Ticket button at all — by design, once
+  // OTP was assumed to auto-close the task. It doesn't: Close is its own
+  // explicit action, same as Service.
+  const otpVerified = task?.status === 'APPROVED' || completionOtp?.verified === true;
+
+  // Close (→ CLOSED) — the one lifecycle-ending action this report screen
+  // exposes. Roles per the backend dev guide: admin|rsm|dealer|
   // area_manager (admin stands in for rsm). Refetches in place afterward,
   // same as the SR report screen's Close Service action.
-  const canClose = (role === 'areaManager' || role === 'admin' || role === 'dealer') && task?.status === 'APPROVED';
+  const canClose = (role === 'areaManager' || role === 'admin' || role === 'dealer') && otpVerified && task?.status !== 'CLOSED';
 
   const [closingTicket, setClosingTicket] = useState(false);
   const [closeTicketError, setCloseTicketError] = useState('');

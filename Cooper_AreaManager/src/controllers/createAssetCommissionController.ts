@@ -154,8 +154,8 @@ export function useCreateAssetCommissionController() {
   // Line 1/2 (per explicit instruction — those four stay optional).
   const validateRequiredFields = useCallback((): string | null => {
     const missing: string[] = [];
-    if (!gensetSn.trim()) missing.push('Genset S/N');
-    if (!engineSn.trim()) missing.push('Engine S/N');
+    if (!gensetSn.trim()) missing.push('Genset SR Number');
+    if (!engineSn.trim()) missing.push('Engine SR Number');
     if (!clientName.trim()) missing.push('Client Name');
     if (!clientCode.trim()) missing.push('Client Code');
     if (!clientEmail.trim()) missing.push('Client Email');
@@ -168,11 +168,19 @@ export function useCreateAssetCommissionController() {
     if (!taluk.trim()) missing.push('Taluk');
     if (!city.trim()) missing.push('City');
     if (!locality.trim()) missing.push('Locality / Area / Village');
-    if (missing.length === 0) return null;
-    return `Please fill in: ${missing.join(', ')}.`;
+    if (missing.length > 0) return `Please fill in: ${missing.join(', ')}.`;
+
+    // Primary is required above, so an empty value already got caught as
+    // missing — this only re-checks its actual length. Alternate stays
+    // optional (per the same instruction as the missing-fields check above)
+    // but if something was typed in it, it must be a real 10-digit number
+    // too, not a partial/malformed one silently accepted.
+    if (primaryContactNumber.trim().length !== 10) return 'Primary Contact No. must be exactly 10 digits.';
+    if (alternateContactNumber.trim() && alternateContactNumber.trim().length !== 10) return 'Alternate Contact No. must be exactly 10 digits.';
+    return null;
   }, [
     gensetSn, engineSn, clientName, clientCode, clientEmail,
-    primaryContactName, primaryContactNumber, dispatchDate,
+    primaryContactName, primaryContactNumber, alternateContactNumber, dispatchDate,
     pinCode, state, district, taluk, city, locality,
   ]);
 
@@ -252,14 +260,30 @@ export function useCreateAssetCommissionController() {
     dispatchType, sapAsset, entryType, entryDate, notes, router,
   ]);
 
+  // Strips anything non-numeric and caps at 10 digits on every keystroke —
+  // stops a 10-digit-or-bust field from ever holding a letter, symbol, or an
+  // 11th+ digit in the first place, rather than only catching it once the
+  // person taps Confirm (validateRequiredFields above still checks length,
+  // since a pasted value or a value under 10 digits can still slip through
+  // this filter). Keyboard is set to number-pad on the field itself.
+  const handlePrimaryContactNumberChange = useCallback((v: string) => setPrimaryContactNumber(v.replace(/\D/g, '').slice(0, 10)), []);
+  const handleAlternateContactNumberChange = useCallback((v: string) => setAlternateContactNumber(v.replace(/\D/g, '').slice(0, 10)), []);
+  // Genset/Engine serial numbers are always stored in capital letters —
+  // forces every keystroke uppercase rather than relying on
+  // autoCapitalize (a keyboard hint only; it doesn't stop lowercase from
+  // paste or a physical/other-language keyboard). Same pattern taskForm.tsx
+  // already uses for its own Genset Identification fields.
+  const handleGensetSnChange = useCallback((v: string) => setGensetSn(v.toUpperCase()), []);
+  const handleEngineSnChange = useCallback((v: string) => setEngineSn(v.toUpperCase()), []);
+
   return {
     sapAsset, dispatchType,
-    gensetSn, setGensetSn, engineSn, setEngineSn,
+    gensetSn, setGensetSn: handleGensetSnChange, engineSn, setEngineSn: handleEngineSnChange,
     clientName, setClientName, clientCode, setClientCode, clientEmail, setClientEmail,
     primaryContactName, setPrimaryContactName,
-    primaryContactNumber, setPrimaryContactNumber,
+    primaryContactNumber, setPrimaryContactNumber: handlePrimaryContactNumberChange,
     alternateContactName, setAlternateContactName,
-    alternateContactNumber, setAlternateContactNumber,
+    alternateContactNumber, setAlternateContactNumber: handleAlternateContactNumberChange,
     dispatchDate, setDispatchDate,
     addressLine1, setAddressLine1, addressLine2, setAddressLine2,
     pinCode, setPinCode, city, setCity, district, setDistrict, state, setState,

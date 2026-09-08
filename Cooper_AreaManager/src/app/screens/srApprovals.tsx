@@ -12,6 +12,7 @@ import { SearchBar } from '../../_components/shared/SearchBar';
 import { SrNumberText } from '../../_components/shared/SrNumberText';
 import { formatTimeAgoLabel, resolveApprovalStatusPills } from '../../utils/reportFormatters';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
+import { useApprovalTimestamps } from '../../controllers/shared/useApprovalTimestamps';
 
 const REF_WIDTH = 420;
 
@@ -60,6 +61,11 @@ export default function SrApprovalsScreen() {
     isLoading, error, refreshing, onRefresh,
     goToDetail,
   } = useSrApprovalsController();
+
+  // visibleEntries itself carries no real "when was this sent for approval"
+  // timestamp (confirmed via a real pasted response — only a bare calendar
+  // date) — see useApprovalTimestamps's own comment for the full story.
+  const approvalTimestamps = useApprovalTimestamps(visibleEntries.map((entry: any) => entry._id));
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -139,7 +145,14 @@ export default function SrApprovalsScreen() {
           visibleEntries.map((entry) => {
             const categoryInfo = SERVICE_CATEGORIES.find((c) => c.letter === entry.category);
             const statusPills = resolveApprovalStatusPills(entry);
-            const relTime = formatTimeAgoLabel(entry.date);
+            // visibleEntries' own entry has no real timestamp at all
+            // (confirmed via a real pasted response) — real
+            // completedAt/requestedAt come from a separate per-entry fetch,
+            // see useApprovalTimestamps above. entry.date (a bare calendar
+            // date, not a real time) is the last-resort fallback while that
+            // fetch is still in flight.
+            const entryTimestamps = approvalTimestamps[entry._id];
+            const relTime = formatTimeAgoLabel(entryTimestamps?.completedAt || entryTimestamps?.requestedAt || entry.date);
 
             // GET /api/service's list items don't embed a populated `asset`
             // (unlike GET /me/dashboard's approvalList) — its own doc entry
@@ -170,7 +183,7 @@ export default function SrApprovalsScreen() {
                     <Wrench size={16} color="#6B7280" />
                     <Text style={styles.genset} numberOfLines={1}>{primaryLabel}</Text>
                   </View>
-                  {!!entry.date && <Text style={styles.time}>{relTime}</Text>}
+                  {!!entry.date && <Text style={styles.time}>Submitted {relTime}</Text>}
                 </View>
 
                 {(!!engineNumber || statusPills.length > 0) && (

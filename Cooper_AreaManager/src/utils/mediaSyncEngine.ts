@@ -3,6 +3,7 @@ import { uploadOneCommissioningMedia, uploadOneServiceMedia } from '../viewModel
 import { resolveMediaType } from '../models/taskForm.types';
 import { getPendingMediaQueue, getPendingMediaCount, removePendingMedia, PendingMediaItem } from './pendingMediaQueue';
 import { isNetworkError, isServerError } from './syncEngine';
+import { checkLocationBlocked } from './locationLogger';
 import { devLog } from './devLog';
 
 // The persistent-media counterpart to syncEngine.ts's runSync/pending-count
@@ -70,6 +71,18 @@ export async function runMediaSync(): Promise<{ synced: number }> {
     const token = await getToken();
     if (!token) return { synced: 0 };
     for (const item of queue) {
+      // Same hard requirement as the live tap-driven upload gate
+      // (useMediaUploadQueue.ts's startBatch) and Start/Complete's own
+      // background-replay gate (syncEngine.ts's runSync) — a queued photo/
+      // video/PDF must not go up without a real, currently-confirmed
+      // location either. It already passed this same check once, back when
+      // it was first picked (that's the only way it could have reached this
+      // queue at all — a blocked pick never gets queued in the first
+      // place), but GPS/permission could have been switched off again in
+      // the time since then, before this retry actually ran. Left queued
+      // (not synced, not dropped) so it's tried again next tick — it goes
+      // through automatically the moment location is back on.
+      if (await checkLocationBlocked()) continue;
       try {
         const file = { uri: item.fileUri, fileName: item.fileName };
         const type = resolveMediaType(item.mediaKind, item.source);

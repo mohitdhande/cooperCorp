@@ -3,7 +3,8 @@ import { validateItemSize } from '../../utils/photoValidation';
 import { isNetworkError } from '../../utils/syncEngine';
 import { subscribeToMediaSyncSuccess } from '../../utils/mediaSyncEngine';
 import { PendingMediaItem } from '../../utils/pendingMediaQueue';
-import { logLocationForAction, resolveUploadLocation } from '../../utils/locationLogger';
+import { logLocationForAction, resolveUploadLocation, checkLocationBlocked } from '../../utils/locationLogger';
+import { showLocationOffAlert } from '../../utils/locationOffAlert';
 import { devLog } from '../../utils/devLog';
 import { MediaType, MediaLocation, MediaSource, resolveMediaType } from '../../models/taskForm.types';
 
@@ -288,8 +289,27 @@ export function useMediaUploadQueue(
     }
   }, [attemptItem]);
 
-  const startBatch = useCallback((assets: PickedAsset[]) => {
+  const startBatch = useCallback(async (assets: PickedAsset[]) => {
     if (assets.length === 0) return;
+
+    // Location is a hard requirement here, not just best-effort, for the
+    // two reasons that have a real one-tap fix (GPS off / permission off —
+    // see checkLocationBlocked's own comment for why a weak/no GPS
+    // *fix* is deliberately excluded). Checked BEFORE anything is added to
+    // the queue/overlay: a blocked batch shows nothing at all — no rows, no
+    // upload attempt — just the alert with its Turn On/Open Settings
+    // button. Nothing here is retried automatically once location comes
+    // back; per the request this implements, the person has to actually
+    // fix location and then retake/re-pick from scratch. Shown every time
+    // (not the once-per-visit registerLocationOffWarning channel other,
+    // softer location notices use) since silently doing nothing on a
+    // second blocked attempt with no explanation would be worse than
+    // repeating the same alert.
+    const blockReason = await checkLocationBlocked();
+    if (blockReason) {
+      showLocationOffAlert(blockReason);
+      return;
+    }
 
     const items: QueueItem[] = assets.map((asset, i) => ({
       localId: `${Date.now()}-${i}`,

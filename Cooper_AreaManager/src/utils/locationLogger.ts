@@ -12,6 +12,41 @@ import { MediaLocation } from '../models/taskForm.types';
 const LOCATION_LOG_KEY = 'cc_location_log';
 const MAX_LOCATION_LOG_ENTRIES = 100;
 
+// Lets the currently-focused screen show a "your location is off" message
+// the first time any location-needing action on it actually hits that
+// case — not a popup on every single tap (Accept/Start/every section Save
+// button/Complete/every photo upload all funnel through here), just one
+// lightweight heads-up per screen visit. Each screen controller calls
+// registerLocationOffWarning once on mount and clears it on unmount;
+// logLocationForAction/resolveUploadLocation call notifyLocationOff below
+// instead of only devLog-ing when something stopped a location from being
+// captured. Re-registering (a fresh screen visit) resets the "already
+// warned" flag, so the message can show again next time, but never twice in
+// the same visit.
+//
+// Carries a reason tag, not a pre-built message — 'permission' and
+// 'servicesOff' both have a real one-tap fix (see locationOffAlert.ts's
+// showLocationOffAlert, which every registering screen routes those two to:
+// "Open Settings" / "Turn On"), so the registered handler needs to know
+// which case this is, not just words to display. 'gpsFailed' (a fix that
+// simply never came in time) has no such button — screens show that one as
+// a plain toast instead.
+export type LocationOffReason = 'permission' | 'servicesOff' | 'gpsFailed';
+
+let locationOffWarning: ((reason: LocationOffReason) => void) | null = null;
+let hasWarnedThisVisit = false;
+
+export function registerLocationOffWarning(warn: ((reason: LocationOffReason) => void) | null) {
+  locationOffWarning = warn;
+  hasWarnedThisVisit = false;
+}
+
+function notifyLocationOff(reason: LocationOffReason) {
+  if (hasWarnedThisVisit || !locationOffWarning) return;
+  hasWarnedThisVisit = true;
+  locationOffWarning(reason);
+}
+
 export type LocationLogEntry = {
   id: string;
   actionLabel: string;
@@ -67,6 +102,7 @@ export async function logLocationForAction(actionLabel: string): Promise<void> {
     const servicesEnabled = await Location.hasServicesEnabledAsync();
     if (!servicesEnabled) {
       devLog(`[Location] Location services are off — no location captured for: ${actionLabel}`);
+      notifyLocationOff('servicesOff');
       return;
     }
     // getLastKnownPositionAsync returns instantly — whatever the OS already
@@ -129,6 +165,51 @@ export async function logLocationForAction(actionLabel: string): Promise<void> {
 let cachedUploadLocation: { value: MediaLocation | undefined; resolvedAt: number } | null = null;
 const UPLOAD_LOCATION_CACHE_MS = 2 * 60 * 1000;
 
+// Without this, a *failed* result (GPS off, permission denied, no fix) got
+// cached for the same 2 minutes as a successful one — so tapping "Turn On"
+// in the location-off alert and actually enabling GPS still did nothing for
+// the next upload, since resolveUploadLocation would just hand back the
+// stale cached "no location" it got before GPS was turned on. Called from
+// locationOffAlert.ts right after the user acts on that alert's "Turn On"/
+// "Open Settings" button, so the very next photo/video/PDF genuinely
+// retries instead of silently reusing the old failure.
+export function invalidateUploadLocationCache() {
+  cachedUploadLocation = null;
+}
+
+// Cheap up-front gate — just the permission + services-enabled checks, no
+// GPS fix — called before every one of this app's 3 real location
+// checkpoints actually fires its API call: Start (handleStartTask in
+// commissioningTasksController.ts/serviceTasksController.ts/
+// dashboardHomeController.ts), photo/video/PDF upload (startBatch in
+// useMediaUploadQueue.ts), and Complete (handleMarkComplete in
+// useTaskFormOtp.ts, handleFinishService/handleSendForApproval in
+// useSrTaskForm.ts). Each of those requires a real location, not just a
+// best-effort one: if permission is denied or GPS is switched off, the
+// action is rejected outright — no API call at all — so the person has to
+// actually fix location and then retry, rather than the app quietly going
+// ahead without one. Deliberately does NOT cover a weak/absent GPS *fix* —
+// GPS on and allowed but no signal yet (common indoors, near metal
+// equipment) — a weak signal has no reliable one-tap fix, and blocking on
+// it risks stranding someone with no way to do anything at all; that case
+// still falls through to resolveUploadLocation/logLocationForAction and the
+// action proceeds without a location, same as before this gate existed.
+export async function checkLocationBlocked(): Promise<Exclude<LocationOffReason, 'gpsFailed'> | null> {
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return 'permission';
+    const servicesEnabled = await Location.hasServicesEnabledAsync();
+    if (!servicesEnabled) return 'servicesOff';
+    return null;
+  } catch (error) {
+    // Couldn't even determine permission/services state — don't block an
+    // upload on a check that itself failed; let the normal flow (and its
+    // own gpsFailed handling below) take it from here instead.
+    devLog('[Location] Failed to check upload location gate:', error);
+    return null;
+  }
+}
+
 export async function resolveUploadLocation(): Promise<MediaLocation | undefined> {
   if (cachedUploadLocation && Date.now() - cachedUploadLocation.resolvedAt < UPLOAD_LOCATION_CACHE_MS) {
     return cachedUploadLocation.value;
@@ -141,10 +222,19 @@ export async function resolveUploadLocation(): Promise<MediaLocation | undefined
 
   try {
     const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return remember(undefined);
+    if (status !== 'granted') {
+      // Previously silent — the photo/video/PDF still uploaded fine, but
+      // nothing ever told the person their location wasn't attached to it,
+      // so a missing location looked like it just hadn't been asked for.
+      notifyLocationOff('permission');
+      return remember(undefined);
+    }
 
     const servicesEnabled = await Location.hasServicesEnabledAsync();
-    if (!servicesEnabled) return remember(undefined);
+    if (!servicesEnabled) {
+      notifyLocationOff('servicesOff');
+      return remember(undefined);
+    }
 
     // Same cached-fix-first, timeout-capped approach as
     // logLocationForAction above — never worth blocking an upload on a
@@ -175,6 +265,10 @@ export async function resolveUploadLocation(): Promise<MediaLocation | undefined
     }
   } catch (error) {
     devLog('[Location] Failed to resolve location for upload:', error);
+    // Covers a GPS fix that never came (weak/no signal, or the 15s timeout
+    // above) — also previously silent. The upload itself still goes
+    // through fine; this just says why no location made it onto this one.
+    notifyLocationOff('gpsFailed');
     return remember(undefined);
   }
 }

@@ -6,6 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Alert } from 'react-native';
 import { uploadProfilePic, removeProfilePic, getMyProfile, logoutApi } from '../viewModel/LoginAPis';
+import { showCameraUnavailableAlert } from '../utils/cameraErrorAlert';
 import { UserProfile } from '../models/Login';
 import { MyProfileResponse } from '../models/profile.types';
 import { parseApiError } from '../utils/apiError';
@@ -159,27 +160,35 @@ export function useProfileScreenController() {
     console.log('[Profile] Take Photo: tapped');
     setOptionsVisible(false);
 
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    console.log('[Profile] Take Photo: camera permission', permission.granted ? 'granted' : 'denied');
-    if (!permission.granted) {
-      Alert.alert('Permission needed', 'Camera access is required to take a photo.');
-      return;
-    }
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      console.log('[Profile] Take Photo: camera permission', permission.granted ? 'granted' : 'denied');
+      if (!permission.granted) {
+        showCameraUnavailableAlert('permission');
+        return;
+      }
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.7,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
 
-    if (result.canceled) {
-      console.log('[Profile] Take Photo: canceled by user');
-      return;
+      if (result.canceled) {
+        console.log('[Profile] Take Photo: canceled by user');
+        return;
+      }
+      console.log('[Profile] Take Photo: captured', { uri: result.assets[0].uri });
+      const resizedUri = await resizeToProfilePhotoSize(result.assets[0].uri);
+      await uploadAndUpdate(resizedUri);
+    } catch (error: any) {
+      // launchCameraAsync itself throwing (no try/catch caught this before)
+      // otherwise crashed or failed silently — same fix as the task forms'
+      // own camera capture (useTaskFormPhotos.ts/useSrTaskForm.ts).
+      console.log('[Profile] Take Photo: camera failed', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
     }
-    console.log('[Profile] Take Photo: captured', { uri: result.assets[0].uri });
-    const resizedUri = await resizeToProfilePhotoSize(result.assets[0].uri);
-    await uploadAndUpdate(resizedUri);
   }, [uploadAndUpdate]);
 
   const handleChooseGallery = useCallback(async () => {

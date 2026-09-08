@@ -9,12 +9,16 @@ import {
   getAssetById, getServiceTaskById, getFaultCodes, getParts,
   uploadOneServiceMedia, updateServiceMediaTag, getGcsSignedUrls,
   getServiceCategoryConfig, finishServiceTask, getFreeServiceAvailability,
+  submitAmWorkApproval,
 } from '../../viewModel/commisionAPi';
 import { cacheData, getCachedData } from '../../utils/offlineCache';
-import { putOrQueue, isNetworkError } from '../../utils/syncEngine';
+import { putOrQueue, isNetworkError, runSync } from '../../utils/syncEngine';
 import { getPendingBody } from '../../utils/offlineQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
-import { logLocationForAction } from '../../utils/locationLogger';
+import { logLocationForAction, registerLocationOffWarning, checkLocationBlocked } from '../../utils/locationLogger';
+import { handleLocationOffWarning, showLocationOffAlert } from '../../utils/locationOffAlert';
+import { showCameraUnavailableAlert } from '../../utils/cameraErrorAlert';
+import { useToast } from '../../utils/useToast';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto, MediaType, MediaLocation } from '../../models/taskForm.types';
 import { UserProfile } from '../../models/Login';
 import { getRole } from '../../constants/permissions';
@@ -27,6 +31,26 @@ import { parseApiError } from '../../utils/apiError';
 import { getPhotoValidationError, partitionValidPhotos, getPdfValidationError } from '../../utils/photoValidation';
 import { videoFileName, formatAssetLabel } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
+
+// If the task turns out to be assigned to an Area Manager, there's no
+// point making them separately tap "Approve" on their own completed work —
+// this auto-approves the AM stage right after /finish seeds it (a no-op
+// for categories that don't need approval at all, e.g. A/F/G — those never
+// get a workApproval object in the first place). Best-effort: called only
+// after the real /finish call already succeeded, so a failure here just
+// leaves the task sitting at PENDING_AM for a human AM to approve
+// manually later, same as any other assignee — never surfaced as an error
+// to the user, since the action they actually asked for (Complete/Send for
+// Approval) already went through.
+async function autoApproveIfAssignedToAm(token: string, taskId: string, updatedTask: any) {
+  try {
+    if (getRole(updatedTask?.assignedTo?.role || '') !== 'areaManager') return;
+    if (updatedTask?.workApproval?.status !== 'PENDING_AM') return;
+    await submitAmWorkApproval(token, taskId, 'APPROVED', 'Auto-approved — task assigned to Area Manager');
+  } catch (error) {
+    console.log('[Service] Auto-approve (assigned-to-AM) failed, leaving for manual AM review:', error);
+  }
+}
 
 // GET /api/service/category-config's per-category shape, merged with the
 // local SERVICE_CATEGORY_META (colors/description — not part of that
@@ -69,6 +93,17 @@ export function useSrTaskForm() {
   }>();
   const taskId = params.taskId || '';
   const assetId = params.assetId || '';
+
+  const { toastMessage, toastType, toastVisible, showToast } = useToast();
+  // Shows once per screen visit, the first time any location-needing
+  // action on this screen (Accept/Start/every section Save/Complete/every
+  // photo upload — all funnel through logLocationForAction/
+  // resolveUploadLocation) actually finds location services switched off.
+  // See locationLogger.ts's own comment on registerLocationOffWarning.
+  useEffect(() => {
+    registerLocationOffWarning((reason) => handleLocationOffWarning(reason, showToast));
+    return () => registerLocationOffWarning(null);
+  }, [showToast]);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [initialDataLoading, setInitialDataLoading] = useState(true);
@@ -563,10 +598,16 @@ export function useSrTaskForm() {
     mediaKind: item.kind, source: item.source, formKind: 'service', taskId, target: 'site',
   }), [taskId]);
 
+  // offlineEnabled is `true` here regardless of role — unlike every other
+  // putOrQueue-backed save in this form (still scoped to isEngineer only),
+  // a dropped signal mid-upload should save-and-auto-resume a photo/video/
+  // PDF for whoever is filling this form (engineer or areaManager — dealer
+  // can't reach this screen at all, per permissions.ts's canFillTaskForm),
+  // not just an engineer.
   const mediaQueue = useMediaUploadQueue(
     mediaUploaders,
     useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), []),
-    isEngineer,
+    true,
     persistMediaFailure
   );
 
@@ -589,7 +630,7 @@ export function useSrTaskForm() {
 
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', `Camera access is required to ${mediaType === 'videos' ? 'record a video' : 'take a photo'}.`);
+        showCameraUnavailableAlert('permission');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -614,11 +655,13 @@ export function useSrTaskForm() {
         };
         mediaQueue.startBatch([picked]);
       }
-    } catch (error) {
+    } catch (error: any) {
       // A native picker/camera failure would otherwise fail silently — the
-      // button tap would just do nothing with no feedback.
-      console.log('[SR Task Form Photos] Camera failed:', error);
-      Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
+      // button tap would just do nothing with no feedback. Logged with
+      // whatever detail the thrown error actually carries (code/message,
+      // if any) so a real device failure can be pinned down from the logs.
+      console.log('[SR Task Form Photos] Camera failed:', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
     }
   }, [mediaQueue]);
 
@@ -737,10 +780,12 @@ export function useSrTaskForm() {
 
   // Confirms pre-tagged 'Running Hours' by default — see the matching
   // comment on taskForm/useTaskFormPhotos.ts's own runningHoursQueue.
+  // offlineEnabled `true` regardless of role — same reasoning as mediaQueue
+  // above.
   const runningHoursQueue = useMediaUploadQueue(
     mediaUploaders,
     useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), []),
-    isEngineer,
+    true,
     persistRunningHoursFailure,
     ['Running Hours']
   );
@@ -759,7 +804,7 @@ export function useSrTaskForm() {
       await new Promise((resolve) => setTimeout(resolve, 350));
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Camera access is required to take a photo.');
+        showCameraUnavailableAlert('permission');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
@@ -779,9 +824,9 @@ export function useSrTaskForm() {
         };
         runningHoursQueue.startBatch([picked]);
       }
-    } catch (error) {
-      console.log('[SR Task Form Photos] Running-hours camera failed:', error);
-      Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
+    } catch (error: any) {
+      console.log('[SR Task Form Photos] Running-hours camera failed:', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
     }
   }, [runningHoursQueue, runningHoursPhotos]);
 
@@ -1004,6 +1049,18 @@ export function useSrTaskForm() {
     const billingTypeRequired = (selectedCategoryLetter === 'B' && ['Breakdown', 'BIS'].includes(selectedSubCategory))
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope');
     if (billingTypeRequired && !billingType) return;
+
+    // Same hard gate as Start/photo upload (checkLocationBlocked's own
+    // comment) — this dealer/AM Complete equivalent needs a real location,
+    // not just a best-effort one. Checked before setStep6Saving/the actual
+    // call, so a blocked attempt never shows a loading spinner it can't
+    // back out of.
+    const blockReason = await checkLocationBlocked();
+    if (blockReason) {
+      showLocationOffAlert(blockReason);
+      return;
+    }
+
     // Photos/videos/PDFs already uploaded immediately when picked (see
     // mediaQueue/MediaUploadOverlay) — nothing left to upload here.
     // This dealer/AM action calls finishServiceTask directly (not
@@ -1017,6 +1074,19 @@ export function useSrTaskForm() {
     try {
       const token = await getToken();
       if (!token || !taskId) return;
+
+      // Same race as handleFinishService above (its own comment has the
+      // full story) — a queued-but-not-yet-synced Start would otherwise
+      // make /finish fail with a confusing "must be in progress" rejection.
+      if (await getPendingBody(`service_start_${taskId}`)) {
+        await runSync();
+        if (await getPendingBody(`service_start_${taskId}`)) {
+          const msg = "This task hasn't reached the server as \"Started\" yet — you appear to be offline. It'll finish syncing once you're back online; please try again after that.";
+          setStep6Error(msg);
+          return;
+        }
+      }
+
       // Calls the same /finish endpoint the engineer's own Complete Task
       // uses (finishServiceTask below), not /work-approval/request —
       // /work-approval/request only submits the work-approval sub-object
@@ -1025,11 +1095,18 @@ export function useSrTaskForm() {
       // stayed IN_PROGRESS instead of COMPLETED). /finish is the call that
       // marks the entry COMPLETED and auto-seeds partApproval/workApproval,
       // and area_manager is one of its allowed roles per the dev guide.
-      await finishServiceTask(token, taskId, {
+      const updatedTask = await finishServiceTask(token, taskId, {
         category: selectedCategoryLetter, subCategory: selectedSubCategory,
         ...(billingTypeRequired ? { billingType } : {}),
         ...buildFinishExtras(),
       });
+      // A task assigned to an Area Manager has no one "above" them to
+      // meaningfully review their own AM-stage approval — skip making them
+      // separately tap Approve on their own completed work. Best-effort:
+      // /finish above already succeeded, so a failure here just leaves the
+      // task at PENDING_AM for a human AM to approve manually later,
+      // exactly like any other assignee.
+      await autoApproveIfAssignedToAm(token, taskId, updatedTask);
       setStep6Success(true);
       // Deliberately NOT calling completeServiceTask (/service/:id/complete)
       // here — per the backend dev guide, that's a separate, optional
@@ -1144,12 +1221,43 @@ export function useSrTaskForm() {
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope')
     );
     if (billingTypeRequired && !billingType) return;
+
+    // Same hard gate as Start/photo upload (checkLocationBlocked's own
+    // comment) — Complete needs a real location, not just a best-effort
+    // one. Checked before setFinishing/the actual call, so a blocked
+    // attempt never shows a loading spinner it can't back out of.
+    const blockReason = await checkLocationBlocked();
+    if (blockReason) {
+      showLocationOffAlert(blockReason);
+      return;
+    }
+
     // Photos/videos/PDFs already uploaded immediately when picked (see
     // mediaQueue/MediaUploadOverlay) — nothing left to upload here.
     setFinishing(true);
     setFinishError('');
     try {
       if (!taskId) return;
+
+      // Start can get queued locally instead of reaching the server right
+      // away when Start was tapped offline (see serviceTasksController.ts's
+      // own handleStartTask) — the app still lets the engineer fill out the
+      // whole form regardless, trusting that local "started" state. If that
+      // queued Start still hasn't actually synced by the time Complete is
+      // attempted, the server still thinks this task is stuck at ACCEPTED
+      // and rejects /finish for it — same race as commissioning's own
+      // useTaskFormOtp.ts, same fix: give the queue one real chance to
+      // catch up first, only block Complete if Start is still stuck
+      // afterward, with a message that actually explains why.
+      if (await getPendingBody(`service_start_${taskId}`)) {
+        await runSync();
+        if (await getPendingBody(`service_start_${taskId}`)) {
+          const msg = "This task hasn't reached the server as \"Started\" yet — you appear to be offline. It'll finish syncing once you're back online; please try Complete again after that.";
+          setFinishError(msg);
+          return;
+        }
+      }
+
       // Queued like every other engineer save in this form — this is the
       // one action (including the Suggestion Comment bundled into it via
       // buildFinishExtras) that was still calling the API directly, so it
@@ -1347,8 +1455,34 @@ export function useSrTaskForm() {
         setCpcbNorm(assetData.cpcb ?? '');
       }
 
-      if (serviceData?.faultCodes?.length) {
-        setSelectedComplaintCodes(serviceData.faultCodes.map((entry: any, index: number) => ({
+      // Same "don't revert an unsynced offline edit" overlay as assetData/
+      // readings above — a faultCodes save queued via handleSaveFaultCodes
+      // (its own sr_faultcodes_ dedupeKey) sits queued until the next sync,
+      // and this fresh GET only knows whatever the server already has.
+      // Without this overlay, reopening this task before that sync ran wiped
+      // out an already-filled-in complaint code entirely: only
+      // serviceData.faultCodes below was ever read, so a queued-but-not-yet-
+      // synced entry just silently vanished. Pending entries only carry the
+      // flat {codeId, observation, rootCause, correctiveAction} shape
+      // actually sent to the server (handleSaveFaultCodes's own body) — not
+      // the populated codeId object a real GET response carries — so this
+      // merges each pending entry onto its matching server entry (keeping
+      // that entry's rich code/title/priority/category details, just with
+      // pending's freshest observation/rootCause/correctiveAction text) and
+      // only falls back to a bare, unlabeled entry for a codeId the server
+      // has never seen at all (a brand-new pick made while still offline).
+      let faultCodesList: any[] = serviceData?.faultCodes || [];
+      const pendingFaultCodes = await getPendingBody(`sr_faultcodes_${taskId}`);
+      if (pendingFaultCodes?.faultCodes?.length) {
+        faultCodesList = pendingFaultCodes.faultCodes.map((pending: any) => {
+          const serverMatch = faultCodesList.find((entry: any) => (entry.codeId?._id || entry.codeId) === pending.codeId);
+          return serverMatch
+            ? { ...serverMatch, observation: pending.observation, rootCause: pending.rootCause, correctiveAction: pending.correctiveAction }
+            : { codeId: { _id: pending.codeId }, observation: pending.observation, rootCause: pending.rootCause, correctiveAction: pending.correctiveAction };
+        });
+      }
+      if (faultCodesList.length) {
+        setSelectedComplaintCodes(faultCodesList.map((entry: any, index: number) => ({
           uid: `${entry.codeId?._id || index}-${Date.now()}-${index}`,
           codeId: entry.codeId?._id,
           code: entry.codeId?.code,
@@ -1362,14 +1496,37 @@ export function useSrTaskForm() {
         })));
       }
 
-      if (serviceData?.partsUsed?.length) {
-        setSelectedParts(serviceData.partsUsed.map((entry: any) => ({
+      // description/componentNumber/cpcbNorm/engineFamily/maxQty (not
+      // name/code/unit/category/subCategory) match the real Part schema —
+      // same "2026-08-29 Part schema change" fix already applied to
+      // srDetailController.ts's/taskReportController.ts's own parts
+      // hydration; this one was missed, which is why a part added, then
+      // reloaded from a fresh fetch (e.g. leaving and coming back to this
+      // step), showed a blank card — every field it read no longer exists
+      // on the real response, so SelectedPartCard had nothing to render.
+      //
+      // Same queued-offline-edit overlay as faultCodes just above — a
+      // partsUsed save queued via handleSavePartsUsed (its own sr_parts_
+      // dedupeKey) would otherwise silently disappear on reopen the same
+      // way, before it's actually synced.
+      let partsUsedList: any[] = serviceData?.partsUsed || [];
+      const pendingPartsUsed = await getPendingBody(`sr_parts_${taskId}`);
+      if (pendingPartsUsed?.partsUsed?.length) {
+        partsUsedList = pendingPartsUsed.partsUsed.map((pending: any) => {
+          const serverMatch = partsUsedList.find((entry: any) => (entry.partId?._id || entry.partId) === pending.partId);
+          return serverMatch
+            ? { ...serverMatch, quantity: pending.quantity }
+            : { partId: { _id: pending.partId }, quantity: pending.quantity };
+        });
+      }
+      if (partsUsedList.length) {
+        setSelectedParts(partsUsedList.map((entry: any) => ({
           partId: entry.partId?._id,
-          code: entry.partId?.code,
-          name: entry.partId?.name,
-          unit: entry.partId?.unit,
-          category: entry.partId?.category,
-          subCategory: entry.partId?.subCategory,
+          componentNumber: entry.partId?.componentNumber,
+          description: entry.partId?.description,
+          engineFamily: entry.partId?.engineFamily,
+          cpcbNorm: entry.partId?.cpcbNorm,
+          maxQty: entry.partId?.maxQty,
           quantity: entry.quantity ?? 1,
         })));
       }
@@ -1454,6 +1611,7 @@ export function useSrTaskForm() {
 
   return {
     params, currentStep, setCurrentStep, initialDataLoading, refreshing, onRefresh, profile, task, isEngineer,
+    toastMessage, toastType, toastVisible,
 
     // Step 1
     gensetModel, setGensetModel, gensetSrNumber, setGensetSrNumber, assetDetail, engineModel, setEngineModel,

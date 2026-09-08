@@ -58,46 +58,52 @@ export function PhotosVideoCard({ sitePhotos, onRemove, onAddPress, imagesOnly =
 
   return (
     <View style={styles.card}>
-      <View style={styles.headerBlock}>
-        <View style={styles.header}>
-          <View style={styles.iconChip}>
-            <ImageIcon size={16} color="#E76124" />
+      {/* Icon/title/size-limit header — only makes sense for the general
+      site-photos card. Running Hours' own card (maxItems === 1, one
+      specific meter-reading photo) doesn't need it — hidden there, same
+      condition as the guidance note below. */}
+      {maxItems !== 1 && (
+        <View style={styles.headerBlock}>
+          <View style={styles.header}>
+            <View style={styles.iconChip}>
+              <ImageIcon size={16} color="#E76124" />
+            </View>
+            <Text style={styles.title}>{imagesOnly ? 'PHOTOS' : 'PHOTOS & VIDEO'}</Text>
           </View>
-          <Text style={styles.title}>{imagesOnly ? 'PHOTOS' : 'PHOTOS & VIDEO'}</Text>
+          <Text style={styles.subtitle}>
+            Photo {MAX_PHOTO_MB} MB max{imagesOnly ? '' : ` · Video ${MAX_VIDEO_MB} MB max`}
+          </Text>
         </View>
-        <Text style={styles.subtitle}>
-          Photo {MAX_PHOTO_MB} MB max{imagesOnly ? '' : ` · Video ${MAX_VIDEO_MB} MB max`}
-        </Text>
-      </View>
+      )}
 
       {photos.length > 0 && (
         <View style={styles.grid}>
           {photos.map((photo) => (
-            <View key={photo.id} style={styles.thumbWrapper}>
+            // Running Hours' own card (maxItems === 1) only ever holds one
+            // photo — shown as a single full-width cell instead of the
+            // small fixed-size thumbnail sized for a multi-photo row.
+            <View key={photo.id} style={maxItems === 1 ? styles.thumbWrapperSingle : styles.thumbWrapper}>
               <Image source={{ uri: photo.uri }} style={styles.thumb} />
-              {/* Tag / location / remove, all as small overlay icons in one
-                  row at the top of the thumbnail. */}
+              {/* Location / remove — small overlay icons across the top of
+                  the thumbnail. Tag moved to its own always-visible bottom
+                  bar below, since a small top icon alone was easy to miss
+                  when a photo still had no tag. */}
               <View style={styles.thumbIconRow}>
-                {!!onUpdateTag && (
-                  <MediaTagPicker
-                    variant="icon"
-                    type={photo.type}
-                    tags={photo.tags}
-                    disabled={!photo.gcsUrl}
-                    onSelectTag={(tags) => onUpdateTag(photo.gcsUrl!, tags)}
-                  />
-                )}
                 <MediaLocationButton location={photo.location} />
                 <TouchableOpacity style={styles.iconOverlayButton} onPress={() => onRemove(photo.id)}>
                   <X size={14} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
-              {/* Picked tag, overlaid as a label at the bottom of the
-                  thumbnail. */}
-              {!!photo.tags?.[0] && (
-                <View style={styles.thumbLabelBar}>
-                  <Text style={styles.thumbLabelText} numberOfLines={1}>{photo.tags[0]}</Text>
-                </View>
+              {/* Always visible — "Add Tag" until one's picked, then the
+                  tag itself — not just shown once a tag already exists. */}
+              {!!onUpdateTag && (
+                <MediaTagPicker
+                  variant="label"
+                  type={photo.type}
+                  tags={photo.tags}
+                  disabled={!photo.gcsUrl}
+                  onSelectTag={(tags) => onUpdateTag(photo.gcsUrl!, tags)}
+                />
               )}
             </View>
           ))}
@@ -138,11 +144,16 @@ export function PhotosVideoCard({ sitePhotos, onRemove, onAddPress, imagesOnly =
       )}
 
       {atLimit ? (
-        <View style={styles.limitNotice}>
-          <Text style={styles.limitNoticeText}>
-            Only {maxItems} photo{maxItems === 1 ? '' : 's'} allowed here — remove the current one to add a different photo.
-          </Text>
-        </View>
+        // Running Hours' own card (maxItems === 1) skips this notice
+        // entirely — the single photo thumbnail already shown above makes
+        // "nothing more to add" self-evident there without extra text.
+        maxItems !== 1 && (
+          <View style={styles.limitNotice}>
+            <Text style={styles.limitNoticeText}>
+              Only {maxItems} photo{maxItems === 1 ? '' : 's'} allowed here — remove the current one to add a different photo.
+            </Text>
+          </View>
+        )
       ) : (
         <TouchableOpacity style={styles.addBox} onPress={onAddPress}>
           <View style={styles.addIconCircle}>
@@ -152,15 +163,22 @@ export function PhotosVideoCard({ sitePhotos, onRemove, onAddPress, imagesOnly =
             {sitePhotos.some((p) => p.mediaType !== 'pdf') ? 'Add More' : imagesOnly ? 'Add Photo' : 'Add Photo or Video'}
           </Text>
           <Text style={styles.addSubtitle}>Tap to open camera or gallery</Text>
+          {/* Running Hours' own card (maxItems === 1) hides the header
+          block above, which is where this size limit normally shows —
+          surfaced here instead so it isn't lost entirely for that card. */}
+          {maxItems === 1 && <Text style={styles.addSubtitle}>Max {MAX_PHOTO_MB} MB</Text>}
         </TouchableOpacity>
       )}
 
-      {/* What to actually photograph — same guidance regardless of which
-      screen/step this card is rendered in, since it's one shared
-      component. */}
-      <Text style={styles.guidanceNote}>
-        Photo - Genset All Side / Foundation/ Earthing/ Control Panel Power Cable Connection/GSN/ESN/Alternator Sr.No./Controller/RMS device/Battery/ATS Sr No.Etc.
-      </Text>
+      {/* What to actually photograph — only makes sense for the general
+      site-photos card (multiple different subjects to capture). Running
+      Hours' own card (maxItems === 1, one specific meter-reading photo)
+      doesn't need this generic guidance at all — hidden there. */}
+      {maxItems !== 1 && (
+        <Text style={styles.guidanceNote}>
+          Photo - Genset All Side / Foundation/ Earthing/ Control Panel Power Cable Connection/GSN/ESN/Alternator Sr.No./Controller/RMS device/Battery/ATS Sr No.Etc.
+        </Text>
+      )}
 
     </View>
   );
@@ -177,8 +195,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   title: { fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4 },
+  // Wraps into a proper 2-per-row grid instead of a single row that just
+  // runs off the edge of the screen (flexWrap: 'nowrap' with a fixed-width
+  // thumbnail — every photo past the first two-ish was only reachable by
+  // scrolling sideways, easy to miss entirely).
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  thumbWrapper: { width: 150, height: 120, borderRadius: 16, overflow: 'hidden' },
+  // ~48% + the row gap lands two thumbnails per line with a little breathing
+  // room; aspectRatio (not a fixed height) keeps each one proportional as it
+  // scales to that width instead of a height picked for the old fixed 150px.
+  thumbWrapper: { width: '48%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden' },
+  // Running Hours' own single-photo card — fills the row width instead of
+  // sitting at the small fixed size meant for a multi-photo strip.
+  thumbWrapperSingle: { width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden' },
   thumb: { width: '100%', height: '100%' },
   // Tag / location / remove — one row of small overlay icons across the
   // top of the thumbnail.
@@ -191,17 +219,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
   },
-  // The picked tag, shown as a label bar across the bottom of the
-  // thumbnail — inside thumbWrapper's own overflow: 'hidden' bounds.
-  thumbLabelBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: 8, paddingVertical: 6,
-  },
-  thumbLabelText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
   videoList: { gap: 12 },
+  // alignItems: 'flex-start' (not 'center') — once the tag chip can wrap to
+  // 2 lines (a long label like "Power Cable Connection"), a centered
+  // delete button drifted down to float awkwardly next to the tag/location
+  // row instead of sitting up by the video icon/filename where it reads as
+  // "belonging" to the row as a whole.
   videoRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
     backgroundColor: '#F8F8F8',
     borderRadius: 16,
     padding: 12,
@@ -213,7 +238,15 @@ const styles = StyleSheet.create({
   },
   videoFileName: { fontSize: 15, fontWeight: '700', color: '#000000' },
   videoMeta: { fontSize: 13, fontWeight: '500', color: '#9CA3AF', marginTop: 2 },
-  videoActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  // No flexWrap — the tag chip and location pin always stay on one line.
+  // The chip itself has flexShrink: 1 and the location button doesn't
+  // shrink at all (React Native's own View default), so a long tag label
+  // (e.g. "Power Cable Connection") shrinks the chip down to whatever
+  // width is left and wraps its OWN text onto a second line in place,
+  // rather than pushing the location pin down to a new row. alignItems:
+  // 'flex-start' so the pin sits level with the chip's first line instead
+  // of trying to vertically center against a taller, 2-line-wrapped chip.
+  videoActionsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 2 },
   videoDeleteButton: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: '#FEE2E2',

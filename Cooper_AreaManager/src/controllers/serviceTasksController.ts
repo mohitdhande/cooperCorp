@@ -6,7 +6,7 @@ import {
   getMyTasksByStatus, getMyTeamData, reassignServiceTask,
 } from '../viewModel/commisionAPi';
 import { parseApiError } from '../utils/apiError';
-import { flattenTeamTasks, bucketTaskStatus, formatAssetLabel } from '../utils/reportFormatters';
+import { flattenTeamTasks, resolveTaskStatusGroup, formatAssetLabel, sortTasksForTab } from '../utils/reportFormatters';
 import { getPermissions } from '../constants/permissions';
 import { UserProfile } from '../models/Login';
 import { TeamMember } from '../models/myTeam.types';
@@ -14,7 +14,9 @@ import { useAssetTaskSearch } from './useAssetTaskSearch';
 import { useTeam } from '../context/TeamContext';
 import { cacheData, getCachedData } from '../utils/offlineCache';
 import { isNetworkError, putOrQueue } from '../utils/syncEngine';
-import { logLocationForAction } from '../utils/locationLogger';
+import { logLocationForAction, registerLocationOffWarning, checkLocationBlocked } from '../utils/locationLogger';
+import { handleLocationOffWarning, showLocationOffAlert } from '../utils/locationOffAlert';
+import { useToast } from '../utils/useToast';
 import { deriveQueuedTaskStatusOverrides } from '../utils/offlineQueue';
 
 const PAGE_SIZE = 10;
@@ -29,6 +31,15 @@ type Tab = 'Active' | 'Completed' | 'Closed';
 // navigation targets already used by srJobCardsController.ts.
 export function useServiceTasksController() {
   const router = useRouter();
+
+  const { toastMessage, toastType, toastVisible, showToast } = useToast();
+  // Shows once per screen visit, the first time Start (the one
+  // location-needing action on this list) finds location services off —
+  // see locationLogger.ts's own comment on registerLocationOffWarning.
+  useEffect(() => {
+    registerLocationOffWarning((reason) => handleLocationOffWarning(reason, showToast));
+    return () => registerLocationOffWarning(null);
+  }, [showToast]);
 
   const [selectedTab, setSelectedTab] = useState<Tab>('Active');
   const [page, setPage] = useState(1);
@@ -122,20 +133,56 @@ export function useServiceTasksController() {
       const statusKey = tab.toLowerCase() as 'active' | 'completed' | 'closed';
 
       if (isAreaManager) {
+        // Same cache-on-success, fall-back-to-cache-on-network-failure
+        // pattern as the engineer branch below — see
+        // commissioningTasksController.ts's own fetchPage for the full
+        // reasoning (this branch previously had no offline fallback at
+        // all, so an area manager with a weak/no signal saw "No internet
+        // connection" every single time useFocusEffect refired this fetch,
+        // with no cached data shown). Shares the same 'team_data' cache
+        // key as Commissioning's own fetchPage — both read the identical
+        // /me/team response, so either screen's fresh fetch keeps the
+        // other's fallback up to date too.
         if (!teamDataRef.current) {
-          teamDataRef.current = await getMyTeamData(token);
+          try {
+            teamDataRef.current = await getMyTeamData(token);
+            await cacheData('team_data', teamDataRef.current);
+          } catch (fetchErr: any) {
+            if (!isNetworkError(fetchErr)) throw fetchErr;
+            const cached = await getCachedData('team_data');
+            if (!cached) throw fetchErr;
+            teamDataRef.current = cached.data;
+          }
         }
-        const all = flattenTeamTasks(teamDataRef.current, 'service');
+        // Deduped by _id per mobile-service-list-api.md §4 — the same task
+        // can legitimately appear more than once in the raw /me/team shape
+        // (e.g. surfaced under both myTasks and a dealer's ownTasks), and
+        // this previously counted/showed it twice.
+        const seenIds = new Set<string>();
+        const all = flattenTeamTasks(teamDataRef.current, 'service').filter((t) => {
+          if (seenIds.has(t._id)) return false;
+          seenIds.add(t._id);
+          return true;
+        });
         const cnts = { active: 0, completed: 0, closed: 0 };
-        all.forEach((t) => { cnts[bucketTaskStatus(t.status, 'service')] += 1; });
-        const filtered = all.filter((t) => bucketTaskStatus(t.status, 'service') === statusKey);
+        // resolveTaskStatusGroup prefers the server's own task.statusGroup
+        // over this app's local bucketTaskStatus guess — per
+        // mobile-service-list-api.md §5, this exact Service mapping
+        // (whether COMPLETED counts as active or completed) has already
+        // changed once on the backend, which is precisely the scenario a
+        // hardcoded local guess can't keep up with on its own.
+        all.forEach((t) => { cnts[resolveTaskStatusGroup(t, 'service')] += 1; });
+        // Active: oldest-assigned first, newest last. Completed/Closed:
+        // most-recently-finished first. Sorted before slicing so page
+        // boundaries land on the right tasks, not just the right count.
+        const filtered = sortTasksForTab(all.filter((t) => resolveTaskStatusGroup(t, 'service') === statusKey), statusKey);
         setCounts(cnts);
         setTotalCount(filtered.length);
         setTasks(filtered.slice((pageNum - 1) * PAGE_SIZE, pageNum * PAGE_SIZE));
       } else {
-        // Engineer's own path — the isAreaManager team-roster branch above
-        // is a dealer/AM-only view, out of scope for the engineer-focused
-        // offline work.
+        // Engineer/dealer's own path — same cache-fallback shape as the
+        // area manager branch above, just keyed per status/page since this
+        // one's server-paginated instead of one whole-tree fetch.
         const cacheKey = `service_tasks_${statusKey}_${pageNum}`;
         let data: any;
         try {
@@ -147,7 +194,10 @@ export function useServiceTasksController() {
           if (!cached) throw fetchErr;
           data = cached.data;
         }
-        const serviceTasks = data.service || [];
+        // Same ordering rule as the area_manager branch above — this page
+        // is already server-paginated, so this only orders what's actually
+        // on it, not the full list across pages.
+        const serviceTasks = sortTasksForTab(data.service || [], statusKey);
         setTasks(serviceTasks);
         setTotalCount(data.counts?.service?.[statusKey] || 0);
         setCounts({
@@ -289,6 +339,16 @@ export function useServiceTasksController() {
     setTaskActionLoading((prev) => ({ ...prev, [taskId]: true }));
     setTaskActionError((prev) => ({ ...prev, [taskId]: '' }));
     try {
+      // Same hard gate as a photo upload (checkLocationBlocked's own
+      // comment) — Start needs a real location, not just a best-effort one.
+      // Checked before the API call is even made: if GPS/permission is
+      // off, nothing is sent to the server at all, just the Turn On/Open
+      // Settings alert. Only a weak/no GPS *fix* still lets Start through.
+      const blockReason = await checkLocationBlocked();
+      if (blockReason) {
+        showLocationOffAlert(blockReason);
+        return;
+      }
       const task = tasks.find((t) => t._id === taskId);
       const assetLabel = formatAssetLabel(task?.asset?.gensetNumber, task?.asset?.engineNumber, taskId);
       // Location is captured only at Start, photo upload, and Complete —
@@ -359,6 +419,7 @@ export function useServiceTasksController() {
   }, [taskStatusOverrides, handleStartTask, goToTaskForm, goToTaskReport]);
 
   return {
+    toastMessage, toastType, toastVisible,
     selectedTab, selectTab,
     page, totalPages,
     tasks, totalCount, counts, isLoading, error,

@@ -6,7 +6,7 @@ import {
   ChevronRight,
   Info
 } from "lucide-react-native";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -93,6 +93,17 @@ export default function TaskFormScreen() {
   const vm = useTaskForm();
   const insets = useSafeAreaInsets();
   const sheetPaddingBottom = Math.max(insets.bottom, 16) + 14;
+
+  // All 6 steps share one ScrollView (each step's content is just
+  // conditionally rendered inside it, not a separate screen/ScrollView) —
+  // switching steps alone doesn't reset scroll position, so arriving at a
+  // new step could silently land wherever the previous step happened to be
+  // scrolled to instead of that step's own top. Jumps back to the top every
+  // time currentStep changes.
+  const scrollViewRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+  }, [vm.currentStep]);
 
   // Auto-jump-to-next-field, same trick as the login form — only wired for
   // Step 1's two identification sections (Genset ID, Alternator & Panel),
@@ -428,27 +439,29 @@ export default function TaskFormScreen() {
       />
       {isSectionExpanded("groupE") && (
         <>
-          <TextInput
-            style={[styles.fieldInput, { marginTop: 12 }]}
-            value={vm.commissioningChecks.runningHours || ""}
-            onChangeText={(v) => {
-              console.log('[Commissioning] Running Hours input changed to:', v);
-              vm.updateCommissioningCheck("runningHours", v);
-            }}
-            placeholder="Enter running hours..."
-            keyboardType="numeric"
-          />
+          <View style={[styles.fieldRow, { marginTop: 12, alignItems: "center", gap: 12 }]}>
+            <TextInput
+              style={[styles.fieldInput, { flex: 1 }]}
+              value={vm.commissioningChecks.runningHours || ""}
+              onChangeText={(v) => {
+                vm.updateCommissioningCheck("runningHours", v);
+              }}
+              placeholder="Enter running hours..."
+              keyboardType="numeric"
+            />
+            <SectionSaveButton
+              onPress={vm.handleSaveGroupE}
+              saving={vm.sectionSaving["groupE"]}
+              done={vm.sectionSuccess["groupE"]}
+              style={{ marginTop: 0, alignSelf: "center" }}
+            />
+          </View>
 
           {vm.sectionError["groupE"] ? (
             <Text style={styles.sectionErrorText}>
               {vm.sectionError["groupE"]}
             </Text>
           ) : null}
-          <SectionSaveButton
-            onPress={vm.handleSaveGroupE}
-            saving={vm.sectionSaving["groupE"]}
-            done={vm.sectionSuccess["groupE"]}
-          />
 
           <View style={[styles.groupDivider, { marginVertical: 12 }]} />
 
@@ -541,6 +554,7 @@ export default function TaskFormScreen() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scrollArea}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 30 }}

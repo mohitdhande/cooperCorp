@@ -9,6 +9,7 @@ import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } 
 import { videoFileName } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
+import { showCameraUnavailableAlert } from '../../utils/cameraErrorAlert';
 
 type UseTaskFormPhotosArgs = {
   taskId: string;
@@ -77,10 +78,19 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     mediaKind: item.kind, source: item.source, formKind: 'commissioning', taskId, target: 'runningHours',
   }), [taskId]);
 
+  // offlineEnabled is `true` here regardless of role — unlike every other
+  // putOrQueue-backed save in this form (still scoped to isEngineer only,
+  // per useTaskForm.ts's own note on why), a dropped signal mid-upload
+  // should save-and-auto-resume a photo/video/PDF for whoever is filling
+  // this form, not just an engineer. In practice the only other role that
+  // ever reaches this screen is areaManager (dealer can't fill task forms
+  // at all — see permissions.ts's canFillTaskForm), but this is written as
+  // "always on" rather than re-deriving that role check here, so it stays
+  // correct even if that permission ever changes.
   const siteQueue = useMediaUploadQueue(
     uploaders,
     useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), []),
-    isEngineer,
+    true,
     persistSiteFailure
   );
   // Every Running Hours photo confirms pre-tagged 'Running Hours' by
@@ -90,7 +100,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   const runningHoursQueue = useMediaUploadQueue(
     uploaders,
     useCallback((item: QueueItem) => setRunningHoursPhotos((prev) => [...prev, toSitePhoto(item)]), []),
-    isEngineer,
+    true,
     persistRunningHoursFailure,
     ['Running Hours']
   );
@@ -114,7 +124,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
 
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', `Camera access is required to ${mediaType === 'videos' ? 'record a video' : 'take a photo'}.`);
+        showCameraUnavailableAlert('permission');
         return;
       }
 
@@ -135,12 +145,16 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo', source: 'camera' };
         (target === 'site' ? siteQueue : runningHoursQueue).startBatch([picked]);
       }
-    } catch (error) {
-      // A native picker/camera failure (no camera, OS-level glitch) would
-      // otherwise fail silently — the button tap would just do nothing
-      // with no feedback.
-      console.log('[Task Form Photos] Camera failed:', error);
-      Alert.alert('Camera unavailable', 'Could not open the camera. Please try again.');
+    } catch (error: any) {
+      // A native picker/camera failure (no camera, OS-level glitch, or an
+      // OEM privacy manager silently blocking it — see
+      // showCameraUnavailableAlert's own comment) would otherwise fail
+      // silently — the button tap would just do nothing with no feedback.
+      // Logged with whatever detail the thrown error actually carries
+      // (code/message, if any) so a real device failure can be pinned down
+      // from the logs instead of guessing.
+      console.log('[Task Form Photos] Camera failed:', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
     }
   }, [siteQueue, runningHoursQueue]);
 

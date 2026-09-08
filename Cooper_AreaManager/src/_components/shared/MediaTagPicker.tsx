@@ -36,8 +36,12 @@ type Props = {
   // 'chip' (default) = the pill with text, for a video/PDF row (no image
   // to overlay onto there). 'icon' = a small circular semi-transparent
   // overlay button with no label, for a photo thumbnail's own top icon
-  // row — matches MediaLocationButton's 'overlay' variant visually.
-  variant?: 'chip' | 'icon';
+  // row — matches MediaLocationButton's 'overlay' variant visually. 'label'
+  // = a full-width dark bar across the bottom of a photo thumbnail,
+  // always showing either the current tag or "Add Tag" — used instead of
+  // 'icon' so an untagged photo visibly invites tagging instead of just
+  // showing a small, easy-to-miss icon.
+  variant?: 'chip' | 'icon' | 'label';
 };
 
 // Small "+ Tag" chip (or the current tag, once picked) shown on each
@@ -73,14 +77,35 @@ export function MediaTagPicker({ type, tags, onSelectTag, disabled, variant = 'c
         <TouchableOpacity style={styles.iconButton} onPress={() => setVisible(true)}>
           <Tag size={14} color="#FFFFFF" />
         </TouchableOpacity>
+      ) : variant === 'label' ? (
+        <TouchableOpacity style={styles.labelBar} onPress={() => setVisible(true)}>
+          <Tag size={12} color="#FFFFFF" />
+          {/* numberOfLines={2}, not 1 — same truncation problem as the chip
+              variant above (a real tag like "Power Cable Connection" or
+              "AMC CAMC part Requirement format" is longer than this bar
+              usually needs to be for the short default "Add Tag"). This bar
+              overlays a photo thumbnail rather than sitting in a row with
+              other controls, so letting it grow to a second line is the
+              simplest fix here — no sibling to collide with. */}
+          <Text style={[styles.labelBarText, !currentTag && styles.labelBarTextEmpty]} numberOfLines={2}>
+            {currentTag || 'Add Tag'}
+          </Text>
+        </TouchableOpacity>
       ) : (
+        // Used by video/PDF rows (no thumbnail to overlay a bar onto, so
+        // this sits inline next to the location button instead). Used to
+        // read a plain grey "Tag" when untagged — easy to miss next to the
+        // location pin icon, and didn't match photos' own bold "Add Tag"
+        // bar. Untagged now uses the same dashed-orange "something to add
+        // here" look the rest of the form already uses (e.g. DocumentsCard's
+        // own Upload PDF button) instead of blending into the row.
         <TouchableOpacity
-          style={[styles.chip, currentTag && styles.chipTagged]}
+          style={[styles.chip, currentTag ? styles.chipTagged : styles.chipUntagged]}
           onPress={() => setVisible(true)}
         >
-          <Tag size={12} color={currentTag ? '#E76124' : '#9CA3AF'} />
-          <Text style={[styles.chipText, currentTag && styles.chipTextTagged]} numberOfLines={1}>
-            {currentTag || 'Tag'}
+          <Tag size={12} color={currentTag ? '#E76124' : '#6B7280'} style={{ marginTop: 1 }} />
+          <Text style={[styles.chipText, currentTag ? styles.chipTextTagged : styles.chipTextUntagged]}>
+            {currentTag || 'Add Tag'}
           </Text>
         </TouchableOpacity>
       )}
@@ -129,16 +154,31 @@ export function MediaTagPicker({ type, tags, onSelectTag, disabled, variant = 'c
 
 const styles = StyleSheet.create({
   chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 4,
     alignSelf: 'flex-start',
-    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 100,
+    // Was maxWidth: 140 with numberOfLines={1} on the text — truncated a
+    // real tag like "Power Cable Connection" or "AMC CAMC part Requirement
+    // format" (both real, fixed options in this picker's own list, see the
+    // PHOTO_VIDEO_TAGS/PDF_TAGS above) down to an unreadable ellipsis.
+    // flexShrink (not a fixed cap) lets this chip cooperate with whatever
+    // sibling it's next to (MediaLocationButton) instead of forcing a hard
+    // width, and the text below wraps onto a second line rather than
+    // cutting off — PhotosVideoCard/DocumentsCard's own actions row wraps
+    // to accommodate it.
+    flexShrink: 1,
+    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
     paddingHorizontal: 8, paddingVertical: 4,
     backgroundColor: '#F8F8F8',
-    maxWidth: 140,
   },
   chipTagged: { backgroundColor: '#FCEEDD', borderColor: '#F7A57C' },
-  chipText: { fontSize: 11, fontWeight: '600', color: '#9CA3AF' },
+  // Dashed border, same "tap to add something" affordance as the app's
+  // other add-boxes (e.g. DocumentsCard's Upload PDF button) — makes an
+  // untagged video/PDF row visibly invite tapping instead of looking like
+  // an inert grey label easy to skim past.
+  chipUntagged: { borderStyle: 'dashed', borderColor: '#C6C6C6', backgroundColor: '#F8F8F8' },
+  chipText: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', flexShrink: 1 },
   chipTextTagged: { color: '#E76124' },
+  chipTextUntagged: { color: '#6B7280', fontWeight: '700' },
   // Matches MediaLocationButton's own 'overlay' variant exactly, so the
   // tag/location/remove icons sit as one visually consistent row.
   iconButton: {
@@ -146,6 +186,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
   },
+  // Full-width bar across the bottom of a photo thumbnail — same position/
+  // look as PhotosVideoCard's own (now-retired) plain tag label, just
+  // always visible and tappable instead of only showing once a tag exists.
+  labelBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 8, paddingVertical: 6,
+  },
+  labelBarText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF', flexShrink: 1 },
+  labelBarTextEmpty: { color: 'rgba(255,255,255,0.75)', fontWeight: '600' },
 
   overlay: {
     flex: 1,

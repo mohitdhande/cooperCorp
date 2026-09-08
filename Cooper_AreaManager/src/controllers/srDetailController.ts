@@ -194,7 +194,7 @@ export function useSrDetailController(initialTask: any) {
     try {
       const token = await getToken();
       if (!token || !task._id) return;
-      await requestServiceWorkApproval(token, task._id, {
+      const updatedTask = await requestServiceWorkApproval(token, task._id, {
         category: task.category,
         subCategory: task.subCategory,
         faultCodes: editFaultCodes.map((fc) => ({
@@ -203,6 +203,20 @@ export function useSrDetailController(initialTask: any) {
         partsUsed: editParts.map((p) => ({ partId: p.partId, quantity: p.quantity })),
         notes: task.notes,
       });
+      // A task assigned to an Area Manager has no one "above" them to
+      // meaningfully review their own AM-stage approval — skip making them
+      // separately tap Approve on their own resubmitted work. Best-effort:
+      // the resubmit above already succeeded, so a failure here just
+      // leaves the task at PENDING_AM for a human AM to approve manually,
+      // same as taskForm's own handleSendForApproval does at /finish.
+      if (getRole(updatedTask?.assignedTo?.role || task.assignedTo?.role || '') === 'areaManager'
+        && (updatedTask?.workApproval?.status || task.workApproval?.status) === 'PENDING_AM') {
+        try {
+          await submitAmWorkApproval(token, task._id, 'APPROVED', 'Auto-approved — task assigned to Area Manager');
+        } catch (autoApproveError) {
+          console.log('[SR Detail] Auto-approve (assigned-to-AM) failed, leaving for manual AM review:', autoApproveError);
+        }
+      }
       setEditModalVisible(false);
       await fetchDetail();
     } catch (error: any) {

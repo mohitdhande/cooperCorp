@@ -12,6 +12,7 @@ import { PageController } from '../../_components/shared/PageController';
 import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModal';
 import { SearchBar } from '../../_components/shared/SearchBar';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { Toast } from '../../_components/shared/Toast';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 
 // Same 420px Figma reference frame the Dashboard scales its paddings off.
@@ -53,6 +54,7 @@ export default function CommissioningTasksScreen() {
   const headerPad = width * (30 / REF_WIDTH);
 
   const {
+    toastMessage, toastType, toastVisible,
     selectedTab, selectTab,
     page, totalPages,
     tasks, counts, isLoading, error,
@@ -72,6 +74,7 @@ export default function CommissioningTasksScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScreenBackground />
       {(isLoading || Object.values(taskActionLoading).some(Boolean)) && <LoadingOverlay />}
+      <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
       <ScrollView
         style={{ flex: 1 }}

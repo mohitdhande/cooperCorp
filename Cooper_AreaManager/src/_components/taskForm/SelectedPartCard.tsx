@@ -11,18 +11,21 @@ type Props = {
   onRemove: () => void;
 };
 
-// A selected part — componentNumber/cpcbNorm/Max Qty pills, remove button,
+// A selected part — componentNumber/cpcbNorm pills, remove button,
 // description, engineFamily subtitle, a divider, then the quantity +/-
 // stepper. Adding a part, changing its quantity, or removing it all
 // persist automatically (see useTaskForm.ts/useSrTaskForm.ts) — no
 // separate save button here.
 //
-// maxQty (new field, not enforced server-side — purely a UI guardrail,
-// per the Parts API reference doc's "web app parts picker" notes):
-// - Always shown as its own "Max Qty: N" pill up top when set, regardless
-//   of the value — and again as a plain "Max qty is N" hint in the footer
-//   (used to only show that second hint for maxQty === 1 specifically,
-//   leaving every other max value with nothing there at all).
+// maxQty (not enforced server-side — purely a UI guardrail, per the Parts
+// API reference doc's "web app parts picker" notes):
+// - Shown once, as a plain "MAX QTY N" hint in the footer next to the
+//   stepper (used to only show for maxQty === 1 specifically, leaving
+//   every other max value with nothing there at all; later generalized to
+//   show for any maxQty — a separate "Max Qty: N" pill also used to sit up
+//   top alongside componentNumber/cpcbNorm, duplicating the same number in
+//   two places, so that pill was removed and this footer hint is now the
+//   only place it shows).
 // - maxQty === 1 skips the stepper entirely — nothing to adjust, so a
 //   bordered "×1" box shows instead.
 // - Otherwise the "+" button disables once quantity reaches maxQty.
@@ -44,11 +47,6 @@ export function SelectedPartCard({ part, onIncrease, onDecrease, onRemove }: Pro
             <Text style={styles.tagText}>{part.cpcbNorm}</Text>
           </View>
         )}
-        {!!part.maxQty && (
-          <View style={styles.maxQtyTag}>
-            <Text style={styles.maxQtyTagText}>Max Qty: {part.maxQty}</Text>
-          </View>
-        )}
         <View style={{ flex: 1 }} />
         <TouchableOpacity style={styles.removeButton} onPress={onRemove}>
           <X size={14} color="#0F0F0F" />
@@ -67,7 +65,7 @@ export function SelectedPartCard({ part, onIncrease, onDecrease, onRemove }: Pro
           {overMax ? (
             <Text style={styles.warningText}>Exceeds max qty ({part.maxQty})</Text>
           ) : !!part.maxQty ? (
-            <Text style={styles.maxQtyHint}>Max qty is {part.maxQty}</Text>
+            <Text style={styles.maxQtyHint}>MAX QTY {part.maxQty}</Text>
           ) : null}
         </View>
         {part.maxQty === 1 ? (
@@ -118,17 +116,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#C2410C',
-  },
-  maxQtyTag: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 120,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  maxQtyTagText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#374151',
   },
   removeButton: {
     width: 32, height: 32, borderRadius: 10,

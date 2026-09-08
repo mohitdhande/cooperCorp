@@ -6,6 +6,7 @@ import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { Bell, CheckCircle2, Clock, CloudOff, Cog, FileText, Handshake, Settings, XCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useDashboardHomeController } from '../../controllers/dashboardHomeController';
+import { useApprovalTimestamps } from '../../controllers/shared/useApprovalTimestamps';
 import { formatTimeAgoLabel, getTaskPeople, resolveApprovalStatusPills } from '../../utils/reportFormatters';
 import { getRole } from '../../constants/permissions';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
@@ -15,6 +16,7 @@ import { UserAvatar } from '../../_components/shared/UserAvatar';
 import { PageController } from '../../_components/shared/PageController';
 import { AssignEngineerModal } from '../../_components/shared/AssignEngineerModal';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { Toast } from '../../_components/shared/Toast';
 import { PendingSyncBanner } from '../../_components/shared/PendingSyncBanner';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 
@@ -139,6 +141,7 @@ export default function DashboardScreen() {
   const headerPad = width * (30 / REF_WIDTH);
 
   const {
+    toastMessage, toastType, toastVisible,
     profile, permissions, greeting, summary, teamAvatars, myActiveCount, teamLoading, teamError,
     refreshing, onRefresh,
     selectedMemberChoice, selectMember,
@@ -152,6 +155,11 @@ export default function DashboardScreen() {
     isDealer, isAreaManagerAssign, subordinateRole, engineers, engineersLoading,
     assignPickerTask, openAssignPicker, closeAssignPicker, handleAssignTask, assigningTask,
   } = useDashboardHomeController();
+
+  // approvalList itself carries no real "when was this sent for approval"
+  // timestamp (confirmed via a real pasted response — only a bare calendar
+  // date) — see useApprovalTimestamps's own comment for the full story.
+  const approvalTimestamps = useApprovalTimestamps(approvalList.map((item: any) => item._id));
 
 
   // Active Task / Recent Completed carousel — a real horizontal swipe (not
@@ -237,6 +245,7 @@ export default function DashboardScreen() {
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <DashboardBackground />
         {(activeTasksLoading || Object.values(taskActionLoading).some(Boolean)) && <LoadingOverlay />}
+        <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
         <ScrollView
           style={{ flex: 1 }}
@@ -310,6 +319,7 @@ export default function DashboardScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <DashboardBackground />
       {(teamLoading || activeTasksLoading || Object.values(taskActionLoading).some(Boolean)) && <LoadingOverlay />}
+      <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
       <ScrollView
         style={{ flex: 1 }}
@@ -440,20 +450,29 @@ export default function DashboardScreen() {
 
         {/* SR Approvals — service work-approval requests (AM/RSM sign-off),
             from GET /api/me/dashboard's approvalList. Own carousel, same
-            pagination shape as Active Task/Recent Completed below it, hidden
-            entirely when there's nothing to show rather than an empty card. */}
-        {approvalList.length > 0 && (
-          <>
-            <View style={[styles.sectionHeaderRow, { paddingHorizontal: hPad }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={styles.sectionTitle}>SR Approvals</Text>
-                <TouchableOpacity onPress={() => router.push('/screens/srApprovals' as any)}>
-                  <Text style={styles.showAllLink}>Show all</Text>
-                </TouchableOpacity>
-              </View>
-              <PageController current={approvalIndex + 1} total={approvalList.length} onPrev={goToPrevApproval} onNext={goToNextApproval} />
+            pagination shape as Active Task/Recent Completed below it. The
+            heading + View All stay visible even with nothing pending now
+            (an empty "Currently no approvals" state below them instead of
+            hiding the whole section) — View All should always be reachable
+            from here, not just when there's something to page through. */}
+        <>
+          <View style={[styles.sectionHeaderRow, { paddingHorizontal: hPad }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={styles.sectionTitle}>SR Approvals</Text>
+              <TouchableOpacity onPress={() => router.push('/screens/srApprovals' as any)}>
+                <Text style={styles.showAllLink}>View All</Text>
+              </TouchableOpacity>
             </View>
+            {approvalList.length > 0 && (
+              <PageController current={approvalIndex + 1} total={approvalList.length} onPrev={goToPrevApproval} onNext={goToNextApproval} />
+            )}
+          </View>
 
+          {approvalList.length === 0 ? (
+            <View style={[styles.emptyCard, { marginHorizontal: hPad }]}>
+              <Text style={styles.emptySubtitle}>Currently no approvals</Text>
+            </View>
+          ) : (
             <ScrollView
               ref={approvalCarouselRef}
               horizontal
@@ -472,7 +491,14 @@ export default function DashboardScreen() {
                 // waiting on both at once, and hiding either was
                 // misleading about what's actually still outstanding.
                 const statusPills = resolveApprovalStatusPills(item);
-                const relTime = formatTimeAgoLabel(item.date);
+                // approvalList's own item has no real timestamp at all
+                // (confirmed via a real pasted response) — real
+                // completedAt/requestedAt come from a separate per-item
+                // fetch, see useApprovalTimestamps above. item.date (a bare
+                // calendar date, not a real time) is the last-resort
+                // fallback while that fetch is still in flight.
+                const itemTimestamps = approvalTimestamps[item._id];
+                const relTime = formatTimeAgoLabel(itemTimestamps?.completedAt || itemTimestamps?.requestedAt || item.date);
                 const approvalPeople = getTaskPeople(item);
                 return (
                   <View key={item._id} style={{ width, paddingHorizontal: hPad }}>
@@ -514,15 +540,20 @@ export default function DashboardScreen() {
                             ))}
                           </View>
                         ) : <View />}
-                        {!!item.date && <Text style={styles.approvalTime}>{relTime}</Text>}
+                        {!!item.date && (
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={styles.approvalSubmittedLabel}>Submitted before</Text>
+                            <Text style={styles.approvalTime}>{relTime}</Text>
+                          </View>
+                        )}
                       </View>
                     </TouchableOpacity>
                   </View>
                 );
               })}
             </ScrollView>
-          </>
-        )}
+          )}
+        </>
 
         {/* Active Task — real commissioning + service active tasks from
             GET /api/me/dashboard, paged one at a time. Once that list is
@@ -891,6 +922,7 @@ const styles = StyleSheet.create({
   approvalStatusPillGroup: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, flexShrink: 1 },
   approvalStatusInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   approvalStatusInlineText: { fontSize: 14, fontWeight: '700' },
+  approvalSubmittedLabel: { fontSize: 12, fontWeight: '600', color: '#9CA3AF', marginBottom: 2 },
   approvalTime: { fontSize: 16, fontWeight: '700', color: '#000000' },
 
   // ─── Insights ───
