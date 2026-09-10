@@ -3,9 +3,10 @@ import { View, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, useWind
 import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { Bell, CheckCircle2, Clock, CloudOff, Cog, FileText, Handshake, Settings, XCircle } from 'lucide-react-native';
+import { CheckCircle2, Clock, CloudOff, Cog, FileText, Handshake, Settings, XCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useDashboardHomeController } from '../../controllers/dashboardHomeController';
+import { NotificationBellButton } from '../../_components/shared/NotificationBellButton';
 import { useApprovalTimestamps } from '../../controllers/shared/useApprovalTimestamps';
 import { formatTimeAgoLabel, getTaskPeople, resolveApprovalStatusPills } from '../../utils/reportFormatters';
 import { getRole } from '../../constants/permissions';
@@ -337,9 +338,7 @@ export default function DashboardScreen() {
             </View>
           </TouchableOpacity>
 
-          <View style={styles.bellButton}>
-            <Bell size={27} color="#979797" />
-          </View>
+          <NotificationBellButton size={27} containerSize={55} />
         </View>
 
         <PendingSyncBanner />

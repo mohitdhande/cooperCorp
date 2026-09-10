@@ -1,7 +1,8 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/_components/ErrorBoundary';
 import { TeamProvider } from '../context/TeamContext';
+import { NotificationsProvider } from '../context/NotificationsContext';
 import * as SplashScreen from 'expo-splash-screen';
 import { View, AppState, AppStateStatus, StyleSheet } from 'react-native';
 import { useEffect, useRef } from 'react';
@@ -13,6 +14,7 @@ import {
 import { runSync } from '../utils/syncEngine';
 import { runMediaSync } from '../utils/mediaSyncEngine';
 import { registerPushToken } from '../utils/pushNotifications';
+import { configureNotificationHandler, setupPushNotificationListeners } from '../utils/pushNotificationHandlers';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -23,6 +25,20 @@ SplashScreen.preventAutoHideAsync();
 // (splash view -> Stack mounts on its own default route -> replace), which
 // is what caused a visible blink between the splash and the login screen.
 export default function RootLayout() {
+  const router = useRouter();
+
+  // Foreground display (shouldShowBanner/shouldShowList) + both tap paths
+  // (backgrounded tap via addNotificationResponseReceivedListener, cold-
+  // start tap via getLastNotificationResponseAsync) — see
+  // pushNotificationHandlers.ts for the full mapping. Set up once at the
+  // root, not per-screen, since a tap can arrive while any screen is on top
+  // and always needs to navigate from here regardless of what's currently
+  // showing.
+  useEffect(() => {
+    configureNotificationHandler();
+    return setupPushNotificationListeners(router);
+  }, [router]);
+
   // Every screen's Text now renders through AppText, which maps its
   // existing fontWeight to one of these static Inter files — so the app
   // stays on the native splash (preventAutoHideAsync above) until the fonts
@@ -84,6 +100,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <TeamProvider>
+        <NotificationsProvider>
         {/* No transition animation anywhere in the app — every screen swap
             (push, replace, back) is an instant cut. contentStyle here is
             the native Screen container's own background — every screen
@@ -108,7 +125,9 @@ export default function RootLayout() {
           <Stack.Screen name="screens/createAssetCommission" options={{ headerShown: false }} />
           <Stack.Screen name="screens/srDetail" options={{ headerShown: false }} />
           <Stack.Screen name="screens/srApprovals" options={{ headerShown: false }} />
+          <Stack.Screen name="screens/notifications" options={{ headerShown: false }} />
         </Stack>
+        </NotificationsProvider>
         </TeamProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

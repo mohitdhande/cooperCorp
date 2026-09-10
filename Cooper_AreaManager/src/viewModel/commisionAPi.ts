@@ -105,6 +105,64 @@ export const getOrgDashboard = async (token: string) => {
   }
 };
 
+// In-app notification inbox (distinct from push — §16 of the mobile dev
+// guide). Every one of the backend's 17 event types writes one of these per
+// recipient automatically; nothing to trigger client-side per event. `data`
+// on each item is the exact same { screen, entityId } shape push payloads
+// carry (§15.5), so both share the same navigateFromPushData mapping —
+// see pushNotificationHandlers.ts.
+export const getMyNotifications = async (token: string, page: number = 1, limit: number = 20) => {
+  try {
+    const response = await axiosClient.get(`/api/me/notifications?page=${page}&limit=${limit}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data as { items: any[]; total: number; page: number; limit: number };
+  } catch (error: any) {
+    console.log('Get My Notifications Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Deliberately separate from the list call — cheap enough to poll/refetch
+// just for the header bell's badge without pulling the full list every time.
+export const getUnreadNotificationCount = async (token: string) => {
+  try {
+    const response = await axiosClient.get('/api/me/notifications/unread-count', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data as { count: number };
+  } catch (error: any) {
+    console.log('Get Unread Notification Count Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Call when the user taps a notification, before navigating using its data
+// payload (per the guide's own ordering).
+export const markNotificationRead = async (token: string, notificationId: string) => {
+  try {
+    const response = await axiosClient.patch(`/api/me/notifications/${notificationId}/read`, {}, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  } catch (error: any) {
+    console.log('Mark Notification Read Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const markAllNotificationsRead = async (token: string) => {
+  try {
+    const response = await axiosClient.patch('/api/me/notifications/read-all', {}, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  } catch (error: any) {
+    console.log('Mark All Notifications Read Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
 export const getDashboardKpis = async (
   token: string,
   params?: { from?: string; to?: string; regionId?: string; areaId?: string }

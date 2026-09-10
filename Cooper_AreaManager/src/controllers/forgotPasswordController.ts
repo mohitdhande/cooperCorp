@@ -20,6 +20,10 @@ export function useForgotPasswordController() {
 
   const [sendingOtp, setSendingOtp] = useState(false);
   const [sendOtpError, setSendOtpError] = useState('');
+  // Resend-only — Step 1's own "moved to Step 2" is already its own
+  // success signal, but Step 2 has nothing equivalent to show a resend
+  // actually went through, so this drives a brief inline confirmation there.
+  const [resendSuccess, setResendSuccess] = useState(false);
 
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
@@ -33,6 +37,7 @@ export function useForgotPasswordController() {
     setSendingOtp(true);
     setSendOtpError('');
     try {
+      console.log('[Forgot Password] Sending OTP request — POST /api/auth/forgot-password:', { login: login.trim() });
       await forgotPassword(login.trim());
       setStep(2);
     } catch (error: any) {
@@ -52,8 +57,11 @@ export function useForgotPasswordController() {
     setSendingOtp(true);
     setSendOtpError('');
     setResetError('');
+    setResendSuccess(false);
     try {
+      console.log('[Forgot Password] Resending OTP request — POST /api/auth/forgot-password:', { login: login.trim() });
       await forgotPassword(login.trim());
+      setResendSuccess(true);
     } catch (error: any) {
       const { message } = parseApiError(error, 'Failed to resend OTP. Please try again.');
       setSendOtpError(message);
@@ -83,6 +91,12 @@ export function useForgotPasswordController() {
 
     setResetting(true);
     try {
+      // newPassword itself is deliberately NOT logged (per §18/19's own
+      // "don't log PII/secrets" rule) — login/otp aren't secrets in the
+      // same way, so those log in full for debugging.
+      console.log('[Forgot Password] Sending reset request — POST /api/auth/reset-password:', {
+        login: login.trim(), otp: otp.trim(), newPassword: `<redacted, ${newPassword.length} chars>`,
+      });
       await resetPasswordWithOtp(login.trim(), otp.trim(), newPassword);
       setResetSuccess(true);
     } catch (error: any) {
@@ -93,21 +107,13 @@ export function useForgotPasswordController() {
     }
   }, [login, otp, newPassword, confirmPassword]);
 
-  const goBackToStep1 = useCallback(() => {
-    setStep(1);
-    setOtp('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setResetError('');
-  }, []);
-
   const goToLogin = useCallback(() => router.replace('/screens/login' as any), [router]);
 
   return {
     step, login, setLogin, otp, setOtp, newPassword, setNewPassword, confirmPassword, setConfirmPassword,
     showPasswords, setShowPasswords,
-    sendingOtp, sendOtpError, handleSendOtp, handleResendOtp,
+    sendingOtp, sendOtpError, resendSuccess, handleSendOtp, handleResendOtp,
     resetting, resetError, resetSuccess, handleResetPassword,
-    goBackToStep1, goToLogin,
+    goToLogin,
   };
 }

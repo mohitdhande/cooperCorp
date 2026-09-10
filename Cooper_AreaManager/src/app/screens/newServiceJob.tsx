@@ -5,13 +5,14 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import {
-  ChevronLeft, Bell,
+  ChevronLeft,
   ChevronDown, ChevronRight, Info, Zap, UserRoundCog, Plus,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useNewServiceJobController } from '../../controllers/newServiceJobController';
 import { computeDispatchType } from '../../controllers/createAssetCommissionController';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
+import { NotificationBellButton } from '../../_components/shared/NotificationBellButton';
 import { AssignEngineerModal, getAssigneeDisplayName } from '../../_components/shared/AssignEngineerModal';
 import { DispatchStatusBanner } from '../../_components/shared/DispatchStatusBanner';
 import { SearchBar } from '../../_components/shared/SearchBar';
@@ -381,9 +382,7 @@ export default function NewServiceJobScreen() {
             <ChevronLeft size={22} color="#979797" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>NEW SR</Text>
-          <View style={styles.headerButton}>
-            <Bell size={22} color="#979797" />
-          </View>
+          <NotificationBellButton />
         </View>
 
         <SearchBar

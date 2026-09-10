@@ -1,11 +1,12 @@
 import { Text } from "@/_components/AppText";
 import { TextInput } from "@/_components/AppTextInput";
 import {
-  Bell, CheckCheck,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   Info
 } from "lucide-react-native";
+import { NotificationBellButton } from "../../_components/shared/NotificationBellButton";
 import React, { useState, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
@@ -541,9 +542,7 @@ export default function TaskFormScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{vm.taskTypeLabel}</Text>
-        <View style={styles.headerButton}>
-          <Bell size={22} color="#979797" />
-        </View>
+        <NotificationBellButton />
       </View>
 
       <KeyboardAvoidingView

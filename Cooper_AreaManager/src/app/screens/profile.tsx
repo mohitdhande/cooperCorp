@@ -6,7 +6,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Constants from 'expo-constants';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, Bell, Camera, User, Mail, Phone, MapPin, Key, LogOut, ChevronRight, X, Eye, EyeOff } from 'lucide-react-native';
+import { ChevronLeft, Camera, User, Mail, Phone, MapPin, Key, LogOut, ChevronRight, X, Eye, EyeOff } from 'lucide-react-native';
+import { NotificationBellButton } from '../../_components/shared/NotificationBellButton';
 import { useProfileScreenController } from '../../controllers/profileController';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
@@ -145,9 +146,7 @@ export default function ProfileScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>PROFILE</Text>
-        <View style={styles.headerButton}>
-          <Bell size={22} color="#979797" />
-        </View>
+        <NotificationBellButton />
       </View>
 
       <ScrollView

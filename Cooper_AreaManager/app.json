@@ -3,7 +3,7 @@
     "name": "Cooper",
     "backgroundColor": "#11101C",
     "slug": "Cooper",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "orientation": "portrait",
     "icon": "./assets/app_icon.png",
     "scheme": "cooper",

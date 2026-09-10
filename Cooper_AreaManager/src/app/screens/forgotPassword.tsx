@@ -1,28 +1,32 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, KeyboardAvoidingView } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Eye, EyeOff, CheckCircle2 } from 'lucide-react-native';
+import { CheckCircle2, Eye, EyeOff } from 'lucide-react-native';
 import { useForgotPasswordController } from '../../controllers/forgotPasswordController';
 
-// Two-step Forgot Password flow — Step 1 (email/mobile -> Send OTP) matches
-// the reference design exactly (circular logo + brand header, light card on
-// a light background, indigo primary button). Step 2 (OTP + new password)
-// has no reference design of its own, so it's built to match Step 1's same
-// visual language instead of inventing a different look.
+// Two-step Forgot Password flow — both steps match the provided reference
+// designs exactly (circular logo + brand header, light card on a light
+// background, indigo primary button).
 export default function ForgotPasswordScreen() {
   const {
     step, login, setLogin, otp, setOtp, newPassword, setNewPassword, confirmPassword, setConfirmPassword,
     showPasswords, setShowPasswords,
-    sendingOtp, sendOtpError, handleSendOtp, handleResendOtp,
+    sendingOtp, sendOtpError, resendSuccess, handleSendOtp, handleResendOtp,
     resetting, resetError, resetSuccess, handleResetPassword,
-    goBackToStep1, goToLogin,
+    goToLogin,
   } = useForgotPasswordController();
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* 'padding' on both platforms, not 'undefined' on Android — that
+          relied on Android's own native pan (softwareKeyboardLayoutMode)
+          to shift the screen, which left this centered card's content
+          behind the keyboard instead of actually reducing the available
+          space for it to center within. Same fix already applied to the
+          OTP sheets (taskReport.tsx/srTaskReport.tsx). */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
@@ -79,15 +83,22 @@ export default function ForgotPasswordScreen() {
               </>
             ) : (
               <>
-                <Text style={styles.title}>Enter the code</Text>
-                <Text style={styles.description}>
-                  We sent a 6-digit code to {login}. It expires in 10 minutes.
-                </Text>
+                <Text style={styles.title}>Reset your password</Text>
+                <Text style={styles.description}>Enter the code we sent you, along with your new password.</Text>
 
-                <Text style={styles.label}>6-DIGIT CODE</Text>
+                {/* Echoes the backend's own intentionally generic response
+                    text (§ forgot-password never confirms whether the
+                    account exists) — showing it here as a persistent
+                    reminder rather than a one-off toast that could be
+                    missed. */}
+                <View style={styles.infoBanner}>
+                  <Text style={styles.infoBannerText}>If an account exists for that email/mobile, an OTP has been sent.</Text>
+                </View>
+
+                <Text style={styles.label}>OTP</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="000000"
+                  placeholder="6-digit code"
                   placeholderTextColor="#9CA3AF"
                   value={otp}
                   onChangeText={(v) => setOtp(v.replace(/[^0-9]/g, '').slice(0, 6))}
@@ -104,7 +115,7 @@ export default function ForgotPasswordScreen() {
                   autoCapitalize="none"
                 />
 
-                <Text style={[styles.label, { marginTop: 16 }]}>CONFIRM NEW PASSWORD</Text>
+                <Text style={[styles.label, { marginTop: 16 }]}>CONFIRM PASSWORD</Text>
                 <TextInput
                   style={styles.input}
                   secureTextEntry={!showPasswords}
@@ -129,11 +140,15 @@ export default function ForgotPasswordScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.backLink} onPress={handleResendOtp} disabled={sendingOtp}>
-                  <Text style={styles.backLinkText}>{sendingOtp ? 'Resending…' : 'Resend code'}</Text>
+                  <Text style={styles.backLinkText}>{sendingOtp ? 'Resending…' : "Didn't get a code? Send again"}</Text>
                 </TouchableOpacity>
+                {!!sendOtpError && <Text style={[styles.errorText, { textAlign: 'center' }]}>{sendOtpError}</Text>}
+                {resendSuccess && !sendOtpError && (
+                  <Text style={styles.resendSuccessText}>A new code has been sent.</Text>
+                )}
 
-                <TouchableOpacity style={styles.backLink} onPress={goBackToStep1}>
-                  <Text style={styles.backLinkText}>Back</Text>
+                <TouchableOpacity style={styles.backLink} onPress={goToLogin}>
+                  <Text style={styles.backLinkText}>Back to sign in</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -175,6 +190,13 @@ const styles = StyleSheet.create({
     height: 50,
   },
   errorText: { color: '#DC2626', fontSize: 13, fontWeight: '600', marginTop: 12 },
+  resendSuccessText: { color: '#15803D', fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' },
+  infoBanner: {
+    backgroundColor: '#ECFDF5', borderRadius: 14,
+    paddingVertical: 12, paddingHorizontal: 14,
+    marginBottom: 20,
+  },
+  infoBannerText: { color: '#15803D', fontSize: 13, fontWeight: '500', lineHeight: 18 },
   primaryButton: {
     width: '100%', height: 54, borderRadius: 100,
     backgroundColor: '#4F46E5',

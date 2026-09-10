@@ -3,9 +3,10 @@ import { View, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, useWind
 import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { ChevronLeft, Bell, Wrench, Clock, CheckCircle2, XCircle } from 'lucide-react-native';
+import { ChevronLeft, Wrench, Clock, CheckCircle2, XCircle } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useSrApprovalsController } from '../../controllers/srApprovalsController';
+import { NotificationBellButton } from '../../_components/shared/NotificationBellButton';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 import { SearchBar } from '../../_components/shared/SearchBar';
@@ -77,9 +78,7 @@ export default function SrApprovalsScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>SR APPROVALS</Text>
-        <View style={styles.headerButton}>
-          <Bell size={22} color="#979797" />
-        </View>
+        <NotificationBellButton />
       </View>
 
       <View style={[styles.scopeToggle, { marginHorizontal: hPad }]}>

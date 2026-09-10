@@ -6,6 +6,7 @@ import { LoginRequest, UserProfile } from '../models/Login';
 import { parseApiError, formatRetryAfter, formatCountdown } from '../utils/apiError';
 import { getPermissions } from '../constants/permissions';
 import { useTeam } from '../context/TeamContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { saveTokens } from '../utils/tokenStore';
 import { registerPushToken } from '../utils/pushNotifications';
 
@@ -40,6 +41,7 @@ export async function persistAuthSession(token: string, refreshToken: string, pr
 export function useLoginController() {
   const router = useRouter();
   const { refresh: refreshTeam } = useTeam();
+  const { refreshUnreadCount } = useNotifications();
   const params = useLocalSearchParams<{ sessionMessage?: string }>();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -116,6 +118,10 @@ export function useLoginController() {
       // there's nothing here to await or handle; this was previously
       // defined but never actually called anywhere in the app.
       registerPushToken();
+      // NotificationsProvider's own mount effect ran before login (no token
+      // yet, so it settled on 0) — refresh it now that a real session
+      // exists.
+      refreshUnreadCount();
 
       // Destination depends on role: engineer/dealer/areaManager land on the
       // shared jobCards screen (which self-gates by role); admin lands on home.
@@ -129,7 +135,7 @@ export function useLoginController() {
     } finally {
       setLoading(false);
     }
-  }, [password, router, username, refreshTeam, lockoutSecondsLeft]);
+  }, [password, router, username, refreshTeam, refreshUnreadCount, lockoutSecondsLeft]);
 
   const togglePasswordVisibility = useCallback(() => {
     setShowPassword(prev => !prev);

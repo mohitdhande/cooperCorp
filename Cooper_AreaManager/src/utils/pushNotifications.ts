@@ -53,11 +53,22 @@ export async function registerPushToken(): Promise<void> {
     }
     if (status !== 'granted') return;
 
-    const pushToken = (await Notifications.getExpoPushTokenAsync()).data;
+    // getDevicePushTokenAsync (NOT getExpoPushTokenAsync) — the backend
+    // sends via the raw Firebase Admin SDK (getMessaging().
+    // sendEachForMulticast()) directly, not through Expo's own push-relay
+    // service, so it needs the real native FCM token. getExpoPushTokenAsync
+    // returns an Expo-wrapped "ExponentPushToken[...]" string instead, which
+    // the backend silently rejects — this app stays on expo-notifications
+    // (it's Expo-managed, not bare RN), just asks it for the raw platform
+    // token instead of Expo's own wrapped one. No EAS projectId needed for
+    // this call, unlike getExpoPushTokenAsync.
+    const devicePushToken = await Notifications.getDevicePushTokenAsync();
+    const pushToken = devicePushToken.data;
     // Logged on success too, not just failure — this is the value needed to
-    // send a manual test push (via expo.dev/notifications) without waiting
-    // on any backend send-side logic to exist first.
-    console.log('[Push Notifications] Got Expo push token:', pushToken);
+    // send a manual test push (Firebase Console → Cloud Messaging → Send
+    // test message with this raw token) without waiting on any backend
+    // send-side logic to exist first.
+    console.log('[Push Notifications] Got device push token:', pushToken);
     const deviceId = await getOrCreateDeviceId();
     await registerDeviceToken(authToken, pushToken, deviceId, Platform.OS);
   } catch (error) {

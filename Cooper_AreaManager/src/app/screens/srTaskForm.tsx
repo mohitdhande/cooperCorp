@@ -4,7 +4,8 @@ import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
-import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
+import { AlertTriangle, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
+import { NotificationBellButton } from '../../_components/shared/NotificationBellButton';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
 import { SelfieCard } from '../../_components/shared/SelfieCard';
@@ -278,9 +279,7 @@ export default function SrTaskFormScreen() {
               <ChevronLeft size={22} color="#979797" />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>SERVICE</Text>
-            <View style={styles.headerButton}>
-              <Bell size={22} color="#979797" />
-            </View>
+            <NotificationBellButton />
           </View>
 
           <StepperRow
