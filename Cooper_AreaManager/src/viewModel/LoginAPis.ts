@@ -12,6 +12,35 @@ export const loginApi = async (data: LoginRequest) => {
   }
 };
 
+// No auth required — `login` accepts an email, username, or mobile number
+// in the same field. Always returns the same generic message whether or
+// not the account exists (by design, to avoid leaking which logins are
+// real) — never branch UI logic on this response, just move to the
+// OTP-entry step regardless.
+export const forgotPassword = async (login: string) => {
+  try {
+    const response = await axiosClient.post('/api/auth/forgot-password', { login });
+    return response.data; // { message: string }
+  } catch (error: any) {
+    console.log('Forgot Password Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Completes the forgot-password flow — same `login` value used to request
+// the OTP, plus the 6-digit code and the new password. Requesting a new OTP
+// (calling forgotPassword again) invalidates any earlier unused one, so
+// only the most recently sent code is ever valid.
+export const resetPasswordWithOtp = async (login: string, otp: string, newPassword: string) => {
+  try {
+    const response = await axiosClient.post('/api/auth/reset-password', { login, otp, newPassword });
+    return response.data; // { message: string }
+  } catch (error: any) {
+    console.log('Reset Password Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
 // Revokes the refresh token server-side — best-effort on the caller's
 // side (logout should still clear local session state even if this fails,
 // e.g. no network), but this is what actually invalidates it so a copy of
@@ -25,6 +54,29 @@ export const logoutApi = async (token: string, refreshToken: string) => {
     );
   } catch (error: any) {
     console.log('Logout API Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Self-service — the logged-in user changing their OWN password, hence
+// requiring currentPassword (unlike changePassword() below, which is the
+// admin/manager-resets-someone-else's-password endpoint and takes no
+// current password at all). Server enforces min 6 chars and rejects reuse
+// of any of the user's last 5 passwords (VALIDATION_ERROR), and rejects a
+// wrong currentPassword with INVALID_CREDENTIALS — this call just surfaces
+// whichever the server returns. A successful call also triggers the
+// server's own "Your password was changed" email + in-app notification —
+// no separate client-side confirmation toast needed on top of that.
+export const changeOwnPassword = async (token: string, currentPassword: string, newPassword: string) => {
+  try {
+    const response = await axiosClient.put(
+      '/api/auth/change-password',
+      { currentPassword, newPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  } catch (error: any) {
+    console.log('Change Own Password Error:', error.response?.data || error.message);
     throw error;
   }
 };

@@ -1262,6 +1262,14 @@ export function useTaskForm() {
   // to the View Report screen, which now owns the OTP verification step
   // (its own "Verify Client OTP" footer).
   const handleCompletePhotosStep = useCallback(async () => {
+    // Selfie is a hard requirement, checked client-side before anything
+    // else (no location check, no API call) — see SelfieCard's own comment
+    // for why this is enforced here rather than left to the backend.
+    if (!photos.selfiePhoto) {
+      Alert.alert('Selfie required', 'Please take a selfie before completing this task.');
+      return;
+    }
+
     const completeOk = await otp.handleMarkComplete(suggestionComment);
     if (!completeOk) return;
 
@@ -1269,7 +1277,7 @@ export function useTaskForm() {
       pathname: '/screens/taskReport',
       params: { task: JSON.stringify({ _id: taskId, assetId }) },
     } as any);
-  }, [otp, taskId, assetId, router, suggestionComment]);
+  }, [otp, taskId, assetId, router, suggestionComment, photos.selfiePhoto]);
 
   // ── Profile (for the shared AppBar) ──
   const [userName, setUserName] = useState('');
@@ -1381,9 +1389,12 @@ export function useTaskForm() {
     handleChooseRunningHoursPhotos: photos.handleChooseRunningHoursPhotos,
     handleRemoveRunningHoursPhoto: photos.handleRemoveRunningHoursPhoto,
     handleUpdateMediaTag: photos.handleUpdateMediaTag,
+    selfiePhoto: photos.selfiePhoto, handleTakeSelfie: photos.handleTakeSelfie,
     // Real-time upload state/controls for MediaUploadOverlay — one queue
-    // per list (Step 2 running-hours, Step 6 site), see useMediaUploadQueue.
+    // per list (Step 2 running-hours, Step 6 site, Step 6 selfie), see
+    // useMediaUploadQueue.
     siteUploadQueue: photos.siteQueue, runningHoursUploadQueue: photos.runningHoursQueue,
+    selfieUploadQueue: photos.selfieQueue,
     markCompleteLoading: otp.markCompleteLoading, markCompleteError: otp.markCompleteError,
     suggestionComment, setSuggestionComment,
     handleCompletePhotosStep,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, useWindowDimensions, ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, Platform, Alert, Keyboard } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, useWindowDimensions, ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, Platform, Keyboard } from 'react-native';
 import { TextInput } from '@/_components/AppTextInput';
 import { Text } from '@/_components/AppText';
 import Animated, {
@@ -7,6 +7,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Eye, EyeOff } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useLoginController } from '../controllers/authController';
 import { LOGIN_LOGO_SIZE } from '@/constants/branding';
 import { LoadingOverlay } from '@/_components/shared/LoadingOverlay';
@@ -58,11 +59,10 @@ export function LoginContent({ skipInitialHold = false }: Props) {
   } = useLoginController();
 
   const { register, focusNext } = useFieldFocusChain();
+  const router = useRouter();
 
-  // No forgot-password flow exists yet — surface that explicitly instead of
-  // leaving the tap silently do nothing (which reads as the app being stuck).
   const handleForgotPassword = () => {
-    Alert.alert('Forgot Password', 'Please contact your admin to reset your password.');
+    router.push('/screens/forgotPassword' as any);
   };
 
   // Centered by default (matches the rest of the screen's resting look),

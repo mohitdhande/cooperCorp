@@ -22,8 +22,8 @@ export type PendingMediaItem = {
   formKind: 'commissioning' | 'service';
   taskId: string;
   // Which local list this lands in once uploaded — mirrors
-  // useTaskFormPhotos.ts's two lists; the SR form only ever uses 'site'.
-  target: 'site' | 'runningHours';
+  // useTaskFormPhotos.ts's lists (both forms use all three).
+  target: 'site' | 'runningHours' | 'selfie';
   mediaKind: 'photo' | 'video' | 'pdf';
   // Camera vs. gallery/file-picker — needed to resolve the correct
   // MediaType (photo vs image) when this item finally replays through

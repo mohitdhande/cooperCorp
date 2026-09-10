@@ -451,17 +451,16 @@ export const startServiceTask = async (token: string, taskId: string) => {
 };
 
 // Closes an APPROVED/fully-confirmed entry — the final step once the work
-// approval chain reaches CONFIRMED and the customer OTP is verified.
-// `comment` is optional — the OTP sheet's own Step 3 (Customer Remark)
-// passes it here directly when the task is already close-eligible at that
-// point, instead of a separate PUT /:id/feedback call. Nested under
-// customerFeedback (not a bare `comment` key) per the confirmed backend
-// contract for this endpoint specifically.
-export const closeServiceTask = async (token: string, taskId: string, comment?: string) => {
+// approval chain reaches CONFIRMED and the customer OTP is verified. Just a
+// plain status transition — the customer remark/rating now goes through
+// saveServiceFeedback (PUT /:id/feedback) directly at Step 3's own Save
+// action, not bundled in here (that was only ever a workaround for
+// /:id/feedback not existing yet).
+export const closeServiceTask = async (token: string, taskId: string) => {
   try {
     const response = await axiosClient.put(
       `/api/service/${taskId}/close`,
-      comment ? { customerFeedback: { comment } } : {},
+      {},
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;
@@ -698,6 +697,29 @@ export const saveCommissioningFeedback = async (
     return response.data;
   } catch (error: any) {
     console.log('Save Commissioning Feedback Error:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// Service's own equivalent — added to the backend this session
+// (ServiceEntryService.feedback()), mirroring Commissioning's endpoint
+// exactly: merges into the existing customerFeedback, no status
+// restriction. Replaces the earlier AsyncStorage-hold-until-close
+// workaround this screen used while no such endpoint existed for Service.
+export const saveServiceFeedback = async (
+  token: string,
+  taskId: string,
+  data: { comment?: string; customerName?: string; rating?: number }
+) => {
+  try {
+    const response = await axiosClient.put(
+      `/api/service/${taskId}/feedback`,
+      data,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  } catch (error: any) {
+    console.log('Save Service Feedback Error:', error.response?.data || error.message);
     throw error;
   }
 };

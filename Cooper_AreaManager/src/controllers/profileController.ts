@@ -5,7 +5,8 @@ import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Alert } from 'react-native';
-import { uploadProfilePic, removeProfilePic, getMyProfile, logoutApi } from '../viewModel/LoginAPis';
+import { uploadProfilePic, removeProfilePic, getMyProfile, logoutApi, changeOwnPassword } from '../viewModel/LoginAPis';
+import { unregisterPushToken } from '../utils/pushNotifications';
 import { showCameraUnavailableAlert } from '../utils/cameraErrorAlert';
 import { UserProfile } from '../models/Login';
 import { MyProfileResponse } from '../models/profile.types';
@@ -31,10 +32,11 @@ async function resizeToProfilePhotoSize(uri: string): Promise<string> {
   }
 }
 
-// Handles profile loading, photo upload/removal, and logout behavior for
-// the profile screen. Change Password is deliberately not handled here —
-// PUT /api/users/:id/password is manager-resets-subordinate only (see
-// teamMemberDetailController.ts), there's no self-service endpoint.
+// Handles profile loading, photo upload/removal, Change Password, and
+// logout behavior for the profile screen. Change Password here is the
+// self-service PUT /api/auth/change-password (requires currentPassword) —
+// distinct from PUT /api/users/:id/password, which is manager-resets-
+// subordinate only (see teamMemberDetailController.ts) and never used here.
 export function useProfileScreenController() {
   const router = useRouter();
   const [optionsVisible, setOptionsVisible] = useState(false);
@@ -107,6 +109,10 @@ export function useProfileScreenController() {
                 getToken(),
                 getRefreshToken(),
               ]);
+              // Unregister this device's push token before revoking the
+              // session (per unregisterPushToken's own comment) — it's
+              // best-effort and never throws, so it can't block logout.
+              if (token) await unregisterPushToken(token);
               if (token && refreshToken) await logoutApi(token, refreshToken);
             } catch (error) {
               console.log('[Profile] Logout API call failed (clearing session locally anyway):', error);
@@ -262,6 +268,62 @@ export function useProfileScreenController() {
     );
   }, [profile]);
 
+  // ── Change Password (self-service, PUT /api/auth/change-password) ──
+  const [changePasswordVisible, setChangePasswordVisible] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
+
+  // Fresh every time the sheet opens — no leftover text/error from a
+  // previous attempt.
+  const openChangePassword = useCallback(() => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowPasswords(false);
+    setChangePasswordError('');
+    setChangePasswordVisible(true);
+  }, []);
+  const closeChangePassword = useCallback(() => setChangePasswordVisible(false), []);
+
+  const handleUpdatePassword = useCallback(async () => {
+    setChangePasswordError('');
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setChangePasswordError('Please fill in all three fields.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setChangePasswordError('New password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError('New password and confirmation do not match.');
+      return;
+    }
+
+    setChangePasswordSaving(true);
+    try {
+      const token = await getToken();
+      if (!token) {
+        Alert.alert('Error', 'Session expired. Please login again.');
+        return;
+      }
+      await changeOwnPassword(token, currentPassword, newPassword);
+      // No client-side "password changed" confirmation toast — the server
+      // already sends an email + in-app notification for this. Just close
+      // the sheet.
+      setChangePasswordVisible(false);
+    } catch (error: any) {
+      const { message } = parseApiError(error, 'Failed to update password. Please try again.');
+      setChangePasswordError(message);
+    } finally {
+      setChangePasswordSaving(false);
+    }
+  }, [currentPassword, newPassword, confirmPassword]);
+
   return {
     optionsVisible,
     setOptionsVisible,
@@ -275,5 +337,12 @@ export function useProfileScreenController() {
     handleChooseGallery,
     handleRemovePhoto,
     refreshProfile: loadProfile,
+    changePasswordVisible, openChangePassword, closeChangePassword,
+    currentPassword, setCurrentPassword,
+    newPassword, setNewPassword,
+    confirmPassword, setConfirmPassword,
+    showPasswords, setShowPasswords,
+    changePasswordSaving, changePasswordError,
+    handleUpdatePassword,
   };
 }

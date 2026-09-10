@@ -7,6 +7,7 @@ import { parseApiError, formatRetryAfter, formatCountdown } from '../utils/apiEr
 import { getPermissions } from '../constants/permissions';
 import { useTeam } from '../context/TeamContext';
 import { saveTokens } from '../utils/tokenStore';
+import { registerPushToken } from '../utils/pushNotifications';
 
 // Maps API/network errors to a short, user-facing message.
 export function getLoginErrorMessage(error: any): string {
@@ -110,6 +111,11 @@ export function useLoginController() {
       // already warm by the time the user reaches a screen that needs it,
       // rather than waiting for that screen's own mount to kick it off.
       refreshTeam();
+      // Also fire-and-forget — registerPushToken already no-ops silently on
+      // every failure path (no permission, Expo Go, no device, etc.), so
+      // there's nothing here to await or handle; this was previously
+      // defined but never actually called anywhere in the app.
+      registerPushToken();
 
       // Destination depends on role: engineer/dealer/areaManager land on the
       // shared jobCards screen (which self-gates by role); admin lands on home.

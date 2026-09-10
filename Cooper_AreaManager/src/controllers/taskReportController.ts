@@ -196,8 +196,14 @@ export function useTaskReportController(initialTask: any) {
   // shape as before this migration — only how they're derived changed.
   const media: { type: string; gcsUrl: string; tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }[] = task?.media || [];
   const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
-  const siteMedia = media.filter((m) => !isRunningHours(m));
+  const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
+  const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
   const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
+  // Retaking a selfie replaces it locally but never deletes the earlier
+  // upload from the backend's own media[] array, so the most recently
+  // uploaded 'Selfie'-tagged item (last match) is the one that matters —
+  // same note as useTaskFormPhotos.ts's own hydrateSitePhotos.
+  const selfiePhotoUrl = [...media].reverse().find((m) => isSelfie(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
 
   const photos = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
   const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
@@ -223,7 +229,7 @@ export function useTaskReportController(initialTask: any) {
   // instead (below), not up front.
   const [signedPhotoUrls, setSignedPhotoUrls] = useState<Record<string, string>>({});
   const [photosSigning, setPhotosSigning] = useState(false);
-  const photosToSign = runningHoursPhotoUrl ? [...photos, runningHoursPhotoUrl] : photos;
+  const photosToSign = [...photos, ...(runningHoursPhotoUrl ? [runningHoursPhotoUrl] : []), ...(selfiePhotoUrl ? [selfiePhotoUrl] : [])];
   const photosKey = JSON.stringify(photosToSign);
 
   useEffect(() => {
@@ -391,6 +397,7 @@ export function useTaskReportController(initialTask: any) {
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [remark, setRemark] = useState('');
+  const [rating, setRating] = useState(0);
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkError, setRemarkError] = useState('');
 
@@ -404,6 +411,7 @@ export function useTaskReportController(initialTask: any) {
     setCustomerOtp(['', '', '', '']);
     setOtpError('');
     setRemark('');
+    setRating(0);
     setRemarkError('');
   }, []);
 
@@ -500,7 +508,12 @@ export function useTaskReportController(initialTask: any) {
       const token = await getToken();
       if (!token || !initialTask?._id) return;
       const trimmed = remark.trim();
-      if (trimmed) await saveCommissioningFeedback(token, initialTask._id, { comment: trimmed });
+      if (trimmed || rating > 0) {
+        await saveCommissioningFeedback(token, initialTask._id, {
+          ...(trimmed ? { comment: trimmed } : {}),
+          ...(rating > 0 ? { rating } : {}),
+        });
+      }
       setOtpSheetOpen(false);
       await fetchDetail();
     } catch (error: any) {
@@ -508,7 +521,7 @@ export function useTaskReportController(initialTask: any) {
     } finally {
       setRemarkSaving(false);
     }
-  }, [remark, initialTask?._id, fetchDetail]);
+  }, [remark, rating, initialTask?._id, fetchDetail]);
 
   // otpVerified mirrors srTaskReportController.ts's own derivation exactly
   // (status already moved past the OTP gate, OR completionOtp.verified is
@@ -551,7 +564,7 @@ export function useTaskReportController(initialTask: any) {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
     detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
-    runningHoursPhotoUrl, mediaMeta,
+    runningHoursPhotoUrl, selfiePhotoUrl, mediaMeta,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
@@ -563,6 +576,6 @@ export function useTaskReportController(initialTask: any) {
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
     handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
-    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
+    remark, setRemark, rating, setRating, remarkSaving, remarkError, handleSaveRemark,
   };
 }

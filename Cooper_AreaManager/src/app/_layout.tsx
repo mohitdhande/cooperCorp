@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { runSync } from '../utils/syncEngine';
 import { runMediaSync } from '../utils/mediaSyncEngine';
+import { registerPushToken } from '../utils/pushNotifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -45,14 +46,24 @@ export default function RootLayout() {
   // piggybacks on AppState + a plain setInterval, needing neither. A
   // network error inside runSync is expected and silent — it just means
   // still offline, try again next tick.
+  // registerPushToken piggybacks on this same mount/foreground timing (its
+  // own comment already described this as the intended call site) — it
+  // no-ops silently and instantly if not logged in (getToken() returns
+  // null), same as runSync/runMediaSync effectively do, so it's safe to
+  // call unconditionally here regardless of auth state. Not added to the
+  // 20s interval below — re-registering that often is unnecessary (the
+  // token doesn't change that fast) even though the backend treats a
+  // repeat registration as a harmless no-op.
   const appState = useRef(AppState.currentState);
   useEffect(() => {
     runSync();
     runMediaSync();
+    registerPushToken();
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (appState.current.match(/inactive|background/) && nextState === 'active') {
         runSync();
         runMediaSync();
+        registerPushToken();
       }
       appState.current = nextState;
     });
@@ -83,6 +94,7 @@ export default function RootLayout() {
         <Stack screenOptions={{ contentStyle: { backgroundColor: '#F5F7FA' }, animation: 'none' }}>
           <Stack.Screen name="index" options={{ headerShown: false, contentStyle: { backgroundColor: '#11101C' } }} />
           <Stack.Screen name="screens/login" options={{ headerShown: false, contentStyle: { backgroundColor: '#11101C' } }} />
+          <Stack.Screen name="screens/forgotPassword" options={{ headerShown: false }} />
           <Stack.Screen name="screens/dashboard" options={{ headerShown: false }} />
           <Stack.Screen name="screens/commissioningTasks" options={{ headerShown: false }} />
           <Stack.Screen name="screens/serviceTasks" options={{ headerShown: false }} />

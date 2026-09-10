@@ -6,7 +6,7 @@ import { getToken } from '../utils/tokenStore';
 import { UserProfile } from '../models/Login';
 import {
   getServiceTaskById, getAssetById, getGcsSignedUrl, getGcsSignedUrls, closeServiceTask,
-  generateServiceOtp, verifyServiceOtp,
+  generateServiceOtp, verifyServiceOtp, saveServiceFeedback,
 } from '../viewModel/commisionAPi';
 import { parseApiError } from '../utils/apiError';
 import { cacheData, getCachedData } from '../utils/offlineCache';
@@ -203,8 +203,14 @@ export function useSrTaskReportController(initialTask: any) {
   // comment in taskReportController.ts.
   const media: { type: string; gcsUrl: string; tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }[] = task?.media || [];
   const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
-  const siteMedia = media.filter((m) => !isRunningHours(m));
+  const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
+  const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
   const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
+  // Retaking a selfie replaces it locally but never deletes the earlier
+  // upload from the backend's own media[] array, so the most recently
+  // uploaded 'Selfie'-tagged item (last match) is the one that matters —
+  // same note as useSrTaskForm.ts's own hydrateSitePhotos.
+  const selfiePhotoUrl = [...media].reverse().find((m) => isSelfie(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
 
   const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
   const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
@@ -254,8 +260,8 @@ export function useSrTaskReportController(initialTask: any) {
   const [photosSigning, setPhotosSigning] = useState(false);
   const photoUrls = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
   // Signed in the same batch as the general gallery (below) so the
-  // Running Hours section's own thumbnail resolves too.
-  const photosToSign = runningHoursPhotoUrl ? [...photoUrls, runningHoursPhotoUrl] : photoUrls;
+  // Running Hours/Selfie sections' own thumbnails resolve too.
+  const photosToSign = [...photoUrls, ...(runningHoursPhotoUrl ? [runningHoursPhotoUrl] : []), ...(selfiePhotoUrl ? [selfiePhotoUrl] : [])];
   const photosKey = JSON.stringify(photosToSign);
 
   useEffect(() => {
@@ -298,14 +304,11 @@ export function useSrTaskReportController(initialTask: any) {
     try {
       const token = await getToken();
       if (!token || !initialTask?._id) return;
-      // The customer remark was typed and "Saved" earlier (see
-      // handleSaveRemark below) but never actually sent to the server —
-      // there's no standalone endpoint for it, only this /close call
-      // accepts customerFeedback, so it rides along with the real close
-      // now that it's actually allowed to happen.
-      const savedRemark = (await AsyncStorage.getItem(remarkStorageKey(initialTask._id)))?.trim();
-      await closeServiceTask(token, initialTask._id, savedRemark || undefined);
-      await AsyncStorage.removeItem(remarkStorageKey(initialTask._id));
+      // The customer remark/rating are already saved server-side by the
+      // time this is tappable (Step 3's own Save hits saveServiceFeedback
+      // directly — see handleSaveRemark below) — this is just the plain
+      // status transition.
+      await closeServiceTask(token, initialTask._id);
       await fetchDetail();
     } catch (error: any) {
       setCloseTicketError(parseApiError(error, 'Failed to close this ticket. Please try again.').message);
@@ -399,17 +402,6 @@ export function useSrTaskReportController(initialTask: any) {
   // also clearing (canCloseTicket above).
   const isOtpPending = task?.status === 'COMPLETED' && !task?.completionOtp?.verified;
 
-  // Step 3's "Save" only saves the remark text locally (see handleSaveRemark
-  // below) — there's no standalone "just save the remark" endpoint on the
-  // backend (PUT /:id/feedback 404s for service tasks), only PUT /:id/close
-  // accepts customerFeedback, and that requires every close gate to already
-  // be clear. So the remark is held here — persisted to AsyncStorage, not
-  // just component state, so it survives leaving/reopening this screen
-  // while waiting on AM/RSM approval — until Close Ticket is actually
-  // pressed and eligible, at which point handleCloseTicket sends it along
-  // with the real close.
-  const remarkStorageKey = (id: string) => `sr_pending_remark_${id}`;
-
   const [otpSheetOpen, setOtpSheetOpen] = useState(false);
   const [otpStep, setOtpStep] = useState<1 | 2 | 3>(1);
   const [otpGenerated, setOtpGenerated] = useState(false);
@@ -419,18 +411,9 @@ export function useSrTaskReportController(initialTask: any) {
   const [otpError, setOtpError] = useState('');
   const otpInputRefs = useRef<Array<TextInput | null>>([null, null, null, null]);
   const [remark, setRemark] = useState('');
+  const [rating, setRating] = useState(0);
   const [remarkSaving, setRemarkSaving] = useState(false);
   const [remarkError, setRemarkError] = useState('');
-
-  // Restores a remark that was typed and "Saved" in an earlier sitting on
-  // this same task, before Close Ticket was actually pressed/eligible.
-  useEffect(() => {
-    if (!initialTask?._id) return;
-    AsyncStorage.getItem(remarkStorageKey(initialTask._id))
-      .then((saved) => { if (saved) setRemark(saved); })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTask?._id]);
 
   const openOtpSheet = useCallback(() => {
     setOtpSheetOpen(true);
@@ -440,6 +423,7 @@ export function useSrTaskReportController(initialTask: any) {
     setCustomerOtp(['', '', '', '']);
     setOtpError('');
     setRemark('');
+    setRating(0);
     setRemarkError('');
   }, []);
 
@@ -519,32 +503,35 @@ export function useSrTaskReportController(initialTask: any) {
     }
   }, [customerOtp, initialTask?._id, fetchDetail]);
 
-  // Save-only now — no longer also closes the ticket. Just persists the
-  // remark text locally (see remarkStorageKey's own comment above for why
-  // it can't hit a real endpoint yet) and drops back to the report screen;
-  // Close Ticket is its own separate action below, gated on
-  // parts/work approval clearing (canCloseTicket), same as before. No
-  // partsDone/workDone check needed here anymore — saving the remark isn't
-  // an attempt to close, so it always succeeds regardless of approval
-  // status.
+  // Save-only — doesn't close the ticket. Hits the real PUT /:id/feedback
+  // endpoint directly (added to the backend this session, mirroring
+  // Commissioning's own saveCommissioningFeedback exactly — no more
+  // AsyncStorage workaround). Close Ticket is its own separate action
+  // below, gated on parts/work approval clearing (canCloseTicket), same as
+  // before. No partsDone/workDone check needed here — saving feedback
+  // isn't an attempt to close, so it always succeeds regardless of
+  // approval status.
   const handleSaveRemark = useCallback(async () => {
     setRemarkSaving(true);
     setRemarkError('');
     try {
-      if (!initialTask?._id) return;
+      const token = await getToken();
+      if (!token || !initialTask?._id) return;
       const trimmed = remark.trim();
-      if (trimmed) {
-        await AsyncStorage.setItem(remarkStorageKey(initialTask._id), trimmed);
-      } else {
-        await AsyncStorage.removeItem(remarkStorageKey(initialTask._id));
+      if (trimmed || rating > 0) {
+        await saveServiceFeedback(token, initialTask._id, {
+          ...(trimmed ? { comment: trimmed } : {}),
+          ...(rating > 0 ? { rating } : {}),
+        });
       }
       setOtpSheetOpen(false);
+      await fetchDetail();
     } catch (error: any) {
       setRemarkError(parseApiError(error, 'Failed to save. Please try again.').message);
     } finally {
       setRemarkSaving(false);
     }
-  }, [remark, initialTask?._id]);
+  }, [remark, rating, initialTask?._id, fetchDetail]);
 
   return {
     task, asset: asset || {}, isLoading, refreshing, onRefresh, profile,
@@ -552,7 +539,7 @@ export function useSrTaskReportController(initialTask: any) {
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     photos: photoUrls, signedPhotoUrls, photosSigning, mediaMeta,
-    runningHoursPhotoUrl,
+    runningHoursPhotoUrl, selfiePhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     downloadingReport, downloadReportError, handleDownloadReport,
     generatingReport, handleGenerateReport,
@@ -563,6 +550,6 @@ export function useSrTaskReportController(initialTask: any) {
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
     handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
-    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
+    remark, setRemark, rating, setRating, remarkSaving, remarkError, handleSaveRemark,
   };
 }

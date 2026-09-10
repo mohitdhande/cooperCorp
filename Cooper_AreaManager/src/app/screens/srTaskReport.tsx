@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert, KeyboardAvoidingView } from 'react-native';
 // expo-image (not RN's own Image) for these report photo thumbnails —
 // disk-caches by URL, so reopening a report or scrolling back to a photo
 // you've already loaded doesn't re-download the same signed GCS URL again.
@@ -27,7 +27,6 @@ import {
 } from '../../utils/reportFormatters';
 import { SERVICE_CATEGORIES } from '../../_components/srTaskForm/srDropdownOptions';
 import { safeJsonParse } from '../../utils/safeJsonParse';
-import { useKeyboardHeight } from '../../utils/useKeyboardHeight';
 
 const REF_WIDTH = 420;
 
@@ -119,8 +118,8 @@ function OtpStepper({ step }: { step: 1 | 2 | 3 }) {
 // commissioning: Generate OTP -> Customer Enters OTP -> Customer Remark.
 function VerifyOtpSheet({
   visible, step, contactNumber, otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
-  remark, remarkSaving, remarkError,
-  onClose, onGenerate, onRegenerate, onChangeDigit, onVerify, onChangeRemark, onSaveRemark,
+  remark, remarkSaving, remarkError, rating,
+  onClose, onGenerate, onRegenerate, onChangeDigit, onVerify, onChangeRemark, onSaveRemark, onChangeRating,
 }: {
   visible: boolean;
   step: 1 | 2 | 3;
@@ -134,6 +133,7 @@ function VerifyOtpSheet({
   remark: string;
   remarkSaving: boolean;
   remarkError: string;
+  rating: number;
   onClose: () => void;
   onGenerate: () => void;
   onRegenerate: () => void;
@@ -141,10 +141,8 @@ function VerifyOtpSheet({
   onVerify: () => void;
   onChangeRemark: (text: string) => void;
   onSaveRemark: () => void;
+  onChangeRating: (rating: number) => void;
 }) {
-  const { height } = useWindowDimensions();
-  const kbHeight = useKeyboardHeight();
-
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       {/* Dismissible by tap-outside/X/back at every step, including step 3
@@ -154,14 +152,20 @@ function VerifyOtpSheet({
           exit on the assumption Save & Close would always succeed, but it
           can legitimately fail (e.g. parts still pending AM review) and
           that left the sheet with no way out at all. */}
+      {/* RN's Modal window doesn't pan/resize for the keyboard on either
+          platform on its own — KeyboardAvoidingView here does that for
+          real (shrinking this container's own height as the keyboard
+          opens/closes), instead of the previous hand-computed
+          kbHeight-based padding/maxHeight math, which could drift out of
+          sync with the real keyboard height and leave a large gap above
+          it. */}
+      {/* 'padding' on both platforms, not 'height' on Android — 'height'
+          left the sheet's own bottom edge (the Verify/Save button) still
+          extending slightly behind the keyboard on some Android devices
+          instead of fully clearing it. */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <Pressable style={styles.otpModalOverlay} onPress={onClose}>
-        {/* RN's Modal window doesn't pan/resize for the keyboard on either
-            platform, so lift the sheet ourselves: pad its bottom by the
-            live keyboard height and cap the scroll area to the space left
-            above the keyboard. That keeps the remark field and every
-            action button (Generate / Verify / Save) fully visible, not
-            just partially. */}
-        <Pressable style={[styles.otpSheet, { paddingBottom: 32 + kbHeight }]} onPress={(e) => e.stopPropagation()}>
+        <Pressable style={[styles.otpSheet, { maxHeight: '90%' }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.otpSheetHandle} />
           <View style={styles.otpSheetHeaderRow}>
             <View>
@@ -175,7 +179,7 @@ function VerifyOtpSheet({
 
           <OtpStepper step={step} />
 
-          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: kbHeight > 0 ? Math.max(150, height - kbHeight - 220) : 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+          <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
             {step === 1 && (
               <View style={styles.otpStepCard}>
                 <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
@@ -263,14 +267,24 @@ function VerifyOtpSheet({
 
                 <View style={[styles.otpStepCard, { marginTop: 16 }]}>
                   <Text style={styles.otpStepLabel}>STEP 3 — CUSTOMER REMARK</Text>
+                  <View style={styles.otpRatingRow}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <TouchableOpacity key={n} onPress={() => onChangeRating(rating === n ? 0 : n)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                        <Star
+                          size={34}
+                          color={n <= rating ? '#F26722' : '#D1D5DB'}
+                          fill={n <= rating ? '#F26722' : 'none'}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={styles.otpRatingHint}>{rating > 0 ? RATING_LABELS[rating] : 'Rate the service'}</Text>
                   <TextInput
                     style={[styles.otpRemarkInput, { marginTop: 14 }]}
                     placeholder="Enter customer feedback or remarks (optional)..."
                     placeholderTextColor="#9CA3AF"
                     value={remark}
                     onChangeText={onChangeRemark}
-                    multiline
-                    numberOfLines={4}
                   />
                   {!!remarkError && <Text style={styles.otpErrorText}>{remarkError}</Text>}
                   <TouchableOpacity
@@ -286,6 +300,7 @@ function VerifyOtpSheet({
           </ScrollView>
         </Pressable>
       </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -306,7 +321,7 @@ export default function ServiceTaskReportScreen() {
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     photos, signedPhotoUrls, photosSigning, mediaMeta,
-    runningHoursPhotoUrl,
+    runningHoursPhotoUrl, selfiePhotoUrl,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     downloadingReport, downloadReportError, handleDownloadReport,
     generatingReport, handleGenerateReport,
@@ -317,7 +332,7 @@ export default function ServiceTaskReportScreen() {
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
     handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
-    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
+    remark, setRemark, rating, setRating, remarkSaving, remarkError, handleSaveRemark,
   } = useSrTaskReportController(initialTask);
 
   const [gensetExpanded, setGensetExpanded] = useState(true);
@@ -331,6 +346,7 @@ export default function ServiceTaskReportScreen() {
   const [photosExpanded, setPhotosExpanded] = useState(false);
   const [videosExpanded, setVideosExpanded] = useState(false);
   const [documentsExpanded, setDocumentsExpanded] = useState(false);
+  const [selfieExpanded, setSelfieExpanded] = useState(false);
 
   const [lightboxVisible, setLightboxVisible] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -568,14 +584,17 @@ export default function ServiceTaskReportScreen() {
           </View>
         )}
 
-        {/* Notes / Suggestion Comments / Voice of Customer / Customer
-            Remark / OTP Pending all share one plain card — same merged
-            pattern as commissioning's own taskReport.tsx. Voice of Customer
-            and Customer Remark are service-only (task.customerFeedback:
-            { customerName, rating, comment, submittedAt }); Notes and
-            Suggestion Comments read task.notes/task.suggestionComment. */}
+        {/* Notes / Suggestion Comments / Customer Remark+Rating / OTP
+            Pending all share one plain card — same merged pattern as
+            commissioning's own taskReport.tsx. This first block is
+            labeled "VOICE OF CUSTOMER" per explicit request, but it still
+            reads task.notes (the job note set at task creation) — that's
+            a display-label choice only, not a data-model change. The
+            actual customer feedback (task.customerFeedback: {
+            customerName, rating, comment, submittedAt }) is the
+            "CUSTOMER REMARK" + star-rating block further down. */}
         <View style={styles.notesSuggestionCard}>
-          <Text style={styles.approvalStatusLabel}>NOTES</Text>
+          <Text style={styles.approvalStatusLabel}>VOICE OF CUSTOMER</Text>
           {!notes ? (
             <Text style={styles.emptyText}>No notes recorded.</Text>
           ) : (
@@ -593,12 +612,17 @@ export default function ServiceTaskReportScreen() {
           {!!customerFeedback && (
             <>
               <View style={styles.notesSuggestionDivider} />
-              <Text style={styles.approvalStatusLabel}>VOICE OF CUSTOMER</Text>
               {!!customerFeedback.customerName && (
                 <Text style={styles.voiceOfCustomerName}>{customerFeedback.customerName}</Text>
               )}
+              {!!customerFeedback.comment && (
+                <>
+                  <Text style={[styles.approvalStatusLabel, { marginBottom: 6 }]}>CUSTOMER REMARK</Text>
+                  <NotesBulletList notes={customerFeedback.comment} />
+                </>
+              )}
               {!!customerFeedback.rating && (
-                <View style={styles.voiceOfCustomerStarRow}>
+                <View style={[styles.voiceOfCustomerStarRow, { marginTop: 14 }]}>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <Star
                       key={n}
@@ -609,12 +633,6 @@ export default function ServiceTaskReportScreen() {
                   ))}
                   <Text style={styles.voiceOfCustomerRatingLabel}>{RATING_LABELS[customerFeedback.rating]}</Text>
                 </View>
-              )}
-              {!!customerFeedback.comment && (
-                <>
-                  <Text style={[styles.approvalStatusLabel, { marginTop: 14, marginBottom: 6 }]}>CUSTOMER REMARK</Text>
-                  <NotesBulletList notes={customerFeedback.comment} />
-                </>
               )}
             </>
           )}
@@ -1071,6 +1089,27 @@ export default function ServiceTaskReportScreen() {
           )}
         </ReportSectionCard>
 
+        {/* Selfie with Genset — its own standalone section, same pattern as
+            Running Hours' own photo above (pulled out of the general media[]
+            array by its fixed 'Selfie' tag, see srTaskReportController.ts).
+            Mandatory on the form (SelfieCard/useSrTaskForm.ts), so this is
+            expected to always be present on a completed task. */}
+        <ReportSectionCard title="Selfie with Genset" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
+          {!selfiePhotoUrl ? (
+            <Text style={styles.emptyText}>No selfie uploaded.</Text>
+          ) : (
+            <View style={[styles.reportThumbWrapper, { marginTop: 12 }]}>
+              <Image
+                source={{ uri: signedPhotoUrls[selfiePhotoUrl] || selfiePhotoUrl }}
+                style={styles.reportPhotoThumb}
+              />
+              <View style={styles.reportThumbIconRow}>
+                <MediaLocationButton location={mediaMeta[selfiePhotoUrl]?.location} />
+              </View>
+            </View>
+          )}
+        </ReportSectionCard>
+
         <View style={styles.footerCard}>
           <View style={styles.footerRow}>
             <View style={{ flexShrink: 0 }}>
@@ -1123,6 +1162,7 @@ export default function ServiceTaskReportScreen() {
         remark={remark}
         remarkSaving={remarkSaving}
         remarkError={remarkError}
+        rating={rating}
         onClose={closeOtpSheet}
         onGenerate={handleGenerateOtp}
         onRegenerate={handleRegenerateOtp}
@@ -1130,6 +1170,7 @@ export default function ServiceTaskReportScreen() {
         onVerify={handleVerifyOtp}
         onChangeRemark={setRemark}
         onSaveRemark={handleSaveRemark}
+        onChangeRating={setRating}
       />
 
       {/* Floats over the content instead of pushing the ScrollView up in
@@ -1620,8 +1661,16 @@ const styles = StyleSheet.create({
   otpRemarkInput: {
     borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    padding: 12, fontSize: 14, color: '#1F2937',
-    minHeight: 100, textAlignVertical: 'top',
+    paddingHorizontal: 12, fontSize: 14, color: '#1F2937',
+    height: 48,
+  },
+  otpRatingRow: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 14,
+    marginTop: 14,
+  },
+  otpRatingHint: {
+    fontSize: 13, fontWeight: '500', color: '#9CA3AF',
+    textAlign: 'center', marginTop: 10,
   },
   otpVerifiedBox: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

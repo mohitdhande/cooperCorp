@@ -558,6 +558,11 @@ export function useSrTaskForm() {
   // ── Step 4: Photos & Video ──
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
+  // Mandatory, single, front-camera selfie shown on Step 5 above the
+  // suggestion comment — see SelfieCard's own comment (shared with
+  // Commissioning's identical taskForm.tsx setup) for why this is a
+  // separate slot rather than just another sitePhotos entry.
+  const [selfiePhoto, setSelfiePhoto] = useState<SitePhoto | null>(null);
 
   // gcsUrl/type only ever missing if onItemSucceeded somehow fired before
   // they were resolved — shouldn't happen (see the matching comment on
@@ -609,6 +614,22 @@ export function useSrTaskForm() {
     useCallback((item: QueueItem) => setSitePhotos((prev) => [...prev, toSitePhoto(item)]), []),
     true,
     persistMediaFailure
+  );
+
+  const persistSelfieFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, source: item.source, formKind: 'service', taskId, target: 'selfie',
+  }), [taskId]);
+
+  // Confirms pre-tagged 'Selfie' by default — same pattern as
+  // taskForm.tsx's own selfieQueue. Replaces (not appends) on success — see
+  // SelfieCard's own comment on why retake is a direct replace.
+  const selfieQueue = useMediaUploadQueue(
+    mediaUploaders,
+    useCallback((item: QueueItem) => setSelfiePhoto(toSitePhoto(item)), []),
+    true,
+    persistSelfieFailure,
+    ['Selfie']
   );
 
   // Android's native camera intent can't mix photo and video capture in
@@ -664,6 +685,46 @@ export function useSrTaskForm() {
       showCameraUnavailableAlert('unavailable');
     }
   }, [mediaQueue]);
+
+  // Selfie is the one capture in this form that must come from the front
+  // camera — a proof-of-presence photo taken with the back camera would
+  // defeat the point. Kept as its own self-contained handler (not routed
+  // through captureFromCamera above) — same shape as handleTakeRunningHoursPhoto
+  // below, just with cameraType forced to front and landing in selfieQueue.
+  const handleTakeSelfie = useCallback(async () => {
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        showCameraUnavailableAlert('permission');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        cameraType: ImagePicker.CameraType.front,
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const validationError = getPhotoValidationError(asset);
+        if (validationError) {
+          Alert.alert('Photo not allowed', validationError);
+          return;
+        }
+        const picked: PickedAsset = {
+          uri: asset.uri,
+          fileName: asset.fileName || `selfie_${Date.now()}.jpg`,
+          fileSize: asset.fileSize,
+          kind: 'photo',
+          source: 'camera',
+        };
+        selfieQueue.startBatch([picked]);
+      }
+    } catch (error: any) {
+      console.log('[SR Task Form Photos] Selfie camera failed:', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
+    }
+  }, [selfieQueue]);
 
   const handleTakePhoto = useCallback(async () => {
     setPhotoOptionsVisible(false);
@@ -885,15 +946,22 @@ export function useSrTaskForm() {
   const hydrateSitePhotos = useCallback(async (media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]) => {
     if (!media || media.length === 0) return;
     const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+    const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
     const runningHoursItems = media.filter(isRunningHours);
-    const siteMedia = media.filter((m) => !isRunningHours(m));
+    const selfieItems = media.filter(isSelfie);
+    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
 
     const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
     const videoItems = siteMedia.filter((m) => m.type === 'video');
     const pdfItems = siteMedia.filter((m) => m.type === 'pdf');
     const runningHoursPhotoItems = runningHoursItems.filter((m) => m.type === 'photo' || m.type === 'image');
+    // Retaking a selfie replaces it locally but never deletes the earlier
+    // upload from the backend's own media[] array, so the most recently
+    // uploaded 'Selfie'-tagged item (last in array order) is the one that
+    // actually matters — see taskForm/useTaskFormPhotos.ts's identical note.
+    const selfiePhotoItem = selfieItems.filter((m) => m.type === 'photo' || m.type === 'image').slice(-1)[0];
 
-    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems].map((m) => m.gcsUrl);
+    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems, ...(selfiePhotoItem ? [selfiePhotoItem] : [])].map((m) => m.gcsUrl);
     let signedPhotoUrls: Record<string, string> = {};
     if (allPhotoUrls.length > 0) {
       try {
@@ -922,6 +990,19 @@ export function useSrTaskForm() {
       setRunningHoursPhotos((prev) => {
         const existingIds = new Set(prev.map((p) => p.id));
         return [...prev, ...hydratedRunningHours.filter((p) => !existingIds.has(p.id))];
+      });
+    }
+
+    if (selfiePhotoItem) {
+      setSelfiePhoto({
+        id: selfiePhotoItem.gcsUrl,
+        uri: signedPhotoUrls[selfiePhotoItem.gcsUrl] || selfiePhotoItem.gcsUrl,
+        fileName: videoFileName(selfiePhotoItem.gcsUrl),
+        mediaType: 'image',
+        gcsUrl: selfiePhotoItem.gcsUrl,
+        type: selfiePhotoItem.type as MediaType,
+        tags: selfiePhotoItem.tags || [],
+        location: selfiePhotoItem.location,
       });
     }
   }, []);
@@ -1050,6 +1131,14 @@ export function useSrTaskForm() {
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope');
     if (billingTypeRequired && !billingType) return;
 
+    // Selfie is a hard requirement, checked before the location gate below
+    // (cheapest check first, no API call either way) — see SelfieCard's own
+    // comment for why this is enforced here rather than left to the backend.
+    if (!selfiePhoto) {
+      Alert.alert('Selfie required', 'Please take a selfie before completing this task.');
+      return;
+    }
+
     // Same hard gate as Start/photo upload (checkLocationBlocked's own
     // comment) — this dealer/AM Complete equivalent needs a real location,
     // not just a best-effort one. Checked before setStep6Saving/the actual
@@ -1128,7 +1217,7 @@ export function useSrTaskForm() {
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber, selfiePhoto]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -1222,6 +1311,14 @@ export function useSrTaskForm() {
     );
     if (billingTypeRequired && !billingType) return;
 
+    // Selfie is a hard requirement, checked before the location gate below
+    // (cheapest check first, no API call either way) — see SelfieCard's own
+    // comment for why this is enforced here rather than left to the backend.
+    if (!selfiePhoto) {
+      Alert.alert('Selfie required', 'Please take a selfie before completing this task.');
+      return;
+    }
+
     // Same hard gate as Start/photo upload (checkLocationBlocked's own
     // comment) — Complete needs a real location, not just a best-effort
     // one. Checked before setFinishing/the actual call, so a blocked
@@ -1292,7 +1389,7 @@ export function useSrTaskForm() {
     } finally {
       setFinishing(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber, selfiePhoto]);
 
   // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
   // handleFinishService/handleSendForApproval below navigate straight there
@@ -1657,6 +1754,9 @@ export function useSrTaskForm() {
     handleTakeRunningHoursPhoto, handleChooseRunningHoursPhotos, handleRemoveRunningHoursPhoto,
     runningHoursUploadQueue: runningHoursQueue,
     handleUpdateMediaTag,
+    // Mandatory selfie — see its own state/queue comments above.
+    selfiePhoto, handleTakeSelfie,
+    selfieUploadQueue: selfieQueue,
 
     // Step 5
     notes, setNotes, step5Saving, step5Success, step5Error, handleSaveNotes,

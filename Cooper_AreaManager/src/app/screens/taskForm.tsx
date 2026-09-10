@@ -32,6 +32,7 @@ import { LoadingOverlay } from "../../_components/shared/LoadingOverlay";
 import { MediaUploadOverlay } from "../../_components/shared/MediaUploadOverlay";
 import { PendingSyncBanner } from "../../_components/shared/PendingSyncBanner";
 import { PhotosVideoCard } from "../../_components/shared/PhotosVideoCard";
+import { SelfieCard } from "../../_components/shared/SelfieCard";
 import { StepperRow } from "../../_components/shared/StepperRow";
 import { SuggestionCommentCard } from "../../_components/shared/SuggestionCommentCard";
 import { TaskSummaryHeader } from "../../_components/shared/TaskSummaryHeader";
@@ -495,9 +496,9 @@ export default function TaskFormScreen() {
     <SafeAreaView style={styles.container}>
       <ScreenBackground />
       {isBusy && <LoadingOverlay />}
-      {/* Only one of these two queues is ever active at once — Step 2 and
-          Step 6 aren't shown at the same time — but both are mounted here
-          so whichever one is running shows its own overlay. */}
+      {/* Only one of these queues is ever active at once — Step 2 and
+          Step 6 aren't shown at the same time — but all three are mounted
+          here so whichever one is running shows its own overlay. */}
       <MediaUploadOverlay
         visible={vm.siteUploadQueue.state.visible}
         items={vm.siteUploadQueue.state.items}
@@ -511,6 +512,13 @@ export default function TaskFormScreen() {
         onCancelItem={vm.runningHoursUploadQueue.cancelItem}
         onCancelAll={vm.runningHoursUploadQueue.cancel}
         onDismiss={vm.runningHoursUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
+        visible={vm.selfieUploadQueue.state.visible}
+        items={vm.selfieUploadQueue.state.items}
+        onCancelItem={vm.selfieUploadQueue.cancelItem}
+        onCancelAll={vm.selfieUploadQueue.cancel}
+        onDismiss={vm.selfieUploadQueue.dismiss}
       />
       {vm.toastVisible && (
         <View
@@ -2924,6 +2932,17 @@ export default function TaskFormScreen() {
                     onRemove={vm.handleRemoveSitePhoto}
                     onUpdateTag={vm.handleUpdateMediaTag}
                   />
+                </View>
+
+                {/* Mandatory, front-camera-only selfie — see SelfieCard's
+                own comment. Complete Task hard-blocks without one
+                (vm.handleCompletePhotosStep). key forces a full remount
+                the moment the photo changes (a fresh upload, or a retake)
+                instead of trying to update the same instance in place —
+                a real "reload" of just this section, not the whole
+                screen. */}
+                <View style={{ marginTop: 16 }}>
+                  <SelfieCard key={vm.selfiePhoto?.uri || 'empty'} photo={vm.selfiePhoto} onCapture={vm.handleTakeSelfie} />
                 </View>
 
                 {/* Optional freetext, submitted once as suggestionComment in the

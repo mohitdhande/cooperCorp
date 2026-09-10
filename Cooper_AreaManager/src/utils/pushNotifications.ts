@@ -54,6 +54,10 @@ export async function registerPushToken(): Promise<void> {
     if (status !== 'granted') return;
 
     const pushToken = (await Notifications.getExpoPushTokenAsync()).data;
+    // Logged on success too, not just failure — this is the value needed to
+    // send a manual test push (via expo.dev/notifications) without waiting
+    // on any backend send-side logic to exist first.
+    console.log('[Push Notifications] Got Expo push token:', pushToken);
     const deviceId = await getOrCreateDeviceId();
     await registerDeviceToken(authToken, pushToken, deviceId, Platform.OS);
   } catch (error) {

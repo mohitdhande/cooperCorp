@@ -7,6 +7,7 @@ import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { AlertTriangle, Bell, CheckCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Info } from 'lucide-react-native';
 import { DocumentsCard } from '../../_components/shared/DocumentsCard';
 import { PhotosVideoCard } from '../../_components/shared/PhotosVideoCard';
+import { SelfieCard } from '../../_components/shared/SelfieCard';
 import { DropdownField } from '../../_components/taskForm/DropdownField';
 import { PartPickerModal } from '../../_components/taskForm/PartPickerModal';
 import { SelectedPartCard } from '../../_components/taskForm/SelectedPartCard';
@@ -217,8 +218,9 @@ export default function SrTaskFormScreen() {
       <ScreenBackground />
       {isBusy && <LoadingOverlay />}
       <Toast visible={vm.toastVisible} message={vm.toastMessage} type={vm.toastType} />
-      {/* Both mounted here so whichever one is actually running (site
-          photos vs. the Running Hours photo) shows its own overlay. */}
+      {/* All mounted here so whichever one is actually running (site
+          photos vs. the Running Hours photo vs. the selfie) shows its own
+          overlay. */}
       <MediaUploadOverlay
         visible={vm.mediaUploadQueue.state.visible}
         items={vm.mediaUploadQueue.state.items}
@@ -232,6 +234,13 @@ export default function SrTaskFormScreen() {
         onCancelItem={vm.runningHoursUploadQueue.cancelItem}
         onCancelAll={vm.runningHoursUploadQueue.cancel}
         onDismiss={vm.runningHoursUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
+        visible={vm.selfieUploadQueue.state.visible}
+        items={vm.selfieUploadQueue.state.items}
+        onCancelItem={vm.selfieUploadQueue.cancelItem}
+        onCancelAll={vm.selfieUploadQueue.cancel}
+        onDismiss={vm.selfieUploadQueue.dismiss}
       />
 
       {/* Android's own softwareKeyboardLayoutMode is "pan" (app.json) — the
@@ -944,6 +953,17 @@ export default function SrTaskFormScreen() {
                 onRemove={vm.handleRemovePhoto}
                 onUpdateTag={vm.handleUpdateMediaTag}
               />
+
+              {/* Mandatory, front-camera-only selfie — see SelfieCard's own
+                  comment. Both completion actions below (Send For
+                  Approval/Complete) hard-block without one. key forces a
+                  full remount the moment the photo changes (a fresh
+                  upload, or a retake) instead of trying to update the
+                  same instance in place — a real "reload" of just this
+                  section, not the whole screen. */}
+              <View style={{ marginTop: 16 }}>
+                <SelfieCard key={vm.selfiePhoto?.uri || 'empty'} photo={vm.selfiePhoto} onCapture={vm.handleTakeSelfie} />
+              </View>
 
               {/* Moved here from Step 5 (Category & Complete) — sits right
                   below the documents/PDF card now, not down by the finish

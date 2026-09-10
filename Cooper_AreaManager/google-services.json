@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "873566461565",
+    "project_id": "coopercorp-e-fsr",
+    "storage_bucket": "coopercorp-e-fsr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:873566461565:android:0e0b1ecbb2b5526b66db14",
+        "android_client_info": {
+          "package_name": "com.cooper_efsr_push_notification"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAY2iYZtSh7cEUDtBtikfOjciM8kHl12Bc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:873566461565:android:45bb82a9c8efacff66db14",
+        "android_client_info": {
+          "package_name": "com.coopercorp.cooper"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAY2iYZtSh7cEUDtBtikfOjciM8kHl12Bc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

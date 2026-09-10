@@ -48,6 +48,11 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   const [photoOptionsVisible, setPhotoOptionsVisible] = useState(false);
   const [runningHoursPhotos, setRunningHoursPhotos] = useState<SitePhoto[]>([]);
   const [step2PhotoOptionsVisible, setStep2PhotoOptionsVisible] = useState(false);
+  // Mandatory, single, front-camera selfie shown on Step 6 above the
+  // suggestion comment — see SelfieCard's own comment for why this is a
+  // separate slot rather than just another sitePhotos entry (it's excluded
+  // from that grid and gated as its own hard requirement at Complete Task).
+  const [selfiePhoto, setSelfiePhoto] = useState<SitePhoto | null>(null);
 
   // Both Step 2 (running-hours, images only) and Step 6 (site, photo/video/
   // PDF) hit the same commissioning endpoints for the same taskId — only
@@ -77,6 +82,10 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
     mediaKind: item.kind, source: item.source, formKind: 'commissioning', taskId, target: 'runningHours',
   }), [taskId]);
+  const persistSelfieFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
+    sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
+    mediaKind: item.kind, source: item.source, formKind: 'commissioning', taskId, target: 'selfie',
+  }), [taskId]);
 
   // offlineEnabled is `true` here regardless of role — unlike every other
   // putOrQueue-backed save in this form (still scoped to isEngineer only,
@@ -104,6 +113,18 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     persistRunningHoursFailure,
     ['Running Hours']
   );
+  // Confirms pre-tagged 'Selfie' by default — same pattern as the Running
+  // Hours queue above, and the one reliable signal hydrateSitePhotos uses to
+  // pull a previously-uploaded selfie into its own slot on reopen instead of
+  // the general site photos grid. Replaces (not appends) on success — see
+  // SelfieCard's own comment on why retake is a direct replace.
+  const selfieQueue = useMediaUploadQueue(
+    uploaders,
+    useCallback((item: QueueItem) => setSelfiePhoto(toSitePhoto(item)), []),
+    true,
+    persistSelfieFailure,
+    ['Selfie']
+  );
 
   // Android's native camera intent can't mix photo and video capture in
   // one launch (ACTION_IMAGE_CAPTURE vs ACTION_VIDEO_CAPTURE are separate
@@ -111,7 +132,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   // silently falls back to photo-only there, with no video toggle shown.
   // So "Take Photo" and "Record Video" are two distinct camera launches,
   // each requesting only its own type; this works on iOS too.
-  const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos', target: 'site' | 'runningHours') => {
+  const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos', target: 'site' | 'runningHours' | 'selfie') => {
     try {
       // The options sheet Modal (fade-out) is still tearing down its own
       // native window when the button's onPress fires — launching the
@@ -132,6 +153,10 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         mediaTypes: [mediaType],
         videoMaxDuration: 60,
         quality: 0.7,
+        // Selfie is the one capture in this form that must come from the
+        // front camera — a proof-of-presence photo taken with the back
+        // camera would defeat the point.
+        ...(target === 'selfie' ? { cameraType: ImagePicker.CameraType.front } : {}),
       });
       if (!result.canceled) {
         const asset = result.assets[0];
@@ -143,7 +168,8 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         const isVideo = mediaType === 'videos';
         const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`;
         const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo', source: 'camera' };
-        (target === 'site' ? siteQueue : runningHoursQueue).startBatch([picked]);
+        const queue = target === 'site' ? siteQueue : target === 'runningHours' ? runningHoursQueue : selfieQueue;
+        queue.startBatch([picked]);
       }
     } catch (error: any) {
       // A native picker/camera failure (no camera, OS-level glitch, or an
@@ -156,7 +182,11 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
       console.log('[Task Form Photos] Camera failed:', error?.code || '', error?.message || error);
       showCameraUnavailableAlert('unavailable');
     }
-  }, [siteQueue, runningHoursQueue]);
+  }, [siteQueue, runningHoursQueue, selfieQueue]);
+
+  const handleTakeSelfie = useCallback(async () => {
+    await captureFromCamera('images', 'selfie');
+  }, [captureFromCamera]);
 
   const handleTakeSitePhoto = useCallback(async () => {
     setPhotoOptionsVisible(false);
@@ -313,25 +343,34 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   // tagged 'Running Hours' (the fixed default runningHoursQueue always
   // confirms with) hydrates into runningHoursPhotos instead of the general
   // site list — that tag is now the one reliable signal for "which step
-  // this came from," where before there was none at all. Photos need a
-  // signed URL to actually render as a thumbnail (private GCS bucket, same
-  // as the report screens); video/PDF rows only ever show a filename/icon,
-  // never the file itself, so the raw gcsUrl is fine as-is for those.
+  // this came from," where before there was none at all. Same idea for a
+  // 'Selfie'-tagged item, into its own single-item selfiePhoto slot instead.
+  // Photos need a signed URL to actually render as a thumbnail (private GCS
+  // bucket, same as the report screens); video/PDF rows only ever show a
+  // filename/icon, never the file itself, so the raw gcsUrl is fine as-is
+  // for those.
   const hydrateSitePhotos = useCallback(async (media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]) => {
     if (!media || media.length === 0) return;
     const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
+    const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
     const runningHoursItems = media.filter(isRunningHours);
-    const siteMedia = media.filter((m) => !isRunningHours(m));
+    const selfieItems = media.filter(isSelfie);
+    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
 
     const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
     const videoItems = siteMedia.filter((m) => m.type === 'video');
     const pdfItems = siteMedia.filter((m) => m.type === 'pdf');
-    // Running Hours only ever holds photo-like items in practice (its own
-    // picker is images-only), but filtered defensively all the same rather
-    // than assuming.
+    // Running Hours/Selfie only ever hold photo-like items in practice
+    // (both pickers are images-only), but filtered defensively all the same
+    // rather than assuming.
     const runningHoursPhotoItems = runningHoursItems.filter((m) => m.type === 'photo' || m.type === 'image');
+    // Retaking a selfie replaces it locally but never deletes the earlier
+    // upload from the backend's own media[] array — so more than one
+    // 'Selfie'-tagged item can legitimately exist there. The most recently
+    // uploaded one (last in array order) is the one that actually matters.
+    const selfiePhotoItem = selfieItems.filter((m) => m.type === 'photo' || m.type === 'image').slice(-1)[0];
 
-    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems].map((m) => m.gcsUrl);
+    const allPhotoUrls = [...photoItems, ...runningHoursPhotoItems, ...(selfiePhotoItem ? [selfiePhotoItem] : [])].map((m) => m.gcsUrl);
     let signedPhotoUrls: Record<string, string> = {};
     if (allPhotoUrls.length > 0) {
       try {
@@ -360,6 +399,19 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
       setRunningHoursPhotos((prev) => {
         const existingIds = new Set(prev.map((p) => p.id));
         return [...prev, ...hydratedRunningHours.filter((p) => !existingIds.has(p.id))];
+      });
+    }
+
+    if (selfiePhotoItem) {
+      setSelfiePhoto({
+        id: selfiePhotoItem.gcsUrl,
+        uri: signedPhotoUrls[selfiePhotoItem.gcsUrl] || selfiePhotoItem.gcsUrl,
+        fileName: videoFileName(selfiePhotoItem.gcsUrl),
+        mediaType: 'image',
+        gcsUrl: selfiePhotoItem.gcsUrl,
+        type: selfiePhotoItem.type as MediaType,
+        tags: selfiePhotoItem.tags || [],
+        location: selfiePhotoItem.location,
       });
     }
   }, []);
@@ -393,6 +445,9 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     setStep2PhotoOptionsVisible,
     siteQueue,
     runningHoursQueue,
+    selfieQueue,
+    selfiePhoto,
+    handleTakeSelfie,
     handleTakeSitePhoto,
     handleRecordSiteVideo,
     handleChooseSitePhotos,

@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal, Pressable, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal, Pressable, ActivityIndicator, useWindowDimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { Text } from '@/_components/AppText';
+import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, Bell, Camera, User, Mail, Phone, MapPin, Key, LogOut, ChevronRight } from 'lucide-react-native';
+import { ChevronLeft, Bell, Camera, User, Mail, Phone, MapPin, Key, LogOut, ChevronRight, X, Eye, EyeOff } from 'lucide-react-native';
 import { useProfileScreenController } from '../../controllers/profileController';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
@@ -85,6 +86,13 @@ export default function ProfileScreen() {
     handleTakePhoto,
     handleChooseGallery,
     handleRemovePhoto,
+    changePasswordVisible, openChangePassword, closeChangePassword,
+    currentPassword, setCurrentPassword,
+    newPassword, setNewPassword,
+    confirmPassword, setConfirmPassword,
+    showPasswords, setShowPasswords,
+    changePasswordSaving, changePasswordError,
+    handleUpdatePassword,
   } = useProfileScreenController();
   const sheetPaddingBottom = Math.max(insets.bottom, 16) + 14;
 
@@ -261,7 +269,7 @@ export default function ProfileScreen() {
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.actionRow}
-            onPress={() => Alert.alert('Change Password', 'Please contact your admin to reset your password.')}
+            onPress={openChangePassword}
           >
             <View style={styles.infoIconChip}>
               <Key size={18} color="#1E1951" />
@@ -321,6 +329,69 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         </Pressable>
+      </Modal>
+
+      {/* Change Password — self-service PUT /api/auth/change-password
+          (see profileController.ts's own comment on why this is distinct
+          from PUT /users/:id/password). KeyboardAvoidingView here for the
+          same reason the OTP sheets use it (taskReport.tsx/srTaskReport.tsx)
+          — 'padding' behavior on both platforms keeps the button clear of
+          the keyboard instead of the sheet extending behind it. */}
+      <Modal visible={changePasswordVisible} transparent animationType="slide" onRequestClose={closeChangePassword}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+          <Pressable style={styles.modalOverlay} onPress={closeChangePassword}>
+            <Pressable style={[styles.changePasswordSheet, { paddingBottom: sheetPaddingBottom }]} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.changePasswordHeaderRow}>
+                <Text style={styles.changePasswordTitle}>Change Password</Text>
+                <TouchableOpacity style={styles.changePasswordCloseButton} onPress={closeChangePassword}>
+                  <X size={18} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.changePasswordLabel}>Current Password</Text>
+              <TextInput
+                style={styles.changePasswordInput}
+                secureTextEntry={!showPasswords}
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.changePasswordLabel, { marginTop: 16 }]}>New Password</Text>
+              <TextInput
+                style={styles.changePasswordInput}
+                secureTextEntry={!showPasswords}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.changePasswordLabel, { marginTop: 16 }]}>Confirm New Password</Text>
+              <TextInput
+                style={styles.changePasswordInput}
+                secureTextEntry={!showPasswords}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                autoCapitalize="none"
+              />
+
+              <TouchableOpacity style={styles.showPasswordsRow} onPress={() => setShowPasswords((v) => !v)}>
+                {showPasswords ? <EyeOff size={16} color="#6B7280" /> : <Eye size={16} color="#6B7280" />}
+                <Text style={styles.showPasswordsText}>Show passwords</Text>
+              </TouchableOpacity>
+
+              {!!changePasswordError && <Text style={styles.changePasswordErrorText}>{changePasswordError}</Text>}
+
+              <TouchableOpacity
+                style={[styles.updatePasswordButton, changePasswordSaving && styles.buttonDisabled]}
+                onPress={handleUpdatePassword}
+                disabled={changePasswordSaving}
+              >
+                {changePasswordSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.updatePasswordButtonText}>Update Password</Text>}
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Floats over the ScrollView (instead of sitting below it as a
@@ -453,4 +524,41 @@ const styles = StyleSheet.create({
   optionRow: { paddingVertical: 14 },
   optionText: { fontSize: 16, fontWeight: '500', color: '#222' },
   optionDivider: { height: 1, backgroundColor: '#eee' },
+
+  buttonDisabled: { opacity: 0.6 },
+  changePasswordSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingHorizontal: 20, paddingTop: 20,
+  },
+  changePasswordHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  changePasswordTitle: { fontSize: 20, fontWeight: '800', color: '#000000' },
+  changePasswordCloseButton: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  changePasswordLabel: { fontSize: 13, fontWeight: '500', color: '#6B7280', marginBottom: 8 },
+  changePasswordInput: {
+    borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14, fontSize: 15, color: '#1F2937',
+    height: 50,
+  },
+  showPasswordsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: 16,
+  },
+  showPasswordsText: { fontSize: 14, fontWeight: '500', color: '#6B7280' },
+  changePasswordErrorText: { color: '#DC2626', fontSize: 13, fontWeight: '600', marginTop: 12 },
+  updatePasswordButton: {
+    width: '100%', height: 56, borderRadius: 100,
+    backgroundColor: '#F26722',
+    justifyContent: 'center', alignItems: 'center',
+    marginTop: 20,
+  },
+  updatePasswordButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
 });

@@ -3,7 +3,7 @@
     "name": "Cooper",
     "backgroundColor": "#11101C",
     "slug": "Cooper",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "orientation": "portrait",
     "icon": "./assets/app_icon.png",
     "scheme": "cooper",
@@ -13,6 +13,7 @@
     },
     "android": {
       "package": "com.coopercorp.cooper",
+      "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/android_icon_foreground.png",
@@ -75,7 +76,8 @@
             "enableShrinkResourcesInReleaseBuilds": true
           }
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, useWindowDimensions, Modal, Pressable, Alert, KeyboardAvoidingView } from 'react-native';
 // expo-image (not RN's own Image) for these report photo thumbnails —
 // disk-caches by URL, so reopening a report or scrolling back to a photo
 // you've already loaded doesn't re-download the same signed GCS URL again.
@@ -9,7 +9,7 @@ import { TextInput } from '@/_components/AppTextInput';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, CheckCheck, FileText, Play, X, Key, Check } from 'lucide-react-native';
+import { ChevronLeft, CheckCheck, FileText, Play, X, Key, Check, Star } from 'lucide-react-native';
 import { CheckRow, InfoRow } from '../../_components/ReportRows';
 import { PdfActionsRow } from '../../_components/shared/PdfActionsRow';
 import { Toast } from '../../_components/shared/Toast';
@@ -26,7 +26,6 @@ import {
   val, formatDate, formatAddress, getPriorityColor, getPriorityTextColor, TASK_TYPE_BADGE, DEFAULT_TASK_TYPE_BADGE, videoFileName, getTaskPeople,
 } from '../../utils/reportFormatters';
 import { safeJsonParse } from '../../utils/safeJsonParse';
-import { useKeyboardHeight } from '../../utils/useKeyboardHeight';
 
 const REF_WIDTH = 420;
 
@@ -38,6 +37,16 @@ const PART_DECISION_PILL: Record<string, { bg: string; text: string }> = {
   PENDING: { bg: '#F3F4F6', text: '#6B7280' },
   APPROVED: { bg: '#DCFCE7', text: '#15803D' },
   REJECTED: { bg: '#FEE2E2', text: '#DC2626' },
+};
+
+// Voice of Customer's 1-5 star rating label — same mapping as
+// srTaskReport.tsx's own RATING_LABELS.
+const RATING_LABELS: Record<number, string> = {
+  1: 'Poor',
+  2: 'Fair',
+  3: 'Good',
+  4: 'Very Good',
+  5: 'Excellent',
 };
 
 const formatTaskType = (type: string) => {
@@ -217,8 +226,7 @@ const LOAD_STAGES = [
 // photos, customer feedback, and work-completion status.
 export default function TaskReportScreen() {
   const router = useRouter();
-  const { width, height } = useWindowDimensions();
-  const kbHeight = useKeyboardHeight();
+  const { width } = useWindowDimensions();
   const hPad = width * (20 / REF_WIDTH);
   const headerPad = width * (30 / REF_WIDTH);
   const params = useLocalSearchParams<{ task: string }>();
@@ -227,7 +235,7 @@ export default function TaskReportScreen() {
   const {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
-    runningHoursPhotoUrl, mediaMeta,
+    runningHoursPhotoUrl, selfiePhotoUrl, mediaMeta,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
@@ -239,7 +247,7 @@ export default function TaskReportScreen() {
     otpSheetOpen, openOtpSheet, closeOtpSheet, otpStep,
     otpGenerated, generatedOtp, customerOtp, otpInputRefs, otpLoading, otpError,
     handleGenerateOtp, handleRegenerateOtp, handleChangeCustomerOtpDigit, handleVerifyOtp,
-    remark, setRemark, remarkSaving, remarkError, handleSaveRemark,
+    remark, setRemark, rating, setRating, remarkSaving, remarkError, handleSaveRemark,
   } = useTaskReportController(initialTask);
 
   const [gensetExpanded, setGensetExpanded] = useState(true);
@@ -254,6 +262,7 @@ export default function TaskReportScreen() {
   const [photosExpanded, setPhotosExpanded] = useState(false);
   const [videosExpanded, setVideosExpanded] = useState(false);
   const [documentsExpanded, setDocumentsExpanded] = useState(false);
+  const [selfieExpanded, setSelfieExpanded] = useState(false);
 
   const [lightboxVisible, setLightboxVisible] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -307,9 +316,11 @@ export default function TaskReportScreen() {
         : a.loadUnbalancePercentage;
   const notes = task.notes || '';
   // Saved via the OTP sheet's own optional Step 3 (PUT /:id/feedback) once
-  // the customer's OTP is verified — field name not yet confirmed against
-  // a real response, so this checks the likely shapes.
-  const feedbackComment = task.feedback?.comment || task.customerFeedback?.comment || task.remark || '';
+  // the customer's OTP is verified. task.customerFeedback is the confirmed
+  // real shape (task.feedback/task.remark kept as fallbacks for the comment
+  // specifically, from before this was confirmed).
+  const customerFeedback = task.customerFeedback || task.feedback || null;
+  const feedbackComment = customerFeedback?.comment || task.remark || '';
 
   const typeBadge = TASK_TYPE_BADGE[task.type] || DEFAULT_TASK_TYPE_BADGE;
   const statusColor = STATUS_COLOR[task.status] || STATUS_COLOR.ASSIGNED;
@@ -931,6 +942,27 @@ export default function TaskReportScreen() {
           )}
         </ReportSectionCard>
 
+        {/* Selfie with Genset — its own standalone section, same pattern as
+            Running Hours' own photo above (pulled out of the general media[]
+            array by its fixed 'Selfie' tag, see taskReportController.ts).
+            Mandatory on the form (SelfieCard/useTaskFormPhotos.ts), so this
+            is expected to always be present on a completed task. */}
+        <ReportSectionCard title="Selfie with Genset" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
+          {!selfiePhotoUrl ? (
+            <Text style={styles.emptyText}>No selfie uploaded.</Text>
+          ) : (
+            <View style={[styles.reportThumbWrapper, { marginTop: 12 }]}>
+              <Image
+                source={{ uri: signedPhotoUrls[selfiePhotoUrl] || selfiePhotoUrl }}
+                style={styles.reportPhotoThumb}
+              />
+              <View style={styles.reportThumbIconRow}>
+                <MediaLocationButton location={mediaMeta[selfiePhotoUrl]?.location} />
+              </View>
+            </View>
+          )}
+        </ReportSectionCard>
+
         {/* Notes, Suggestion Comment, OTP Pending, and Customer Remark all
             share one plain card instead of separate collapsible/standalone
             ones — whichever of the later three actually apply for this
@@ -973,11 +1005,32 @@ export default function TaskReportScreen() {
           {/* Saved via the OTP sheet's own Step 3, once the customer's OTP
               is verified — the closed-task counterpart to the OTP Pending
               box above (mutually exclusive: isOtpPending is false by the
-              time feedbackComment exists). */}
-          {!!feedbackComment && (
+              time customerFeedback exists). Same "Voice of Customer"
+              rating + comment layout as srTaskReport.tsx's own. */}
+          {!!customerFeedback && (
             <>
-              <Text style={[styles.notesSuggestionLabel, { marginTop: 20 }]}>Customer Remark</Text>
-              <NotesBulletList notes={feedbackComment} />
+              {!!customerFeedback.customerName && (
+                <Text style={[styles.voiceOfCustomerName, { marginTop: 20 }]}>{customerFeedback.customerName}</Text>
+              )}
+              {!!feedbackComment && (
+                <>
+                  <Text style={[styles.notesSuggestionLabel, !customerFeedback.customerName && { marginTop: 20 }]}>Customer Remark</Text>
+                  <NotesBulletList notes={feedbackComment} />
+                </>
+              )}
+              {!!customerFeedback.rating && (
+                <View style={[styles.voiceOfCustomerStarRow, { marginTop: 14 }]}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Star
+                      key={n}
+                      size={20}
+                      color={n <= customerFeedback.rating ? '#F26722' : '#D1D5DB'}
+                      fill={n <= customerFeedback.rating ? '#F26722' : 'none'}
+                    />
+                  ))}
+                  <Text style={styles.voiceOfCustomerRatingLabel}>{RATING_LABELS[customerFeedback.rating]}</Text>
+                </View>
+              )}
             </>
           )}
         </View>
@@ -1111,16 +1164,20 @@ export default function TaskReportScreen() {
             reaches APPROVED some other, non-OTP way), a task that got here
             via OTP verification is already CLOSED by the time this sheet
             shuts — hence "Save & Close", not just "Save". */}
+        {/* RN's Modal window doesn't pan/resize for the keyboard on either
+            platform on its own — KeyboardAvoidingView here does that for
+            real (shrinking this container's own height as the keyboard
+            opens/closes), instead of the previous hand-computed
+            kbHeight-based padding/maxHeight math, which could drift out of
+            sync with the real keyboard height and leave a large gap above
+            it. */}
+        {/* 'padding' on both platforms, not 'height' on Android — 'height'
+            left the sheet's own bottom edge (the Verify/Save button)
+            still extending slightly behind the keyboard on some Android
+            devices instead of fully clearing it. */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <Pressable style={styles.otpModalOverlay} onPress={otpStep === 3 ? undefined : closeOtpSheet}>
-          {/* RN's Modal window doesn't pan/resize for the keyboard on
-              either platform, so lift the sheet ourselves: pad its bottom
-              by the live keyboard height and cap the scroll area to the
-              space left above the keyboard. That keeps the remark field
-              and every action button (Generate / Verify / Save & Close)
-              fully visible, not just partially. keyboardShouldPersistTaps
-              below still lets the first tap on a button register while an
-              input is focused. */}
-          <Pressable style={[styles.otpSheet, { paddingBottom: 32 + kbHeight }]} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.otpSheet, { maxHeight: '90%' }]} onPress={(e) => e.stopPropagation()}>
             <View style={styles.otpSheetHandle} />
             <View style={styles.otpSheetHeaderRow}>
               <View>
@@ -1143,7 +1200,7 @@ export default function TaskReportScreen() {
                 digit input still has focus only dismisses the keyboard
                 instead of registering as a press; a second tap was needed
                 to actually fire the button. */}
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: kbHeight > 0 ? Math.max(150, height - kbHeight - 220) : 420 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+            <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
               {otpStep === 1 && (
                 <View style={styles.otpStepCard}>
                   <Text style={styles.otpStepLabel}>STEP 1 — GENERATE OTP</Text>
@@ -1231,14 +1288,24 @@ export default function TaskReportScreen() {
 
                   <View style={[styles.otpStepCard, { marginTop: 16 }]}>
                     <Text style={styles.otpStepLabel}>STEP 3 — CUSTOMER REMARK</Text>
+                    <View style={styles.otpRatingRow}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <TouchableOpacity key={n} onPress={() => setRating(rating === n ? 0 : n)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                          <Star
+                            size={34}
+                            color={n <= rating ? '#F26722' : '#D1D5DB'}
+                            fill={n <= rating ? '#F26722' : 'none'}
+                          />
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={styles.otpRatingHint}>{rating > 0 ? RATING_LABELS[rating] : 'Rate the service'}</Text>
                     <TextInput
                       style={[styles.otpRemarkInput, { marginTop: 14 }]}
                       placeholder="Enter customer feedback or remarks (optional)..."
                       placeholderTextColor="#9CA3AF"
                       value={remark}
                       onChangeText={setRemark}
-                      multiline
-                      numberOfLines={4}
                     />
                     {!!remarkError && <Text style={styles.otpErrorText}>{remarkError}</Text>}
                     <TouchableOpacity
@@ -1254,6 +1321,7 @@ export default function TaskReportScreen() {
             </ScrollView>
           </Pressable>
         </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -1440,8 +1508,16 @@ const styles = StyleSheet.create({
   otpRemarkInput: {
     borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    padding: 12, fontSize: 14, color: '#1F2937',
-    minHeight: 100, textAlignVertical: 'top',
+    paddingHorizontal: 12, fontSize: 14, color: '#1F2937',
+    height: 48,
+  },
+  otpRatingRow: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 14,
+    marginTop: 14,
+  },
+  otpRatingHint: {
+    fontSize: 13, fontWeight: '500', color: '#9CA3AF',
+    textAlign: 'center', marginTop: 10,
   },
 
   // Confirmation shown once the OTP is actually verified — step 3's own
@@ -1512,6 +1588,9 @@ const styles = StyleSheet.create({
     fontSize: 12, fontWeight: '700', color: '#9CA3AF',
     letterSpacing: 0.6, marginBottom: 10,
   },
+  voiceOfCustomerName: { fontSize: 15, fontWeight: '700', color: '#1E1951', marginBottom: 10 },
+  voiceOfCustomerStarRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  voiceOfCustomerRatingLabel: { fontSize: 14, fontWeight: '600', color: '#4338CA', marginLeft: 6 },
 
   groupHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   groupLetterCircle: {

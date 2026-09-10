@@ -90,8 +90,9 @@ export async function runMediaSync(): Promise<{ synced: number }> {
         // comment for why (original capture-time location would be
         // misleading by the time this finally uploads). target already
         // tells us which picker this came from, so a queued Running Hours
-        // photo still confirms pre-tagged even after an offline retry.
-        const tags = item.target === 'runningHours' ? ['Running Hours'] : undefined;
+        // or Selfie photo still confirms pre-tagged even after an offline
+        // retry.
+        const tags = item.target === 'runningHours' ? ['Running Hours'] : item.target === 'selfie' ? ['Selfie'] : undefined;
         const uploadOne = item.formKind === 'service' ? uploadOneServiceMedia : uploadOneCommissioningMedia;
         await uploadOne(token, item.taskId, file, type, undefined, tags);
         await removePendingMedia(item.id);
