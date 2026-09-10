@@ -235,7 +235,7 @@ export default function TaskReportScreen() {
   const {
     task, asset: a, isLoading, refreshing, onRefresh, detailError, isOffline,
     photos, signedPhotoUrls, photosSigning,
-    runningHoursPhotoUrl, selfiePhotoUrl, mediaMeta,
+    runningHoursPhotoUrl, selfiePhotoUrl, mediaMeta, complaintCodePhotoUrls,
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     downloadingReport, downloadReportError, handleDownloadReport,
@@ -721,6 +721,11 @@ export default function TaskReportScreen() {
           ) : (
             faultCodes.map((fc: any, i: number) => {
               const codeInfo = fc.codeId || {};
+              // Confirmed pre-tagged 'Complaint Code: <code>' by the form's
+              // own faultCodeQueue (see taskReportController.ts's own
+              // comment) — the only thing that links a photo back to this
+              // specific entry, so it's looked up by the code string itself.
+              const photoUrl = codeInfo.code ? complaintCodePhotoUrls[codeInfo.code] : undefined;
               return (
                 <View key={fc._id || i} style={styles.complaintReportCard}>
                   <View style={styles.complaintCodeBadge}>
@@ -753,6 +758,14 @@ export default function TaskReportScreen() {
                     <View style={[styles.complaintInfoBlock, { backgroundColor: '#DBF9E2' }]}>
                       <Text style={styles.complaintInfoBlockTitle}>Corrective Action</Text>
                       <Text style={styles.complaintInfoBlockValue}>{fc.correctiveAction}</Text>
+                    </View>
+                  )}
+                  {!!photoUrl && (
+                    <View style={[styles.reportThumbWrapper, styles.complaintPhotoWrapper]}>
+                      <Image source={{ uri: signedPhotoUrls[photoUrl] || photoUrl }} style={styles.reportPhotoThumb} />
+                      <View style={styles.reportThumbIconRow}>
+                        <MediaLocationButton location={mediaMeta[photoUrl]?.location} />
+                      </View>
                     </View>
                   )}
                 </View>
@@ -947,7 +960,7 @@ export default function TaskReportScreen() {
             array by its fixed 'Selfie' tag, see taskReportController.ts).
             Mandatory on the form (SelfieCard/useTaskFormPhotos.ts), so this
             is expected to always be present on a completed task. */}
-        <ReportSectionCard title="Selfie with Genset" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
+        <ReportSectionCard title="Selfie with DG Set" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
           {!selfiePhotoUrl ? (
             <Text style={styles.emptyText}>No selfie uploaded.</Text>
           ) : (
@@ -1635,6 +1648,7 @@ const styles = StyleSheet.create({
   },
   priorityBadgeText: { fontSize: 11, fontWeight: '700' },
   complaintInfoBlock: { borderRadius: 12, padding: 12, marginTop: 12, gap: 4 },
+  complaintPhotoWrapper: { marginTop: 12 },
   complaintInfoBlockTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', textTransform: 'uppercase', letterSpacing: 0.3 },
   complaintInfoBlockValue: { fontSize: 14, color: '#374151' },
 

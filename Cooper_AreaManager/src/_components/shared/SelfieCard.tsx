@@ -66,7 +66,7 @@ export function SelfieCard({ photo, onCapture }: Props) {
         <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#FCEEDD', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
           <User size={16} color="#E76124" />
         </View>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4, flex: 1 }}>SELFIE</Text>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4, flex: 1 }}>SELFIE WITH DG SET</Text>
         <View style={{ borderRadius: 100, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#FEE2E2' }}>
           <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>Required</Text>
         </View>
@@ -131,7 +131,7 @@ export function SelfieCard({ photo, onCapture }: Props) {
 
       {/* Display-only caption, not sent to the backend — the media confirm
           API has no note/caption field (just gcsUrl/type/tags/location). */}
-      <Text style={{ fontSize: 12, fontWeight: '500', color: '#9CA3AF', lineHeight: 17, marginTop: 12 }}>Note: Selfie with Genset</Text>
+      <Text style={{ fontSize: 12, fontWeight: '500', color: '#9CA3AF', lineHeight: 17, marginTop: 12 }}>Note: Selfie with DG Set</Text>
     </View>
   );
 }

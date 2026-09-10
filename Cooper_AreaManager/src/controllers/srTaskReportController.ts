@@ -204,13 +204,26 @@ export function useSrTaskReportController(initialTask: any) {
   const media: { type: string; gcsUrl: string; tags?: string[]; location?: { lat?: number; lng?: number; address?: string } }[] = task?.media || [];
   const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
   const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
-  const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
+  // Complaint-code photos — one per fault code, confirmed pre-tagged
+  // "Complaint Code: <code>" by useSrTaskForm.ts's own faultCodeQueue
+  // (complaintCodeMediaTag) — same distinction as the commissioning
+  // report, see taskReportController.ts's own comment.
+  const COMPLAINT_CODE_TAG_PREFIX = 'Complaint Code: ';
+  const isComplaintCodePhoto = (m: { tags?: string[] }) => !!m.tags?.some((t) => t.startsWith(COMPLAINT_CODE_TAG_PREFIX));
+  const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m) && !isComplaintCodePhoto(m));
   const runningHoursPhotoUrl = media.find((m) => isRunningHours(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
   // Retaking a selfie replaces it locally but never deletes the earlier
   // upload from the backend's own media[] array, so the most recently
   // uploaded 'Selfie'-tagged item (last match) is the one that matters —
   // same note as useSrTaskForm.ts's own hydrateSitePhotos.
   const selfiePhotoUrl = [...media].reverse().find((m) => isSelfie(m) && (m.type === 'photo' || m.type === 'image'))?.gcsUrl || null;
+  // code -> gcsUrl, one entry per complaint code that actually has a photo.
+  const complaintCodePhotoUrls: Record<string, string> = {};
+  media.forEach((m) => {
+    if (m.type !== 'photo' && m.type !== 'image') return;
+    const tag = m.tags?.find((t) => t.startsWith(COMPLAINT_CODE_TAG_PREFIX));
+    if (tag) complaintCodePhotoUrls[tag.slice(COMPLAINT_CODE_TAG_PREFIX.length)] = m.gcsUrl;
+  });
 
   const videos = siteMedia.filter((m) => m.type === 'video').map((m) => m.gcsUrl);
   const documents = siteMedia.filter((m) => m.type === 'pdf').map((m) => m.gcsUrl);
@@ -261,7 +274,7 @@ export function useSrTaskReportController(initialTask: any) {
   const photoUrls = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image').map((m) => m.gcsUrl);
   // Signed in the same batch as the general gallery (below) so the
   // Running Hours/Selfie sections' own thumbnails resolve too.
-  const photosToSign = [...photoUrls, ...(runningHoursPhotoUrl ? [runningHoursPhotoUrl] : []), ...(selfiePhotoUrl ? [selfiePhotoUrl] : [])];
+  const photosToSign = [...photoUrls, ...(runningHoursPhotoUrl ? [runningHoursPhotoUrl] : []), ...(selfiePhotoUrl ? [selfiePhotoUrl] : []), ...Object.values(complaintCodePhotoUrls)];
   const photosKey = JSON.stringify(photosToSign);
 
   useEffect(() => {
@@ -539,7 +552,7 @@ export function useSrTaskReportController(initialTask: any) {
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     photos: photoUrls, signedPhotoUrls, photosSigning, mediaMeta,
-    runningHoursPhotoUrl, selfiePhotoUrl,
+    runningHoursPhotoUrl, selfiePhotoUrl, complaintCodePhotoUrls,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     downloadingReport, downloadReportError, handleDownloadReport,
     generatingReport, handleGenerateReport,

@@ -19,7 +19,7 @@ import { logLocationForAction, registerLocationOffWarning, checkLocationBlocked 
 import { handleLocationOffWarning, showLocationOffAlert } from '../../utils/locationOffAlert';
 import { showCameraUnavailableAlert } from '../../utils/cameraErrorAlert';
 import { useToast } from '../../utils/useToast';
-import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto, MediaType, MediaLocation } from '../../models/taskForm.types';
+import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto, MediaType, MediaLocation, complaintCodeMediaTag } from '../../models/taskForm.types';
 import { UserProfile } from '../../models/Login';
 import { getRole } from '../../constants/permissions';
 import {
@@ -406,6 +406,21 @@ export function useSrTaskForm() {
 
   const handleRemoveComplaintCode = useCallback((uid: string) => {
     setSelectedComplaintCodes(prev => prev.filter(item => item.uid !== uid));
+    // setFaultCodePhotos is declared further down this same hook (its
+    // queue needs mediaUploaders, itself declared after this point) — only
+    // referenced inside this closure's body, which doesn't run until well
+    // after that const is assigned, so this is safe despite the ordering.
+    // Left out of the dependency array on purpose: putting a
+    // not-yet-declared const directly in a useCallback deps array is
+    // evaluated immediately (unlike the closure body) and would throw a
+    // TDZ ReferenceError on every render.
+    setFaultCodePhotos((prev) => {
+      if (!(uid in prev)) return prev;
+      const next = { ...prev };
+      delete next[uid];
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleChangeComplaintObservation = useCallback((uid: string, text: string) => {
     setSelectedComplaintCodes(prev => prev.map(item => (item.uid === uid ? { ...item, observation: text } : item)));
@@ -631,6 +646,90 @@ export function useSrTaskForm() {
     persistSelfieFailure,
     ['Selfie']
   );
+
+  // One image per complaint code — mirrors taskForm/useTaskFormPhotos.ts's
+  // own faultCodePhotos exactly (see its comment for why complaintCodeMediaTag
+  // is what actually links a photo to a specific code, not this local uid
+  // map, which only matters for this session's own live form).
+  const [faultCodePhotos, setFaultCodePhotos] = useState<Record<string, SitePhoto>>({});
+  const activeFaultCodeRef = useRef<{ uid: string; code: string } | null>(null);
+
+  // offlineEnabled: false — same reasoning as commissioning's own
+  // faultCodeQueue: the uid association can't meaningfully survive a
+  // queued/replayed-later upload, so a failure here is just a normal,
+  // retry-by-hand error row.
+  const persistFaultCodeFailure = useCallback((): Promise<never> => (
+    Promise.reject(new Error('Offline retry not supported for fault code images'))
+  ), []);
+  const faultCodeQueue = useMediaUploadQueue(
+    mediaUploaders,
+    useCallback((item: QueueItem) => {
+      const active = activeFaultCodeRef.current;
+      if (!active) return;
+      const tag = complaintCodeMediaTag(active.code);
+      setFaultCodePhotos((prev) => ({ ...prev, [active.uid]: { ...toSitePhoto(item), tags: [tag] } }));
+      (async () => {
+        try {
+          const token = await getToken();
+          if (!token || !taskId || !item.gcsUrl) return;
+          await updateServiceMediaTag(token, taskId, item.gcsUrl, [tag]);
+        } catch (error) {
+          console.log('[SR Task Form Photos] Failed to tag fault code image:', error);
+        }
+      })();
+    }, [taskId]),
+    false,
+    persistFaultCodeFailure
+  );
+
+  // Camera-only, no options sheet — tapping "+ Fault Code Image" opens the
+  // camera directly, same one-tap pattern as this form's own handleTakeSelfie
+  // (no gallery choice for either). Records which uid/code this upload
+  // belongs to (activeFaultCodeRef) before launching, read by
+  // faultCodeQueue's onItemSucceeded once the upload confirms.
+  const handleTakeFaultCodePhoto = useCallback(async (uid: string, code: string) => {
+    activeFaultCodeRef.current = { uid, code };
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        showCameraUnavailableAlert('permission');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const validationError = getPhotoValidationError(asset);
+        if (validationError) {
+          Alert.alert('Photo not allowed', validationError);
+          return;
+        }
+        const picked: PickedAsset = {
+          uri: asset.uri,
+          fileName: asset.fileName || `photo_${Date.now()}.jpg`,
+          fileSize: asset.fileSize,
+          kind: 'photo',
+          source: 'camera',
+        };
+        faultCodeQueue.startBatch([picked]);
+      }
+    } catch (error: any) {
+      console.log('[SR Task Form Photos] Fault code camera failed:', error?.code || '', error?.message || error);
+      showCameraUnavailableAlert('unavailable');
+    }
+  }, [faultCodeQueue]);
+
+  const handleRemoveFaultCodePhoto = useCallback((uid: string) => {
+    setFaultCodePhotos((prev) => {
+      if (!(uid in prev)) return prev;
+      const next = { ...prev };
+      delete next[uid];
+      return next;
+    });
+  }, []);
 
   // Android's native camera intent can't mix photo and video capture in
   // one launch (ACTION_IMAGE_CAPTURE vs ACTION_VIDEO_CAPTURE are separate
@@ -947,9 +1046,14 @@ export function useSrTaskForm() {
     if (!media || media.length === 0) return;
     const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
     const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
+    // Complaint-code photos get their own per-card slot (see
+    // hydrateFaultCodePhotos below) — excluded here the same way Running
+    // Hours/Selfie already are, so they don't also show up a second time in
+    // the general Photos grid.
+    const isComplaintCode = (m: { tags?: string[] }) => !!m.tags?.some((t) => t.startsWith('Complaint Code: '));
     const runningHoursItems = media.filter(isRunningHours);
     const selfieItems = media.filter(isSelfie);
-    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
+    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m) && !isComplaintCode(m));
 
     const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
     const videoItems = siteMedia.filter((m) => m.type === 'video');
@@ -1005,6 +1109,45 @@ export function useSrTaskForm() {
         location: selfiePhotoItem.location,
       });
     }
+  }, []);
+
+  // Restores whichever complaint codes already have a photo saved from an
+  // earlier session — matched by tag (complaintCodeMediaTag(code)), not by
+  // uid, so this survives a reload. Mirrors taskForm/useTaskFormPhotos.ts's
+  // own hydrateFaultCodePhotos exactly.
+  const hydrateFaultCodePhotos = useCallback(async (
+    entries: { uid: string; code?: string }[],
+    media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]
+  ) => {
+    if (!entries.length || !media.length) return;
+    const matches: { uid: string; item: typeof media[number] }[] = [];
+    entries.forEach((entry) => {
+      if (!entry.code) return;
+      const tag = complaintCodeMediaTag(entry.code);
+      const item = media.find((m) => (m.type === 'photo' || m.type === 'image') && m.tags?.includes(tag));
+      if (item) matches.push({ uid: entry.uid, item });
+    });
+    if (!matches.length) return;
+
+    let signedUrls: Record<string, string> = {};
+    try {
+      const token = await getToken();
+      if (token) signedUrls = await getGcsSignedUrls(token, matches.map((m) => m.item.gcsUrl));
+    } catch (error) {
+      console.log('[SR Task Form Photos] Failed to sign fault code photo URLs:', error);
+    }
+
+    setFaultCodePhotos((prev) => {
+      const next = { ...prev };
+      matches.forEach(({ uid, item }) => {
+        if (next[uid]) return;
+        next[uid] = {
+          id: item.gcsUrl, uri: signedUrls[item.gcsUrl] || item.gcsUrl, fileName: videoFileName(item.gcsUrl),
+          mediaType: 'image', gcsUrl: item.gcsUrl, type: item.type as MediaType, tags: item.tags || [], location: item.location,
+        };
+      });
+      return next;
+    });
   }, []);
 
   // Updates the tag(s) on an already-uploaded item, matched by gcsUrl.
@@ -1579,7 +1722,7 @@ export function useSrTaskForm() {
         });
       }
       if (faultCodesList.length) {
-        setSelectedComplaintCodes(faultCodesList.map((entry: any, index: number) => ({
+        const hydratedCodes = faultCodesList.map((entry: any, index: number) => ({
           uid: `${entry.codeId?._id || index}-${Date.now()}-${index}`,
           codeId: entry.codeId?._id,
           code: entry.codeId?.code,
@@ -1590,7 +1733,9 @@ export function useSrTaskForm() {
           observation: entry.observation ?? '',
           rootCause: entry.rootCause ?? '',
           correctiveAction: entry.correctiveAction ?? '',
-        })));
+        }));
+        setSelectedComplaintCodes(hydratedCodes);
+        hydrateFaultCodePhotos(hydratedCodes.map((c) => ({ uid: c.uid, code: c.code })), serviceData?.media || []);
       }
 
       // description/componentNumber/cpcbNorm/engineFamily/maxQty (not
@@ -1739,6 +1884,9 @@ export function useSrTaskForm() {
     handleSelectComplaintCode, handleRemoveComplaintCode, handleChangeComplaintObservation,
     handleChangeComplaintRootCause, handleChangeComplaintCorrectiveAction,
     step2Saving, step2Success, step2Error, handleSaveFaultCodes,
+    faultCodePhotos,
+    faultCodeUploadQueue: faultCodeQueue,
+    handleTakeFaultCodePhoto, handleRemoveFaultCodePhoto,
 
     // Step 3
     apiParts, partsLoading, selectedParts, partPickerVisible, setPartPickerVisible,

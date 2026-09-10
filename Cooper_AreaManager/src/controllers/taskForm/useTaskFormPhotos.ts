@@ -1,10 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { getToken } from '../../utils/tokenStore';
 import { uploadOneCommissioningMedia, updateCommissioningMediaTag, getGcsSignedUrls } from '../../viewModel/commisionAPi';
-import { SitePhoto, MediaType, MediaLocation } from '../../models/taskForm.types';
+import { SitePhoto, MediaType, MediaLocation, complaintCodeMediaTag } from '../../models/taskForm.types';
 import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } from '../../utils/photoValidation';
 import { videoFileName } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
@@ -53,6 +53,26 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
   // separate slot rather than just another sitePhotos entry (it's excluded
   // from that grid and gated as its own hard requirement at Complete Task).
   const [selfiePhoto, setSelfiePhoto] = useState<SitePhoto | null>(null);
+  // One image per complaint code, keyed by that code's own `uid` — unlike
+  // Running Hours/Selfie (one fixed global slot each), there can be many
+  // complaint codes at once, so this is a map instead of a single slot. No
+  // backend field ties a photo to a specific fault code today (the
+  // faultCodes[] save payload is just {codeId, observation, rootCause,
+  // correctiveAction} — see saveFaultCodes), so each upload gets PATCHed
+  // (right after it confirms) with complaintCodeMediaTag(code) — a tag
+  // encoding that code's own short `code` string — via the general media
+  // tagging endpoint. That tag is what survives a reload: the report reads
+  // it straight back off task.media to show the right photo under the
+  // right complaint code, not just this local uid-keyed map (which only
+  // ever matters for this session's own live form).
+  const [faultCodePhotos, setFaultCodePhotos] = useState<Record<string, SitePhoto>>({});
+  // Which complaint code's card triggered the camera — read inside
+  // faultCodeQueue's onItemSucceeded (a ref, not state, so that closure
+  // always sees the value current at upload-completion time rather than
+  // whatever it was when the queue was first created). Carries both the
+  // local uid (keys the local faultCodePhotos map) and the code string
+  // (what actually gets sent as the tag).
+  const activeFaultCodeRef = useRef<{ uid: string; code: string } | null>(null);
 
   // Both Step 2 (running-hours, images only) and Step 6 (site, photo/video/
   // PDF) hit the same commissioning endpoints for the same taskId — only
@@ -126,13 +146,50 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     ['Selfie']
   );
 
+  // offlineEnabled: false — the client-side uid↔photo association above
+  // can't meaningfully survive a queued/replayed-later upload (a dropped
+  // network mid-upload, possibly resumed after an app restart, with no
+  // guarantee the same complaint code still exists in this session's
+  // state), so a failure here just settles into a normal, retry-by-hand
+  // error row instead of pretending it's safely queued. persistOnFailure
+  // is required by the hook's own signature but never actually invoked
+  // while offlineEnabled is false.
+  const persistFaultCodeFailure = useCallback((): Promise<never> => (
+    Promise.reject(new Error('Offline retry not supported for fault code images'))
+  ), []);
+  const faultCodeQueue = useMediaUploadQueue(
+    uploaders,
+    useCallback((item: QueueItem) => {
+      const active = activeFaultCodeRef.current;
+      if (!active) return;
+      const tag = complaintCodeMediaTag(active.code);
+      setFaultCodePhotos((prev) => ({ ...prev, [active.uid]: { ...toSitePhoto(item), tags: [tag] } }));
+      // Best-effort, fire-and-forget — the upload itself already
+      // succeeded and is already visible on this card locally; a failed
+      // tag PATCH just means the report won't be able to re-link this
+      // specific photo to this specific code after a reload, not a
+      // failure worth interrupting the user over.
+      (async () => {
+        try {
+          const token = await getToken();
+          if (!token || !taskId || !item.gcsUrl) return;
+          await updateCommissioningMediaTag(token, taskId, item.gcsUrl, [tag]);
+        } catch (error) {
+          console.log('[Task Form Photos] Failed to tag fault code image:', error);
+        }
+      })();
+    }, [taskId]),
+    false,
+    persistFaultCodeFailure
+  );
+
   // Android's native camera intent can't mix photo and video capture in
   // one launch (ACTION_IMAGE_CAPTURE vs ACTION_VIDEO_CAPTURE are separate
   // intents) — passing mediaTypes: ['images', 'videos'] to launchCameraAsync
   // silently falls back to photo-only there, with no video toggle shown.
   // So "Take Photo" and "Record Video" are two distinct camera launches,
   // each requesting only its own type; this works on iOS too.
-  const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos', target: 'site' | 'runningHours' | 'selfie') => {
+  const captureFromCamera = useCallback(async (mediaType: 'images' | 'videos', target: 'site' | 'runningHours' | 'selfie' | 'faultCode') => {
     try {
       // The options sheet Modal (fade-out) is still tearing down its own
       // native window when the button's onPress fires — launching the
@@ -168,7 +225,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         const isVideo = mediaType === 'videos';
         const fileName = asset.uri.split('/').pop() || `${isVideo ? 'video' : 'photo'}_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`;
         const picked: PickedAsset = { uri: asset.uri, fileName, fileSize: asset.fileSize, kind: isVideo ? 'video' : 'photo', source: 'camera' };
-        const queue = target === 'site' ? siteQueue : target === 'runningHours' ? runningHoursQueue : selfieQueue;
+        const queue = target === 'site' ? siteQueue : target === 'runningHours' ? runningHoursQueue : target === 'faultCode' ? faultCodeQueue : selfieQueue;
         queue.startBatch([picked]);
       }
     } catch (error: any) {
@@ -182,7 +239,7 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
       console.log('[Task Form Photos] Camera failed:', error?.code || '', error?.message || error);
       showCameraUnavailableAlert('unavailable');
     }
-  }, [siteQueue, runningHoursQueue, selfieQueue]);
+  }, [siteQueue, runningHoursQueue, selfieQueue, faultCodeQueue]);
 
   const handleTakeSelfie = useCallback(async () => {
     await captureFromCamera('images', 'selfie');
@@ -333,6 +390,25 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     setRunningHoursPhotos(prev => prev.filter(photo => photo.id !== id));
   }, []);
 
+  // Camera-only, no options sheet — tapping "+ Fault Code Image" opens the
+  // camera directly, same one-tap pattern as SelfieCard's own onCapture
+  // (no gallery choice for either). Records which uid/code this upload
+  // belongs to (activeFaultCodeRef) before launching, read by
+  // faultCodeQueue's onItemSucceeded once the upload confirms.
+  const handleTakeFaultCodePhoto = useCallback(async (uid: string, code: string) => {
+    activeFaultCodeRef.current = { uid, code };
+    await captureFromCamera('images', 'faultCode');
+  }, [captureFromCamera]);
+
+  const handleRemoveFaultCodePhoto = useCallback((uid: string) => {
+    setFaultCodePhotos((prev) => {
+      if (!(uid in prev)) return prev;
+      const next = { ...prev };
+      delete next[uid];
+      return next;
+    });
+  }, []);
+
   // Shows whatever was already uploaded in an earlier session — called once
   // when the task detail first loads (see useTaskForm.ts), so reopening a
   // task you'd already added photos/videos/PDFs to doesn't look empty just
@@ -353,9 +429,14 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     if (!media || media.length === 0) return;
     const isRunningHours = (m: { tags?: string[] }) => !!m.tags?.includes('Running Hours');
     const isSelfie = (m: { tags?: string[] }) => !!m.tags?.includes('Selfie');
+    // Complaint-code photos (tagged via complaintCodeMediaTag) get their
+    // own per-card slot too (see hydrateFaultCodePhotos below) — excluded
+    // here the same way Running Hours/Selfie already are, so they don't
+    // also show up a second time in the general Photos grid.
+    const isComplaintCode = (m: { tags?: string[] }) => !!m.tags?.some((t) => t.startsWith('Complaint Code: '));
     const runningHoursItems = media.filter(isRunningHours);
     const selfieItems = media.filter(isSelfie);
-    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m));
+    const siteMedia = media.filter((m) => !isRunningHours(m) && !isSelfie(m) && !isComplaintCode(m));
 
     const photoItems = siteMedia.filter((m) => m.type === 'photo' || m.type === 'image');
     const videoItems = siteMedia.filter((m) => m.type === 'video');
@@ -416,6 +497,49 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     }
   }, []);
 
+  // Restores whichever complaint codes already have a photo saved from an
+  // earlier session — reads the tag itself (complaintCodeMediaTag(code)),
+  // not the local uid, so this survives a reload unlike faultCodePhotos'
+  // own uid keys. Called once per complaint code list build (see
+  // useTaskForm.ts's own fault-code hydration effect), passing each
+  // entry's {uid, code} alongside the task's raw media array.
+  const hydrateFaultCodePhotos = useCallback(async (
+    entries: { uid: string; code?: string }[],
+    media: { type: string; gcsUrl: string; tags?: string[]; location?: MediaLocation }[]
+  ) => {
+    if (!entries.length || !media.length) return;
+    const matches: { uid: string; item: typeof media[number] }[] = [];
+    entries.forEach((entry) => {
+      if (!entry.code) return;
+      const tag = complaintCodeMediaTag(entry.code);
+      const item = media.find((m) => (m.type === 'photo' || m.type === 'image') && m.tags?.includes(tag));
+      if (item) matches.push({ uid: entry.uid, item });
+    });
+    if (!matches.length) return;
+
+    let signedUrls: Record<string, string> = {};
+    try {
+      const token = await getToken();
+      if (token) signedUrls = await getGcsSignedUrls(token, matches.map((m) => m.item.gcsUrl));
+    } catch (error) {
+      console.log('[Task Form Photos] Failed to sign fault code photo URLs:', error);
+    }
+
+    setFaultCodePhotos((prev) => {
+      const next = { ...prev };
+      matches.forEach(({ uid, item }) => {
+        // Don't clobber a photo already picked this session (e.g. this
+        // effect re-firing) with the server's own copy of the same thing.
+        if (next[uid]) return;
+        next[uid] = {
+          id: item.gcsUrl, uri: signedUrls[item.gcsUrl] || item.gcsUrl, fileName: videoFileName(item.gcsUrl),
+          mediaType: 'image', gcsUrl: item.gcsUrl, type: item.type as MediaType, tags: item.tags || [], location: item.location,
+        };
+      });
+      return next;
+    });
+  }, []);
+
   // Updates the tag(s) on an already-uploaded item, matched by gcsUrl —
   // could be in either list (site photos or the running-hours photo), so
   // this just tries both; only the one that actually has a matching id
@@ -458,5 +582,10 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
     handleRemoveRunningHoursPhoto,
     hydrateSitePhotos,
     handleUpdateMediaTag,
+    hydrateFaultCodePhotos,
+    faultCodePhotos,
+    faultCodeQueue,
+    handleTakeFaultCodePhoto,
+    handleRemoveFaultCodePhoto,
   };
 }

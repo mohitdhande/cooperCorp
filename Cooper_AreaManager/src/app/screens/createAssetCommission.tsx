@@ -404,8 +404,13 @@ export default function CreateAssetCommissionScreen() {
               </Text>
               <View style={styles.fieldFull}>
                 <Text style={styles.fieldLabel}>Entry Type</Text>
-                <TouchableOpacity style={styles.dropdownInput} onPress={() => setEntryTypePickerOpen(true)}>
-                  <Text style={styles.fieldValueText}>{entryTypeLabel}</Text>
+                <TouchableOpacity
+                  style={[styles.dropdownInput, dispatchType === 'auto' && styles.fieldInputDisabled]}
+                  onPress={() => { if (dispatchType !== 'auto') setEntryTypePickerOpen(true); }}
+                  activeOpacity={dispatchType === 'auto' ? 1 : 0.7}
+                  disabled={dispatchType === 'auto'}
+                >
+                  <Text style={[styles.fieldValueText, dispatchType === 'auto' && styles.fieldValueTextDisabled]}>{entryTypeLabel}</Text>
                   <ChevronDown size={18} color="#9CA3AF" />
                 </TouchableOpacity>
               </View>
@@ -423,7 +428,7 @@ export default function CreateAssetCommissionScreen() {
               <View style={styles.fieldFull} ref={notesFieldRef}>
                 <Text style={styles.fieldLabel}>Notes <Text style={styles.optionalLabel}>(optional)</Text></Text>
                 <TextInput
-                  style={[styles.fieldInput, styles.fieldTextarea]}
+                  style={[styles.fieldInput, styles.fieldTextarea, dispatchType === 'auto' && styles.fieldInputDisabled]}
                   value={notes}
                   onChangeText={setNotes}
                   onFocus={() => scrollFieldIntoView(scrollViewRef.current, notesFieldRef.current)}
@@ -432,6 +437,7 @@ export default function CreateAssetCommissionScreen() {
                   multiline
                   numberOfLines={4}
                   textAlignVertical="top"
+                  editable={dispatchType !== 'auto'}
                 />
               </View>
             </View>
@@ -557,6 +563,14 @@ const styles = StyleSheet.create({
     fontSize: 14, color: '#1F2937',
   },
   fieldTextarea: { height: 90 },
+  // Entry Type / Notes' own disabled look — same grey-fill-plus-dimmed-text
+  // treatment as DateField's inputDisabled/valueTextDisabled, applied here
+  // by hand since Entry Type/Notes aren't DateField instances. Used when
+  // dispatchType === 'auto' (the "Auto-Commissioned" case — a completed
+  // commissioning entry gets created automatically from the SAP dispatch
+  // date, so nothing in this card is actually editable for that case).
+  fieldInputDisabled: { backgroundColor: '#F3F4F6' },
+  fieldValueTextDisabled: { color: '#6B7280' },
   fieldValueText: { fontSize: 14, color: '#1F2937' },
   fieldReadOnlyValue: { fontSize: 15, fontWeight: '700', color: '#1F2937', marginTop: 6 },
   dropdownInput: {

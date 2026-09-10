@@ -773,7 +773,8 @@ export function useTaskForm() {
 
   const handleRemoveComplaintCode = useCallback((uid: string) => {
     setSelectedComplaintCodes(prev => prev.filter(item => item.uid !== uid));
-  }, []);
+    photos.handleRemoveFaultCodePhoto(uid);
+  }, [photos]);
 
   const handleChangeComplaintObservation = useCallback((uid: string, text: string) => {
     setSelectedComplaintCodes(prev => prev.map(item => (item.uid === uid ? { ...item, observation: text } : item)));
@@ -832,7 +833,7 @@ export function useTaskForm() {
         });
       }
       if (!faultCodesList.length) return;
-      setSelectedComplaintCodes(faultCodesList.map((entry: any, index: number) => ({
+      const hydratedCodes = faultCodesList.map((entry: any, index: number) => ({
         uid: `${entry.codeId?._id || index}-${Date.now()}-${index}`,
         codeId: entry.codeId?._id,
         code: entry.codeId?.code,
@@ -843,7 +844,12 @@ export function useTaskForm() {
         observation: entry.observation ?? '',
         rootCause: entry.rootCause ?? '',
         correctiveAction: entry.correctiveAction ?? '',
-      })));
+      }));
+      setSelectedComplaintCodes(hydratedCodes);
+      // Pulls back whichever of these codes already has a photo saved from
+      // an earlier session (matched by complaintCodeMediaTag(code), not by
+      // uid — see hydrateFaultCodePhotos's own comment).
+      photos.hydrateFaultCodePhotos(hydratedCodes.map((c) => ({ uid: c.uid, code: c.code })), task?.media || []);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task, taskId]);
@@ -1362,6 +1368,10 @@ export function useTaskForm() {
     handleOpenComplaintPicker, handleCloseComplaintPicker, handleSelectComplaintCode,
     handleRemoveComplaintCode, handleChangeComplaintObservation, handleChangeComplaintRootCause,
     handleChangeComplaintCorrectiveAction, handleSaveFaultCodes,
+    faultCodePhotos: photos.faultCodePhotos,
+    faultCodeUploadQueue: photos.faultCodeQueue,
+    handleTakeFaultCodePhoto: photos.handleTakeFaultCodePhoto,
+    handleRemoveFaultCodePhoto: photos.handleRemoveFaultCodePhoto,
 
     // Step 4
     apiParts: apiData.apiParts, partsLoading: apiData.partsLoading,

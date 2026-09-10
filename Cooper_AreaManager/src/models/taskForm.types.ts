@@ -26,6 +26,21 @@ export function resolveMediaType(kind: 'photo' | 'video' | 'pdf', source: MediaS
   return source === 'camera' ? 'photo' : 'image';
 }
 
+// The tag a fault-code-card photo is confirmed with — encodes which
+// specific complaint code (by its short `code`, e.g. "E045") the photo
+// belongs to. There's no backend field that links a photo to a specific
+// faultCodes[] entry (that array only carries {codeId, observation,
+// rootCause, correctiveAction}), so this tag IS that link — it's what lets
+// the report pull the right photo back into the right complaint code entry
+// even after the task reloads from the server, not just for the current
+// form session. One shared function (not duplicated per form/report file)
+// so the exact string format can never drift between where it's written
+// (useTaskFormPhotos.ts / useSrTaskForm.ts) and where it's read back
+// (taskReportController.ts / srTaskReportController.ts).
+export function complaintCodeMediaTag(code: string): string {
+  return `Complaint Code: ${code}`;
+}
+
 // ─── Site Photos ───
 export type SitePhoto = {
   id: string;

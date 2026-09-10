@@ -237,6 +237,13 @@ export default function SrTaskFormScreen() {
         onDismiss={vm.runningHoursUploadQueue.dismiss}
       />
       <MediaUploadOverlay
+        visible={vm.faultCodeUploadQueue.state.visible}
+        items={vm.faultCodeUploadQueue.state.items}
+        onCancelItem={vm.faultCodeUploadQueue.cancelItem}
+        onCancelAll={vm.faultCodeUploadQueue.cancel}
+        onDismiss={vm.faultCodeUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
         visible={vm.selfieUploadQueue.state.visible}
         items={vm.selfieUploadQueue.state.items}
         onCancelItem={vm.selfieUploadQueue.cancelItem}
@@ -582,6 +589,9 @@ export default function SrTaskFormScreen() {
                   onChangeCorrectiveAction={(text) => vm.handleChangeComplaintCorrectiveAction(item.uid, text)}
                   onSave={vm.handleSaveFaultCodes}
                   isSaving={vm.step2Saving}
+                  photo={vm.faultCodePhotos[item.uid]}
+                  onAddPhoto={() => vm.handleTakeFaultCodePhoto(item.uid, item.code)}
+                  onRemovePhoto={() => vm.handleRemoveFaultCodePhoto(item.uid)}
                 />
               ))}
               {vm.step2Error ? <Text style={styles.sectionErrorText}>{vm.step2Error}</Text> : null}
@@ -1331,6 +1341,7 @@ export default function SrTaskFormScreen() {
               </View>
             </Pressable>
           </Modal>
+
         {/* Labeled Back/Next bar, alongside the stepper row's flanking
             arrows above — same handlers either way, just a second, more
             discoverable way to move between steps. Steps 1-5 only: step 6's

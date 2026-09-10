@@ -321,7 +321,7 @@ export default function ServiceTaskReportScreen() {
     videos, videoModalVisible, videoUri, videoError, handlePlayVideo, closeVideoModal,
     documents, documentOpeningUrl, documentError, handleViewDocument,
     photos, signedPhotoUrls, photosSigning, mediaMeta,
-    runningHoursPhotoUrl, selfiePhotoUrl,
+    runningHoursPhotoUrl, selfiePhotoUrl, complaintCodePhotoUrls,
     canCloseTicket, closingTicket, closeTicketError, handleCloseTicket,
     downloadingReport, downloadReportError, handleDownloadReport,
     generatingReport, handleGenerateReport,
@@ -901,6 +901,10 @@ export default function ServiceTaskReportScreen() {
           ) : (
             faultCodes.map((fc: any, i: number) => {
               const codeInfo = fc.codeId || {};
+              // Confirmed pre-tagged 'Complaint Code: <code>' by the form's
+              // own faultCodeQueue — see srTaskReportController.ts's own
+              // comment.
+              const photoUrl = codeInfo.code ? complaintCodePhotoUrls[codeInfo.code] : undefined;
               return (
                 <View key={fc._id || i} style={styles.complaintReportCard}>
                   <View style={styles.complaintReportHeader}>
@@ -937,6 +941,14 @@ export default function ServiceTaskReportScreen() {
                     <View style={[styles.complaintInfoBlock, { backgroundColor: '#DBF9E2' }]}>
                       <Text style={styles.complaintInfoBlockTitle}>Corrective Action</Text>
                       <Text style={styles.complaintInfoBlockValue}>{fc.correctiveAction}</Text>
+                    </View>
+                  )}
+                  {!!photoUrl && (
+                    <View style={[styles.reportThumbWrapper, styles.complaintPhotoWrapper]}>
+                      <Image source={{ uri: signedPhotoUrls[photoUrl] || photoUrl }} style={styles.reportPhotoThumb} />
+                      <View style={styles.reportThumbIconRow}>
+                        <MediaLocationButton location={mediaMeta[photoUrl]?.location} />
+                      </View>
                     </View>
                   )}
                 </View>
@@ -1094,7 +1106,7 @@ export default function ServiceTaskReportScreen() {
             array by its fixed 'Selfie' tag, see srTaskReportController.ts).
             Mandatory on the form (SelfieCard/useSrTaskForm.ts), so this is
             expected to always be present on a completed task. */}
-        <ReportSectionCard title="Selfie with Genset" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
+        <ReportSectionCard title="Selfie with DG Set" expanded={selfieExpanded} onToggle={() => setSelfieExpanded(!selfieExpanded)}>
           {!selfiePhotoUrl ? (
             <Text style={styles.emptyText}>No selfie uploaded.</Text>
           ) : (
@@ -1472,6 +1484,7 @@ const styles = StyleSheet.create({
   },
   priorityBadgeText: { fontSize: 11, fontWeight: '700' },
   complaintInfoBlock: { borderRadius: 12, padding: 12, marginTop: 12, gap: 4 },
+  complaintPhotoWrapper: { marginTop: 12 },
   complaintInfoBlockTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', textTransform: 'uppercase', letterSpacing: 0.3 },
   complaintInfoBlockValue: { fontSize: 14, color: '#374151' },
 

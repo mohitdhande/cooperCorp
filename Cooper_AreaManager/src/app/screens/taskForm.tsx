@@ -515,6 +515,13 @@ export default function TaskFormScreen() {
         onDismiss={vm.runningHoursUploadQueue.dismiss}
       />
       <MediaUploadOverlay
+        visible={vm.faultCodeUploadQueue.state.visible}
+        items={vm.faultCodeUploadQueue.state.items}
+        onCancelItem={vm.faultCodeUploadQueue.cancelItem}
+        onCancelAll={vm.faultCodeUploadQueue.cancel}
+        onDismiss={vm.faultCodeUploadQueue.dismiss}
+      />
+      <MediaUploadOverlay
         visible={vm.selfieUploadQueue.state.visible}
         items={vm.selfieUploadQueue.state.items}
         onCancelItem={vm.selfieUploadQueue.cancelItem}
@@ -2527,6 +2534,9 @@ export default function TaskFormScreen() {
                     }
                     onSave={vm.handleSaveFaultCodes}
                     isSaving={vm.step3Saving}
+                    photo={vm.faultCodePhotos[item.uid]}
+                    onAddPhoto={() => vm.handleTakeFaultCodePhoto(item.uid, item.code)}
+                    onRemovePhoto={() => vm.handleRemoveFaultCodePhoto(item.uid)}
                   />
                 ))}
                 {vm.step3Error ? (
