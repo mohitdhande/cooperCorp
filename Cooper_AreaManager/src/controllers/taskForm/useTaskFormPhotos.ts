@@ -31,6 +31,7 @@ function toSitePhoto(item: QueueItem): SitePhoto {
     fileName: item.fileName,
     mediaType: item.kind === 'photo' ? 'image' : item.kind,
     fileSize: item.fileSize,
+    compressedFileSize: item.compressedFileSize,
     gcsUrl: item.gcsUrl,
     type: item.type,
     tags: item.tags || [],

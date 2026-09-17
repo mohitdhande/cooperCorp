@@ -580,7 +580,12 @@ export function useTaskForm() {
     });
     commentFields.forEach(key => {
       const comment = commissioningChecks[`${key}_comment`];
-      if (commissioningChecks[key]?.toLowerCase() === 'not ok' && comment) {
+      // 'not ok' is every other Group B field's own trigger (the OK/Not OK
+      // pair); 'l' is B1/B3's (Lub Oil Level/Coolant Level's H/M/L pair) —
+      // both checked here since this one function builds the payload for
+      // every Group B field regardless of which pair a given field uses.
+      const fieldValue = commissioningChecks[key]?.toLowerCase();
+      if ((fieldValue === 'not ok' || fieldValue === 'l') && comment) {
         payload[`${key}_comment`] = comment;
       }
     });

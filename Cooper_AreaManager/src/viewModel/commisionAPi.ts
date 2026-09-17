@@ -111,11 +111,21 @@ export const getOrgDashboard = async (token: string) => {
 // on each item is the exact same { screen, entityId } shape push payloads
 // carry (§15.5), so both share the same navigateFromPushData mapping —
 // see pushNotificationHandlers.ts.
-export const getMyNotifications = async (token: string, page: number = 1, limit: number = 20) => {
+//
+// Confirmed backend contract: this endpoint defaults to unread-only
+// (read: false) — `filter` must be explicitly passed as 'all' to get every
+// notification regardless of read state. This is NOT just an extra option;
+// omitting it is a different, narrower result set. The app's own Unread/All
+// tabs (notificationsController.ts) map directly onto this — Unread omits
+// `filter`, All passes 'all' — so switching tabs re-fetches from the server
+// rather than re-filtering one cached list client-side, since the server
+// (not the client) decides which notifications come back at all.
+export const getMyNotifications = async (token: string, page: number = 1, limit: number = 20, filter?: 'all') => {
   try {
-    const response = await axiosClient.get(`/api/me/notifications?page=${page}&limit=${limit}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const response = await axiosClient.get(
+      `/api/me/notifications?page=${page}&limit=${limit}${filter ? `&filter=${filter}` : ''}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
     return response.data as { items: any[]; total: number; page: number; limit: number };
   } catch (error: any) {
     console.log('Get My Notifications Error:', error.response?.data || error.message);

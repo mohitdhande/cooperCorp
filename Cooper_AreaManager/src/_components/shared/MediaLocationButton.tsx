@@ -65,7 +65,7 @@ export function MediaLocationButton({ location, variant = 'overlay' }: Props) {
                 <Text style={styles.popupPrimary}>No location was captured for this file.</Text>
               ) : (
                 <>
-                  <Text style={styles.popupPrimary}>{location.address || 'Resolving address...'}</Text>
+                  <Text style={styles.popupPrimary}>{location.address || 'Getting address...'}</Text>
                   {!!coordsLine && <Text style={styles.popupCoords}>{coordsLine}</Text>}
                 </>
               )}

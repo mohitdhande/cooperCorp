@@ -6,7 +6,64 @@ import { PendingMediaItem } from '../../utils/pendingMediaQueue';
 import { logLocationForAction, resolveUploadLocation, checkLocationBlocked } from '../../utils/locationLogger';
 import { showLocationOffAlert } from '../../utils/locationOffAlert';
 import { devLog } from '../../utils/devLog';
+import { formatFileSize } from '../../utils/reportFormatters';
 import { MediaType, MediaLocation, MediaSource, resolveMediaType } from '../../models/taskForm.types';
+import type * as CompressorModule from 'react-native-compressor';
+import { File } from 'expo-file-system';
+
+// Best-effort file size read for the compression log below — never worth
+// throwing over, a log line missing one number isn't worth failing an
+// upload for.
+function fileSizeOf(uri: string): number | undefined {
+  try {
+    return new File(uri).size ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// 2 MB target for both photo and video uploads. Neither compressor call
+// takes a direct "stop once you hit this file size" option (only
+// dimension/quality/bitrate knobs, which don't map to an exact byte count
+// for arbitrary content), so hitting a real target means compressing,
+// checking the actual result, and retrying with a more aggressive setting
+// if it's still too big — stopping as soon as one attempt lands under the
+// target, or after the last (most aggressive) attempt if none do.
+const TARGET_MAX_BYTES = 2 * 1024 * 1024;
+
+// Each step below is deliberately more aggressive than the last. The final
+// tier is a genuine last resort (quality 0.25, 800px) for the rare very
+// large/high-res photo the first four tiers still don't get under target.
+const PHOTO_ATTEMPTS: { quality: number; maxWidth: number; maxHeight: number }[] = [
+  { quality: 0.8, maxWidth: 1920, maxHeight: 1920 },
+  { quality: 0.6, maxWidth: 1600, maxHeight: 1600 },
+  { quality: 0.5, maxWidth: 1280, maxHeight: 1280 },
+  { quality: 0.35, maxWidth: 1024, maxHeight: 1024 },
+  { quality: 0.25, maxWidth: 800, maxHeight: 800 },
+];
+
+// 'auto' compressionMethod only shrinks resolution (maxSize) — it leaves
+// bitrate to its own internal heuristic, which on a lot of real phone clips
+// barely moves the needle (e.g. a 4 MB clip only landing at 3 MB). Explicit
+// `bitrate` only takes effect under 'manual' mode, which is what actually
+// drives the size down hard. Escalates two ways at once — lower resolution
+// AND lower bitrate — bottoming out at 250 kbps, which is rough quality but
+// still watchable, for the last-resort attempt. Even so, 2 MB is a tight
+// target for video (a real minimum bitrate is needed to stay watchable at
+// all), so this can still land above target after every attempt — in that
+// case the smallest one actually achieved is used rather than looping
+// forever or blocking the upload over it.
+// stripAudio drops the audio track entirely — a real extra saving,
+// especially on longer clips, but it does mean the uploaded video is
+// silent. Kept off for the first (least aggressive) attempt so a clip
+// that's already close to target keeps its audio; only stripped once
+// we're forced into the more aggressive tiers anyway.
+const VIDEO_ATTEMPTS: { maxSize: number; bitrate: number; stripAudio: boolean }[] = [
+  { maxSize: 1280, bitrate: 2_000_000, stripAudio: false },
+  { maxSize: 854, bitrate: 1_000_000, stripAudio: true },
+  { maxSize: 640, bitrate: 500_000, stripAudio: true },
+  { maxSize: 480, bitrate: 250_000, stripAudio: true },
+];
 
 export type QueueItemKind = 'photo' | 'video' | 'pdf';
 // Every item's outcome is shown as its own row, all at once (not one
@@ -54,6 +111,17 @@ export type QueueItem = {
   // defaultTags param (e.g. Running Hours always confirms pre-tagged
   // 'Running Hours', not left for the user to pick afterward).
   tags?: string[];
+  // Set once on-device compression finishes for a photo/video item — the
+  // resulting size, shown alongside the original `fileSize` in
+  // MediaUploadOverlay so the user can see the file actually got smaller
+  // before it uploads. Stays undefined for PDFs (never compressed) or if
+  // compression failed and the original file is being uploaded as-is.
+  compressedFileSize?: number;
+  // True only while compression is actively running for this item —
+  // MediaUploadOverlay shows a "Compressing…" line instead of the upload
+  // progress bar for that window, since real network upload (and the
+  // cancel button) only starts once this flips back to false.
+  isCompressing?: boolean;
 };
 
 export type UploadQueueState = {
@@ -168,13 +236,19 @@ export function useMediaUploadQueue(
     // rather than getting it for free the way putOrQueue-backed actions do.
     logLocationForAction(`Upload ${item.kind} (${item.fileName})`);
 
-    const sizeError = validateItemSize(item.kind, item.fileSize);
-    if (sizeError) {
-      setState((prev) => ({
-        ...prev,
-        items: prev.items.map((it) => (it.localId === item.localId ? { ...it, status: 'error', errorMessage: sizeError, retryable: false } : it)),
-      }));
-      return;
+    // Photo/video isn't checked here — it's checked after compression below
+    // (compression runs toward the same 2 MB limit, so the raw pre-compress
+    // size isn't the number that should ever reject an upload). PDFs aren't
+    // compressed, so they're still checked upfront at their original size.
+    if (item.kind === 'pdf') {
+      const sizeError = validateItemSize(item.kind, item.fileSize);
+      if (sizeError) {
+        setState((prev) => ({
+          ...prev,
+          items: prev.items.map((it) => (it.localId === item.localId ? { ...it, status: 'error', errorMessage: sizeError, retryable: false } : it)),
+        }));
+        return;
+      }
     }
 
     setState((prev) => ({
@@ -205,8 +279,133 @@ export function useMediaUploadQueue(
       const locationPromise = pendingLocationsRef.current.get(item.localId);
       pendingLocationsRef.current.delete(item.localId);
       const location = locationPromise ? await locationPromise : undefined;
+
+      // Shrinks the file on-device before it ever reaches the uploader, so
+      // a slow/weak on-site connection is uploading a smaller file, not the
+      // raw capture. Best-effort for both kinds: if compression itself
+      // fails for any reason (unsupported format, native module
+      // unavailable in Expo Go, etc.), falls back to the original uri
+      // rather than failing the whole upload over what's genuinely just an
+      // optimization, not a requirement. PDFs are deliberately excluded —
+      // react-native-compressor only handles image/video/audio, nothing
+      // that could shrink a PDF.
+      let uploadUri = item.uri;
+      // Set below once compression actually runs — carried onto
+      // succeededItem further down so SitePhoto (and the Photos & Video
+      // card) can show the real post-compression size, not just the
+      // original pick size. Declared here (not just inside the block below)
+      // because `item` itself is a stale closure snapshot from when this
+      // upload started — it never picks up the isCompressing/
+      // compressedFileSize updates this function pushes via setState.
+      let finalCompressedBytes: number | undefined;
+      if (item.kind === 'video' || item.kind === 'photo') {
+        const originalBytes = fileSizeOf(item.uri) ?? item.fileSize;
+        const startedAt = Date.now();
+        devLog(
+          `[Media Upload] "${item.fileName}" (${item.kind}) picked at `
+          + `${formatFileSize(originalBytes) || 'unknown size'} — limit is ${formatFileSize(TARGET_MAX_BYTES)}, `
+          + `${originalBytes && originalBytes > TARGET_MAX_BYTES ? 'compressing before upload...' : 'already under limit, compressing anyway for a smaller upload...'}`
+        );
+        setState((prev) => ({
+          ...prev,
+          items: prev.items.map((it) => (it.localId === item.localId ? { ...it, isCompressing: true } : it)),
+        }));
+        try {
+          // Lazily required, not statically imported at module scope — this
+          // is a third-party native module (Nitro Modules/New Architecture)
+          // that doesn't exist under Expo Go at all. A static top-level
+          // import throws the instant this whole file is evaluated, which
+          // crashed both task forms outright (before this function's own
+          // try/catch ever got a chance to run) rather than just falling
+          // back to the original file the way every other compression
+          // failure below already does. Same guard shape as
+          // pushNotificationHandlers.ts's own lazy require of
+          // expo-notifications, for the identical Expo-Go reason.
+          const { Video: VideoCompressor, Image: ImageCompressor }: typeof CompressorModule = require('react-native-compressor');
+
+          const attemptsCount = item.kind === 'video' ? VIDEO_ATTEMPTS.length : PHOTO_ATTEMPTS.length;
+          let attemptCount = 0;
+          let compressedBytes: number | undefined;
+          for (let i = 0; i < attemptsCount; i += 1) {
+            attemptCount += 1;
+            let candidateUri: string;
+            if (item.kind === 'video') {
+              const attempt = VIDEO_ATTEMPTS[i];
+              // 'manual' (not 'auto') is required for `bitrate` to actually
+              // take effect — see the VIDEO_ATTEMPTS comment above.
+              candidateUri = await VideoCompressor.compress(item.uri, {
+                compressionMethod: 'manual',
+                maxSize: attempt.maxSize,
+                bitrate: attempt.bitrate,
+                stripAudio: attempt.stripAudio,
+              });
+            } else {
+              const attempt = PHOTO_ATTEMPTS[i];
+              // maxWidth/maxHeight only bounds the longer side of whichever
+              // orientation — a full-resolution gallery pick (easily
+              // 4000px+ on a modern phone) still gets meaningfully
+              // downsized here, not just JPEG-requality'd the way the
+              // picker's own `quality: 0.7` alone does at capture time.
+              candidateUri = await ImageCompressor.compress(item.uri, {
+                compressionMethod: 'auto',
+                maxWidth: attempt.maxWidth,
+                maxHeight: attempt.maxHeight,
+                quality: attempt.quality,
+              });
+            }
+            uploadUri = candidateUri;
+            compressedBytes = fileSizeOf(candidateUri);
+            const underTarget = compressedBytes !== undefined && compressedBytes <= TARGET_MAX_BYTES;
+            devLog(
+              `[Media Upload] Attempt ${attemptCount}/${attemptsCount} for "${item.fileName}" — `
+              + `result ${formatFileSize(compressedBytes) || 'unknown size'} `
+              + `(limit ${formatFileSize(TARGET_MAX_BYTES)}) — ${underTarget ? 'under limit' : 'still over limit'}`
+            );
+            // Under target, or this was the last (most aggressive) attempt
+            // available — either way, stop here and use what we've got.
+            if (underTarget || attemptCount === attemptsCount) break;
+          }
+
+          const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+          const reduction = originalBytes && compressedBytes
+            ? `${Math.round((1 - compressedBytes / originalBytes) * 100)}%`
+            : 'unknown';
+          const isUnderTarget = compressedBytes !== undefined && compressedBytes <= TARGET_MAX_BYTES;
+          devLog(
+            `[Media Upload] Done compressing ${item.kind} "${item.fileName}" in ${seconds}s over ${attemptCount} attempt(s) — `
+            + `${formatFileSize(originalBytes) || 'unknown size'} -> ${formatFileSize(compressedBytes) || 'unknown size'} `
+            + `(reduced by ${reduction}) — `
+            + (isUnderTarget
+              ? 'OK to upload, under the 2MB limit.'
+              : 'still over the 2MB limit after the most aggressive attempt, uploading the smallest result achieved anyway.')
+          );
+          setState((prev) => ({
+            ...prev,
+            items: prev.items.map((it) => (it.localId === item.localId ? { ...it, isCompressing: false, compressedFileSize: compressedBytes } : it)),
+          }));
+        } catch (compressError) {
+          devLog(`[Media Upload] ${item.kind} compression failed, uploading original file:`, compressError);
+          setState((prev) => ({
+            ...prev,
+            items: prev.items.map((it) => (it.localId === item.localId ? { ...it, isCompressing: false } : it)),
+          }));
+        }
+
+        // Checked against the post-compression result, not the raw pick —
+        // compression above already tried its most aggressive setting, so
+        // if it's still over 2 MB at this point there's nothing left to do
+        // but reject it rather than upload an oversized file.
+        finalCompressedBytes = fileSizeOf(uploadUri) ?? originalBytes;
+        const sizeError = validateItemSize(item.kind, finalCompressedBytes);
+        if (sizeError) {
+          const limitError: any = new Error(sizeError);
+          limitError.isSizeLimitError = true;
+          throw limitError;
+        }
+      }
+
       const uploader = item.kind === 'photo' ? uploaders.uploadPhoto : uploaders.uploadVideoOrPdf;
-      const gcsUrl = await uploader({ uri: item.uri, fileName: item.fileName }, type, location, defaultTags, onProgress, controller.signal);
+      const gcsUrl = await uploader({ uri: uploadUri, fileName: item.fileName }, type, location, defaultTags, onProgress, controller.signal);
 
       // The confirmed gcsUrl/type — not on the stale `item` closure param,
       // only just resolved above — is what onItemSucceeded's caller needs
@@ -214,14 +413,32 @@ export function useMediaUploadQueue(
       // (MediaTagPicker's PATCH matches by gcsUrl). tags mirrors whatever
       // was actually sent (defaultTags), so the local list reflects the
       // real saved tag immediately, without a separate re-fetch.
-      const succeededItem: QueueItem = { ...item, status: 'done', itemProgress: 100, gcsUrl, type, location, tags: defaultTags };
+      // compressedFileSize only set when it's genuinely different from the
+      // original (i.e. compression actually ran and produced a distinct
+      // result) — an unchanged value just means "same as fileSize", not
+      // worth a separate arrow in the UI.
+      const succeededItem: QueueItem = {
+        ...item,
+        status: 'done',
+        itemProgress: 100,
+        gcsUrl,
+        type,
+        location,
+        tags: defaultTags,
+        compressedFileSize: finalCompressedBytes !== undefined && finalCompressedBytes !== item.fileSize ? finalCompressedBytes : undefined,
+      };
       setState((prev) => ({
         ...prev,
         items: prev.items.map((it) => (it.localId === item.localId ? succeededItem : it)),
       }));
       onItemSucceeded(succeededItem);
     } catch (error: any) {
-      if (isCancelError(error)) {
+      if (error?.isSizeLimitError) {
+        setState((prev) => ({
+          ...prev,
+          items: prev.items.map((it) => (it.localId === item.localId ? { ...it, status: 'error', errorMessage: error.message, retryable: false } : it)),
+        }));
+      } else if (isCancelError(error)) {
         if (fullCancelRef.current) return;
         // This one item's own Cancel was tapped — drop it from the list
         // entirely (as if it was never picked) and move straight on to

@@ -22,7 +22,9 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -73,11 +75,14 @@
         {
           "android": {
             "enableProguardInReleaseBuilds": true,
-            "enableShrinkResourcesInReleaseBuilds": true
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableMinifyInReleaseBuilds": true
           }
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withAndroidProfileable",
+      "react-native-compressor"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -86,8 +91,12 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "559b91eb-7f67-49fb-ad77-a1e72eac29fd"
+        "projectId": "7cd6236d-ebf6-4886-baf1-87ca8c7380b3"
       }
-    }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "owner": "istudio_mohit"
   }
 }

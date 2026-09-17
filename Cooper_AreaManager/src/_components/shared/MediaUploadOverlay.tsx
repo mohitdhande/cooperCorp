@@ -60,7 +60,24 @@ function UploadRow({ item, index, onCancelItem }: { item: QueueItem; index: numb
           text, since those messages genuinely differ file to file. */}
       {isError && !!item.errorMessage && !item.retryable && <Text style={styles.rowErrorText}>{item.errorMessage}</Text>}
 
-      {isUploading && (
+      {/* Once compression has actually run and produced a result, show the
+          before/after size — sticks around through uploading/done/error so
+          the user can always see how much smaller the file got, not just
+          in the brief compressing window. */}
+      {item.compressedFileSize != null && (
+        <Text style={styles.compressedSizeText}>
+          Compressed {formatSize(item.fileSize)} {'→'} {formatSize(item.compressedFileSize)}
+        </Text>
+      )}
+
+      {isUploading && item.isCompressing && (
+        <View style={styles.uploadingLine}>
+          <Text style={styles.uploadingLabel}>Compressing…</Text>
+          {!!item.fileSize && <Text style={styles.uploadingPercent}>{formatSize(item.fileSize)}</Text>}
+        </View>
+      )}
+
+      {isUploading && !item.isCompressing && (
         <>
           <View style={styles.uploadingLine}>
             <Text style={styles.uploadingLabel}>Uploading</Text>
@@ -171,6 +188,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   rowErrorText: { fontSize: 12, fontWeight: '500', color: '#9CA3AF', marginTop: 8 },
+  compressedSizeText: { fontSize: 12, fontWeight: '600', color: '#16A34A', marginTop: 8 },
   offlineBannerText: {
     fontSize: 12, fontWeight: '600', color: '#B45309',
     textAlign: 'center',

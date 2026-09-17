@@ -14,6 +14,34 @@ export type PushNavigationData = { screen?: string; entityId?: string };
 // commissioning_assigned/reassigned (real _id) shape first.
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
+// Which icon family a notification/inbox item reads as — checked against
+// the real `type` string first (e.g. "commissioning_assigned",
+// "recommissioning_assigned"), falling back to data.screen for anywhere
+// `type` isn't available (the raw push payload's own `data` object may not
+// always carry it the same way an inbox item's top-level `type` field
+// does). One shared function so the in-app inbox list and the foreground
+// push banner can never drift apart on what counts as which category.
+export function getNotificationCategory(type?: string, data?: PushNavigationData): 'commissioning' | 'service' {
+  if (type && /^re?commissioning/i.test(type)) return 'commissioning';
+  if (data?.screen === 'commissioning') return 'commissioning';
+  return 'service';
+}
+
+// A push received while the app is already open — separate from the tap-
+// response listeners below (addNotificationResponseReceivedListener only
+// fires on tap; this fires on arrival, tapped or not). Subscribed to by
+// ForegroundNotificationBanner, same pub/sub shape as
+// mediaSyncEngine.ts's own subscribeToMediaSyncSuccess, so a plain utility
+// file (this one) can still notify a React component mounted at the root
+// without importing any UI here itself.
+export type ForegroundNotificationEvent = { title: string; body: string; data?: PushNavigationData & { type?: string } };
+type ForegroundListener = (event: ForegroundNotificationEvent) => void;
+const foregroundListeners = new Set<ForegroundListener>();
+export function subscribeToForegroundNotification(listener: ForegroundListener): () => void {
+  foregroundListeners.add(listener);
+  return () => { foregroundListeners.delete(listener); };
+}
+
 // Shared by both a tapped push notification and a tapped inbox item —
 // same { screen, entityId } payload, same destination either way.
 export function navigateFromPushData(router: ImperativeRouter, data: PushNavigationData | undefined | null) {
@@ -117,7 +145,26 @@ export function setupPushNotificationListeners(router: ImperativeRouter): () => 
       })
       .catch((error) => console.log('[Push Notifications] getLastNotificationResponseAsync failed:', error));
 
-    return () => responseSub.remove();
+    // Fires on arrival, not just on tap — this is what feeds
+    // ForegroundNotificationBanner (the custom, fully-restylable substitute
+    // for the OS's own system-tray banner, which can't be restyled per type
+    // from app code — see this file's own getNotificationCategory comment).
+    // shouldShowBanner (configureNotificationHandler above) still also lets
+    // the OS show its own default banner at the same time — this listener
+    // doesn't suppress that, it only adds the extra in-app one on top.
+    const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+      const content = notification.request.content;
+      foregroundListeners.forEach((listener) => listener({
+        title: content.title || '',
+        body: content.body || '',
+        data: content.data as PushNavigationData & { type?: string },
+      }));
+    });
+
+    return () => {
+      responseSub.remove();
+      receivedSub.remove();
+    };
   } catch (error) {
     console.log('[Push Notifications] Failed to set up notification listeners:', error);
     return () => {};

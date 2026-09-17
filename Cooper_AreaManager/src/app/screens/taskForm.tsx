@@ -42,6 +42,7 @@ import { ComplaintCodePickerModal } from "../../_components/taskForm/ComplaintCo
 import { DropdownField } from "../../_components/taskForm/DropdownField";
 import {
   CheckToggleRow,
+  LevelToggleRow,
   MultiOptionToggleRow,
   TwoOptionToggleRow,
   YesNoToggleRow,
@@ -340,7 +341,16 @@ export default function TaskFormScreen() {
               </View>
             ))}
 
-          {(
+          {/* Oil Level / Coolant Level (OK/Not OK) — Commissioning and
+          Re-Commissioning already ask this exact same question as its own
+          Yes/No compliance check in Group B's "Commissioning Instructions"
+          (Lub Oil Level / Coolant Level, commissioningChecks.B1/B2) — a
+          separate field, but the same real-world question asked twice on
+          the same form. Group B doesn't exist for Pre-Commissioning or
+          Revalidation (see the gating on Group B's own render site), so
+          this Engine Parameters copy stays as the only place those two
+          task types ask it. */}
+          {(vm.isPreCommissioning || vm.isRevalidation) && (
             [
               ["Oil Level", "oilLevel", "oilLevelComment"],
               [
@@ -430,6 +440,14 @@ export default function TaskFormScreen() {
   // right after Genset Electrical Readings — since revalidation's Step 2
   // is the separate validation checklist and never had a Running Hours
   // section to begin with.
+  // This card bundles two separate requirements — the running-hours number
+  // (its own save call, groupE) and a required photo — under one
+  // accordion. isSectionExpanded's normal auto-minimize-on-save behavior
+  // only tracks the number's own save, so saving just the number was
+  // auto-collapsing the whole card and hiding the still-required photo
+  // upload along with it. Force it to stay expanded until a photo actually
+  // exists, regardless of the number's own saved/reopened state.
+  const runningHoursExpanded = isSectionExpanded("groupE") || vm.runningHoursPhotos.length === 0;
   const runningHoursCard = (
     <View style={styles.sectionCard}>
       <GroupHeader
@@ -437,9 +455,9 @@ export default function TaskFormScreen() {
         title="Running Hours"
         saved={vm.sectionSuccess["groupE"] || false}
         onPress={() => toggleSectionReopen("groupE")}
-        expanded={isSectionExpanded("groupE")}
+        expanded={runningHoursExpanded}
       />
-      {isSectionExpanded("groupE") && (
+      {runningHoursExpanded && (
         <>
           <View style={[styles.fieldRow, { marginTop: 12, alignItems: "center", gap: 12 }]}>
             <TextInput
@@ -1408,7 +1426,11 @@ export default function TaskFormScreen() {
                   />
                   {isSectionExpanded("groupB") && (
                     <>
-                      <CheckToggleRow
+                      {/* H/M/L, not OK/Not OK — Lub Oil Level and Coolant
+                      Level are level readings, not a pass/fail check, per
+                      the reference design. Fuel Level (below) keeps the
+                      X/check pair unchanged. */}
+                      <LevelToggleRow
                         index={1}
                         question="Lub Oil Level"
                         value={vm.commissioningChecks.B1 || ""}
@@ -1428,7 +1450,7 @@ export default function TaskFormScreen() {
                           vm.updateCommissioningCheck("B2_comment", v)
                         }
                       />
-                      <CheckToggleRow
+                      <LevelToggleRow
                         index={3}
                         question="Coolant Level"
                         value={vm.commissioningChecks.B3 || ""}

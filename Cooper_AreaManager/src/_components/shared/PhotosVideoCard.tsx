@@ -113,7 +113,13 @@ export function PhotosVideoCard({ sitePhotos, onRemove, onAddPress, imagesOnly =
       {videos.length > 0 && (
         <View style={styles.videoList}>
           {videos.map((video) => {
-            const sizeLabel = formatFileSize(video.fileSize);
+            // Shows "4.7 MB → 1.9 MB" once compression actually ran and
+            // changed the size (compressedFileSize only ever set then —
+            // see SitePhoto's own comment); falls back to just the original
+            // size for anything hydrated from a previously-saved task.
+            const sizeLabel = video.compressedFileSize
+              ? `${formatFileSize(video.fileSize)} → ${formatFileSize(video.compressedFileSize)}`
+              : formatFileSize(video.fileSize);
             return (
               <View key={video.id} style={styles.videoRow}>
                 <View style={styles.videoIconChip}>

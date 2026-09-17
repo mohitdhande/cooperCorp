@@ -62,6 +62,12 @@ export type SitePhoto = {
   // it — shown as "1.9 MB" on the Video card's list row. Optional since not
   // every platform/picker path returns it.
   fileSize?: number;
+  // Bytes, after on-device compression — set only when compression actually
+  // ran and changed the size (see useMediaUploadQueue.ts's succeededItem).
+  // Shown as "1.9 MB → 0.8 MB" alongside fileSize once present; absent for
+  // anything hydrated from a previously-saved task (the backend doesn't
+  // track a separate pre/post-compression size) or a PDF (never compressed).
+  compressedFileSize?: number;
   // The real backend media key (distinct from `uri`, which may be a signed
   // display URL for a private-bucket thumbnail) — required for tagging
   // (PATCH .../media matches by gcsUrl) and set as soon as an upload

@@ -15,6 +15,7 @@ import { runSync } from '../utils/syncEngine';
 import { runMediaSync } from '../utils/mediaSyncEngine';
 import { registerPushToken } from '../utils/pushNotifications';
 import { configureNotificationHandler, setupPushNotificationListeners } from '../utils/pushNotificationHandlers';
+import { ForegroundNotificationBanner } from '../_components/shared/ForegroundNotificationBanner';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -98,6 +99,11 @@ export default function RootLayout() {
   return (
      <View style={{ flex: 1, backgroundColor: '#11101C' }}>
     <SafeAreaProvider>
+      {/* Absolutely positioned, mounted once at the root regardless of
+          which screen is showing — a push can arrive while any screen is
+          on top. See ForegroundNotificationBanner's own comment for why
+          this exists separately from the OS's own system-tray banner. */}
+      <ForegroundNotificationBanner />
       <ErrorBoundary>
         <TeamProvider>
         <NotificationsProvider>

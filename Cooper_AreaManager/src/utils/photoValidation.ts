@@ -6,6 +6,13 @@
 // useMediaUploadQueue.ts), so a batch of several files uploads whatever it
 // can one by one instead of the whole pick being blocked/filtered upfront
 // just because one of several files is oversized.
+//
+// Photo/video is checked AFTER on-device compression (useMediaUploadQueue.ts
+// still compresses every photo/video toward a 2 MB target before upload, for
+// bandwidth's sake) — but the hard reject ceiling here is deliberately much
+// more generous than that target, so a file that compression couldn't quite
+// shrink all the way down still uploads instead of being blocked. PDFs
+// aren't compressed, so they're still checked at their original size.
 export const MAX_PHOTO_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg'];
 const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg'];

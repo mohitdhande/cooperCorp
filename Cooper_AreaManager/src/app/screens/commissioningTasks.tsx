@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, ScrollView, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, FlatList, useWindowDimensions } from 'react-native';
 import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
@@ -71,139 +71,143 @@ export default function CommissioningTasksScreen() {
   const isSearchActive = searched && !!searchText.trim();
   const matchedSearchResults = searchResults.filter((r) => r.task);
 
+  // Unified list data — the search-results branch and the normal task-list
+  // branch used to render two separately-written but functionally
+  // identical TaskPreviewCard blocks (same isMyOwnTask/canActInActiveTab
+  // logic, same props). Flattened to one plain task[] here so renderItem
+  // below only needs to exist once, and so the whole screen can ride a
+  // single FlatList instead of a ScrollView + .map() that used to mount
+  // every task at once regardless of how many there were — see the
+  // matching comment on renderItem for why that mattered.
+  const listData = isSearchActive ? matchedSearchResults.map((r) => r.task) : tasks;
+  // Nothing to show while a search or the initial page load is still in
+  // flight — LoadingOverlay above already covers the screen for the
+  // isLoading case, and mid-search intentionally shows nothing until it
+  // resolves (matches the original ScrollView version's own `? null` arms).
+  const showList = isSearchActive ? !isSearching : !isLoading;
+
+  const renderEmptyState = () => {
+    if (isSearchActive) {
+      if (isSearching) return null;
+      if (searchError) return <Text style={styles.statusText}>{searchError}</Text>;
+      return (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyCardText}>You're all caught up — no active tasks.</Text>
+        </View>
+      );
+    }
+    if (isLoading) return null;
+    if (error) return <Text style={styles.statusText}>{error}</Text>;
+    return <Text style={styles.statusText}>No {selectedTab.toLowerCase()} commissioning tasks.</Text>;
+  };
+
+  // FlatList virtualizes this — only the cards actually on/near screen are
+  // ever mounted, unlike the previous ScrollView + .map() which rendered
+  // every single task in the list at once regardless of how many there
+  // were. Shared by both the search-results and normal task-list cases
+  // (listData above already flattens either source to the same plain
+  // task[] shape), so this logic — previously duplicated near-verbatim in
+  // both branches — now exists exactly once.
+  const renderTaskCard = ({ item: task }: { item: (typeof tasks)[number] }) => {
+    // Active tab: arrow/start-continue only for a task genuinely assigned
+    // to the viewer (a dealer's own self-assigned task, same parity
+    // serviceTasks.tsx already has) — a dealer's team task (assigned to
+    // one of their engineers) still only gets Accept/Assign here, never
+    // Start/Continue. Completed tab keeps the arrow (View Report needs it)
+    // for everyone.
+    const isMyOwnTask = task.assignedTo?.userId === profile?.userId;
+    const canActInActiveTab = isMyOwnTask;
+    return (
+      // Padding applied per-row here (not on the FlatList's own
+      // contentContainerStyle) — the header sections above already carry
+      // their own horizontal padding, so padding the shared container
+      // would double it up there.
+      <View style={{ paddingHorizontal: hPad }}>
+      <TaskPreviewCard
+        task={task}
+        effectiveStatus={taskStatusOverrides[task._id] || task.status}
+        isLoading={!!taskActionLoading[task._id]}
+        errorMsg={taskActionError[task._id]}
+        onArrowPress={
+          selectedTab === 'Active'
+            ? (canActInActiveTab ? () => handleArrowPress(task) : undefined)
+            : () => handleArrowPress(task)
+        }
+        // Nobody can Accept a task that isn't assigned to them — the
+        // backend rejects it ("not assigned to you"). This used to also
+        // gate on `!isDealer`, which suppressed Accept for every
+        // non-dealer role even on their OWN task (an area manager's/
+        // engineer's own self-assigned ASSIGNED task on this Active tab
+        // wrongly showed the Start/Continue arrow instead of Accept —
+        // inconsistent with the exact same task correctly showing Accept
+        // on the Dashboard). isMyOwnTask alone is the actual rule; role
+        // doesn't matter.
+        onAcceptPress={selectedTab === 'Active' && !isMyOwnTask ? undefined : () => handleAcceptTask(task._id)}
+        onAssignPress={isDealer && !isMyOwnTask ? () => openAssignPicker(task) : undefined}
+        onManagerAssignPress={selectedTab === 'Active' ? undefined : (isAreaManagerAssign ? () => openAssignPicker(task) : undefined)}
+        assigneeOnlyCluster
+      />
+      </View>
+    );
+  };
+
+  const listHeader = (
+    <>
+      <View style={[styles.header, { paddingHorizontal: headerPad }]}>
+        <TouchableOpacity style={styles.headerButton} onPress={() => router.replace('/screens/dashboard' as any)}>
+          <ChevronLeft size={22} color="#979797" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>COMMISSIONING</Text>
+        <NotificationBellButton />
+      </View>
+
+      <View style={[styles.toolRow, { paddingHorizontal: headerPad }]}>
+        <SearchBar
+          value={searchText}
+          onChangeText={setSearchText}
+          onSubmit={handleSearch}
+          onClear={handleClearSearch}
+          placeholder="Search genset number..."
+          toggleStyle={styles.searchToggleButton}
+          containerStyle={{ flex: 1, marginRight: 12 }}
+        />
+        {canCreate && (
+          <TouchableOpacity style={[styles.toolButton, styles.toolButtonCreate]} onPress={() => router.push('/screens/newJob' as any)}>
+            <Plus size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={{ marginHorizontal: hPad, marginBottom: 16 }}>
+        <StatusTabs variant="commissioning" selected={selectedTab} onChange={selectTab} counts={counts} />
+      </View>
+
+      <View style={[styles.paginationRow, { paddingHorizontal: hPad }]}>
+        <PageController current={page} total={totalPages} onPrev={goToPrevPage} onNext={goToNextPage} labelPrefix="Page " />
+      </View>
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScreenBackground />
       {(isLoading || Object.values(taskActionLoading).some(Boolean)) && <LoadingOverlay />}
       <Toast visible={toastVisible} message={toastMessage} type={toastType} />
 
-      <ScrollView
+      <FlatList
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 130 }}
+        contentContainerStyle={{ paddingBottom: 130, gap: 32 }}
         // Search box above stays focused/keyboard-up while typing —
         // without this, the first tap on a task card just dismisses the
         // keyboard instead of opening it, needing a second tap.
         keyboardShouldPersistTaps="handled"
-      >
-        <View style={[styles.header, { paddingHorizontal: headerPad }]}>
-          <TouchableOpacity style={styles.headerButton} onPress={() => router.replace('/screens/dashboard' as any)}>
-            <ChevronLeft size={22} color="#979797" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>COMMISSIONING</Text>
-          <NotificationBellButton />
-        </View>
-
-        <View style={[styles.toolRow, { paddingHorizontal: headerPad }]}>
-          <SearchBar
-            value={searchText}
-            onChangeText={setSearchText}
-            onSubmit={handleSearch}
-            onClear={handleClearSearch}
-            placeholder="Search genset number..."
-            toggleStyle={styles.searchToggleButton}
-            containerStyle={{ flex: 1, marginRight: 12 }}
-          />
-          {canCreate && (
-            <TouchableOpacity style={[styles.toolButton, styles.toolButtonCreate]} onPress={() => router.push('/screens/newJob' as any)}>
-              <Plus size={22} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={{ marginHorizontal: hPad, marginBottom: 16 }}>
-          <StatusTabs variant="commissioning" selected={selectedTab} onChange={selectTab} counts={counts} />
-        </View>
-
-        <View style={[styles.paginationRow, { paddingHorizontal: hPad }]}>
-          <PageController current={page} total={totalPages} onPrev={goToPrevPage} onNext={goToNextPage} labelPrefix="Page " />
-        </View>
-
-        <View style={{ paddingHorizontal: hPad, gap: 32 }}>
-        {isSearchActive ? (
-          isSearching ? null : searchError ? (
-            <Text style={styles.statusText}>{searchError}</Text>
-          ) : matchedSearchResults.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyCardText}>You're all caught up — no active tasks.</Text>
-            </View>
-          ) : (
-            matchedSearchResults.map(({ task }) => {
-              // Active tab: arrow/start-continue only for a task genuinely
-              // assigned to the viewer (a dealer's own self-assigned task,
-              // same parity serviceTasks.tsx already has) — a dealer's team
-              // task (assigned to one of their engineers) still only gets
-              // Accept/Assign here, never Start/Continue. Completed tab
-              // keeps the arrow (View Report needs it) for everyone.
-              const isMyOwnTask = task.assignedTo?.userId === profile?.userId;
-              const canActInActiveTab = isMyOwnTask;
-              return (
-              <TaskPreviewCard
-                key={task._id}
-                task={task}
-                effectiveStatus={taskStatusOverrides[task._id] || task.status}
-                isLoading={!!taskActionLoading[task._id]}
-                errorMsg={taskActionError[task._id]}
-                onArrowPress={
-                  selectedTab === 'Active'
-                    ? (canActInActiveTab ? () => handleArrowPress(task) : undefined)
-                    : () => handleArrowPress(task)
-                }
-                // Nobody can Accept a task that isn't assigned to them — the
-                // backend rejects it ("not assigned to you"). This used to
-                // also gate on `!isDealer`, which suppressed Accept for
-                // every non-dealer role even on their OWN task (an area
-                // manager's/engineer's own self-assigned ASSIGNED task on
-                // this Active tab wrongly showed the Start/Continue arrow
-                // instead of Accept — inconsistent with the exact same task
-                // correctly showing Accept on the Dashboard). isMyOwnTask
-                // alone is the actual rule; role doesn't matter.
-                onAcceptPress={selectedTab === 'Active' && !isMyOwnTask ? undefined : () => handleAcceptTask(task._id)}
-                onAssignPress={isDealer && !isMyOwnTask ? () => openAssignPicker(task) : undefined}
-                onManagerAssignPress={selectedTab === 'Active' ? undefined : (isAreaManagerAssign ? () => openAssignPicker(task) : undefined)}
-                assigneeOnlyCluster
-              />
-              );
-            })
-          )
-        ) : isLoading ? null : error ? (
-          <Text style={styles.statusText}>{error}</Text>
-        ) : tasks.length === 0 ? (
-          <Text style={styles.statusText}>No {selectedTab.toLowerCase()} commissioning tasks.</Text>
-        ) : (
-          tasks.map((task) => {
-            // Active tab: arrow/start-continue only for a task genuinely
-            // assigned to the viewer (a dealer's own self-assigned task) —
-            // a dealer's team task (assigned to an engineer) still only
-            // gets Accept/Assign here. Completed tab keeps the arrow (View
-            // Report needs it) for everyone.
-            const isMyOwnTask = task.assignedTo?.userId === profile?.userId;
-            const canActInActiveTab = isMyOwnTask;
-            return (
-            <TaskPreviewCard
-              key={task._id}
-              task={task}
-              effectiveStatus={taskStatusOverrides[task._id] || task.status}
-              isLoading={!!taskActionLoading[task._id]}
-              errorMsg={taskActionError[task._id]}
-              onArrowPress={
-                selectedTab === 'Active'
-                  ? (canActInActiveTab ? () => handleArrowPress(task) : undefined)
-                  : () => handleArrowPress(task)
-              }
-              // Nobody can Accept a task that isn't assigned to them — see
-              // the matching comment in the search-results branch above for
-              // why this doesn't also gate on `!isDealer`.
-              onAcceptPress={selectedTab === 'Active' && !isMyOwnTask ? undefined : () => handleAcceptTask(task._id)}
-              onAssignPress={isDealer && !isMyOwnTask ? () => openAssignPicker(task) : undefined}
-              onManagerAssignPress={selectedTab === 'Active' ? undefined : (isAreaManagerAssign ? () => openAssignPicker(task) : undefined)}
-              assigneeOnlyCluster
-            />
-            );
-          })
-        )}
-        </View>
-      </ScrollView>
+        data={showList ? listData : []}
+        keyExtractor={(task) => task._id}
+        renderItem={renderTaskCard}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={renderEmptyState}
+      />
 
       {/* Keyed on the target task (or 'closed') so every open is a fresh
           picker instance — see the matching comment in newServiceJob.tsx
@@ -221,7 +225,7 @@ export default function CommissioningTasksScreen() {
         onConfirm={handleAssignTask}
       />
 
-      {/* Floats over the ScrollView (instead of sitting below it as a
+      {/* Floats over the FlatList (instead of sitting below it as a
           normal flex sibling) so cards keep visibly scrolling behind this
           bar rather than the scroll area stopping flush above it — same
           pattern as the Dashboard's own bottom nav. */}
@@ -234,7 +238,7 @@ export default function CommissioningTasksScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6F6F6' },
-  // Pinned over the ScrollView, not a normal flex sibling below it — see
+  // Pinned over the FlatList, not a normal flex sibling below it — see
   // the comment at its call site for why.
   floatingFooter: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 

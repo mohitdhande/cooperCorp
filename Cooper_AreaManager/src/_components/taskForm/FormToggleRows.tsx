@@ -18,6 +18,15 @@ type CheckToggleRowProps = {
   onSetComment: (v: string) => void;
 };
 
+type LevelToggleRowProps = {
+  index: number | null;
+  question: string;
+  value: string;
+  comment: string;
+  onSetValue: (v: string) => void;
+  onSetComment: (v: string) => void;
+};
+
 type TwoOptionToggleRowProps = {
   index: string;
   question: string;
@@ -62,6 +71,15 @@ type ToggleRowCoreProps = {
   comment?: string;
   onSetComment?: (v: string) => void;
   commentPlaceholder?: string;
+  // A flat row of N plain-text option buttons (e.g. H/M/L) instead of the
+  // fixed X/check(/N/A) pair above — when provided, this replaces the
+  // optionA/optionB/hasNA rendering entirely (those props are ignored).
+  options?: string[];
+  // Which one of `options` (if any) reads as the "needs attention" state —
+  // renders red/active like X does, exactly like optionB elsewhere in this
+  // file; every other option renders green/active like optionA (Ok). Omit
+  // for a fully neutral option set with no good/bad meaning at all.
+  dangerOption?: string;
 };
 
 // Shared rendering for a checklist row: a zero-padded/numbered index +
@@ -86,7 +104,7 @@ type ToggleRowCoreProps = {
 function ToggleRowCore({
   indexLabel, alt, question, subtext, optionA, optionB, value, onSetValue,
   hasNA = false, naValue = 'N/A', commentTriggerValue, comment, onSetComment,
-  commentPlaceholder = 'Add a comment...',
+  commentPlaceholder = 'Add a comment...', options, dangerOption,
 }: ToggleRowCoreProps) {
   // `value` (and the option labels) are typed as string, but this reads
   // straight from whatever the backend/offline cache actually returned —
@@ -127,28 +145,53 @@ function ToggleRowCore({
           {subtext ? <Text style={styles.subtext}>{subtext}</Text> : null}
         </View>
 
-        <View style={styles.togglePill}>
-          <TouchableOpacity
-            style={[styles.toggleButton, styles.toggleButtonLeft, isB && styles.toggleButtonNotOkActive]}
-            onPress={() => onSetValue(optionB)}
-          >
-            <X size={20} strokeWidth={2.5} color={isB ? '#FFFFFF' : '#BBBBBB'} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.toggleButton, !hasNA && styles.toggleButtonRight, isA && styles.toggleButtonOkActive]}
-            onPress={() => onSetValue(optionA)}
-          >
-            <Check size={20} strokeWidth={2.5} color={isA ? '#FFFFFF' : '#BBBBBB'} />
-          </TouchableOpacity>
-          {hasNA && (
+        {options ? (
+          <View style={styles.togglePill}>
+            {options.map((option, i) => {
+              const optionActive = normalized === String(option).toUpperCase();
+              const isDanger = !!dangerOption && String(option).toUpperCase() === String(dangerOption).toUpperCase();
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.toggleButton,
+                    i === 0 && styles.toggleButtonLeft,
+                    i === options.length - 1 && styles.toggleButtonRight,
+                    optionActive && (isDanger ? styles.toggleButtonNotOkActive : styles.toggleButtonOkActive),
+                  ]}
+                  onPress={() => onSetValue(option)}
+                >
+                  <Text style={[styles.toggleButtonLevelText, optionActive && styles.toggleButtonLevelTextActive]}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.togglePill}>
             <TouchableOpacity
-              style={[styles.toggleButton, styles.toggleButtonRight, isNA && styles.toggleButtonNaActive]}
-              onPress={() => onSetValue(naValue)}
+              style={[styles.toggleButton, styles.toggleButtonLeft, isB && styles.toggleButtonNotOkActive]}
+              onPress={() => onSetValue(optionB)}
             >
-              <Text style={[styles.toggleButtonNaText, isNA && styles.toggleButtonNaTextActive]}>{naValue}</Text>
+              <X size={20} strokeWidth={2.5} color={isB ? '#FFFFFF' : '#BBBBBB'} />
             </TouchableOpacity>
-          )}
-        </View>
+            <TouchableOpacity
+              style={[styles.toggleButton, !hasNA && styles.toggleButtonRight, isA && styles.toggleButtonOkActive]}
+              onPress={() => onSetValue(optionA)}
+            >
+              <Check size={20} strokeWidth={2.5} color={isA ? '#FFFFFF' : '#BBBBBB'} />
+            </TouchableOpacity>
+            {hasNA && (
+              <TouchableOpacity
+                style={[styles.toggleButton, styles.toggleButtonRight, isNA && styles.toggleButtonNaActive]}
+                onPress={() => onSetValue(naValue)}
+              >
+                <Text style={[styles.toggleButtonNaText, isNA && styles.toggleButtonNaTextActive]}>{naValue}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
 
       {showComment && (
@@ -180,6 +223,31 @@ export const CheckToggleRow: React.FC<CheckToggleRowProps> = React.memo(({
     onSetValue={onSetValue}
     hasNA={hasNA}
     commentTriggerValue="Not OK"
+    comment={comment}
+    onSetComment={onSetComment}
+    commentPlaceholder="Describe the issue..."
+  />
+));
+
+// Commissioning Instructions' H/M/L rows (Lub Oil Level, Coolant Level) —
+// same numbered-row layout as CheckToggleRow, but a 3-way High/Medium/Low
+// level pill instead of the OK/Not OK pair. H/M read as the "fine" state
+// (green, like Ok), L reads as "needs attention" (red, like Not OK) and
+// reveals the same kind of comment box Not OK does elsewhere in this file.
+export const LevelToggleRow: React.FC<LevelToggleRowProps> = React.memo(({
+  index, question, value, comment, onSetValue, onSetComment,
+}) => (
+  <ToggleRowCore
+    indexLabel={index === null ? '' : String(index).padStart(2, '0')}
+    alt={index !== null && index % 2 === 0}
+    question={question}
+    optionA=""
+    optionB=""
+    value={value}
+    onSetValue={onSetValue}
+    options={['H', 'M', 'L']}
+    dangerOption="L"
+    commentTriggerValue="L"
     comment={comment}
     onSetComment={onSetComment}
     commentPlaceholder="Describe the issue..."
@@ -348,6 +416,18 @@ const styles = StyleSheet.create({
   },
   toggleButtonNaTextActive: {
     color: '#374151',
+  },
+  // H/M/L's own text color — the active background comes from the shared
+  // toggleButtonOkActive (green)/toggleButtonNotOkActive (red) styles
+  // above instead of a level-specific one, so H/M/L reads with the exact
+  // same pass/fail colors as every other check in this file.
+  toggleButtonLevelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#BBBBBB',
+  },
+  toggleButtonLevelTextActive: {
+    color: '#FFFFFF',
   },
   checkItemBlock: {
     backgroundColor: '#F9FAFB',

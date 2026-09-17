@@ -185,6 +185,13 @@ export default function SrTaskFormScreen() {
 
   const toggleSectionReopen = (key: string) => setSectionReopened((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Running Hours' card bundles its own number save (isSectionExpanded's
+  // normal auto-minimize-on-save) with a required photo below it — saving
+  // just the number was auto-collapsing the whole card and hiding the
+  // still-required photo along with it. Force it open until a photo
+  // exists, regardless of the number's own saved/reopened state.
+  const runningHoursExpanded = isSectionExpanded('runningHours') || vm.runningHoursPhotos.length === 0;
+
   // Genset Identification / Alternator & Panel fields are asset-level, not
   // task-level — every task type (pre-commissioning, commissioning,
   // re-commissioning, revalidation, service) reads/writes the exact same
@@ -834,16 +841,18 @@ export default function SrTaskFormScreen() {
               {/* Running Hours — new field, no confirmed backend key yet
                   (see runningHours' own state comment in
                   useSrTaskForm.ts). Its own Save button still sends the
-                  whole asset record like every other section here. */}
+                  whole asset record like every other section here. See
+                  runningHoursExpanded's own comment above for why this
+                  card's expand state isn't just isSectionExpanded. */}
               <View style={styles.sectionCard}>
                 <GroupHeader
                   title="Running Hours"
                   saved={!!vm.sectionSuccess['runningHours']}
                   onPress={() => toggleSectionReopen('runningHours')}
-                  expanded={isSectionExpanded('runningHours')}
+                  expanded={runningHoursExpanded}
                 />
 
-                {isSectionExpanded('runningHours') && (
+                {runningHoursExpanded && (
                   <>
                     <View style={[styles.fieldRow, { marginTop: 12, alignItems: 'center', gap: 12 }]}>
                       <TextInput

@@ -4,8 +4,9 @@ import { Text } from '@/_components/AppText';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, Bell, CheckCheck } from 'lucide-react-native';
+import { ChevronLeft, Bell, Wrench, Settings } from 'lucide-react-native';
 import { useNotificationsController, NotificationItem } from '../../controllers/notificationsController';
+import { getNotificationCategory } from '../../utils/pushNotificationHandlers';
 import { formatTimeAgoLabel } from '../../utils/reportFormatters';
 import { LoadingOverlay } from '../../_components/shared/LoadingOverlay';
 import { BottomNavBar } from '../../_components/shared/BottomNavBar';
@@ -40,9 +41,25 @@ function ScreenBackground() {
   );
 }
 
+// Icon + color per notification — checked against the item's own real
+// `type` string (e.g. "commissioning_assigned"), same shared function the
+// foreground push banner uses, so the two can never drift apart on what
+// counts as which category. See getNotificationCategory's own comment for
+// why `type` is checked first and data.screen only as a fallback.
+function getNotificationIcon(item: NotificationItem) {
+  const category = getNotificationCategory(item.type, item.data);
+  return category === 'commissioning'
+    ? { Icon: Settings, background: '#6366F1' }
+    : { Icon: Wrench, background: '#F26722' };
+}
+
 function NotificationRow({ item, onPress }: { item: NotificationItem; onPress: () => void }) {
+  const { Icon, background } = getNotificationIcon(item);
   return (
     <TouchableOpacity style={[styles.row, !item.read && styles.rowUnread]} onPress={onPress}>
+      <View style={[styles.iconCircle, { backgroundColor: background }]}>
+        <Icon size={20} color="#FFFFFF" />
+      </View>
       {!item.read && <View style={styles.unreadDot} />}
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle} numberOfLines={2}>{item.title}</Text>
@@ -61,12 +78,10 @@ export default function NotificationsScreen() {
   const headerPad = width * (30 / REF_WIDTH);
 
   const {
+    activeTab, switchTab,
     items, loading, loadingMore, refreshing, error, hasMore,
     onRefresh, loadMore, handleOpenNotification,
-    markingAllRead, handleMarkAllRead,
   } = useNotificationsController();
-
-  const hasUnread = items.some((it) => !it.read);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -78,12 +93,19 @@ export default function NotificationsScreen() {
           <ChevronLeft size={22} color="#979797" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>NOTIFICATIONS</Text>
-        <TouchableOpacity
-          style={[styles.headerButton, (!hasUnread || markingAllRead) && styles.buttonDisabled]}
-          onPress={handleMarkAllRead}
-          disabled={!hasUnread || markingAllRead}
-        >
-          {markingAllRead ? <ActivityIndicator size="small" color="#F26722" /> : <CheckCheck size={20} color={hasUnread ? '#F26722' : '#C6C6C6'} />}
+        {/* Empty spacer, same size as the back button but no background/
+            border — keeps the title visually centered now that there's
+            nothing on the right side (the old "Mark all read" button lived
+            here), without showing as its own visible white circle. */}
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <View style={[styles.tabRow, { paddingHorizontal: headerPad }]}>
+        <TouchableOpacity onPress={() => switchTab('unread')}>
+          <Text style={[styles.tabText, activeTab === 'unread' && styles.tabTextActive]}>Unread</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => switchTab('all')}>
+          <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextActive]}>All</Text>
         </TouchableOpacity>
       </View>
 
@@ -101,7 +123,9 @@ export default function NotificationsScreen() {
           !loading ? (
             <View style={styles.emptyState}>
               <Bell size={32} color="#C6C6C6" />
-              <Text style={styles.emptyText}>{error || 'No notifications yet.'}</Text>
+              <Text style={styles.emptyText}>
+                {error || (activeTab === 'unread' ? 'No unread notifications.' : 'No notifications yet.')}
+              </Text>
             </View>
           ) : null
         }
@@ -133,6 +157,21 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.5 },
   headerTitle: { fontSize: 20, fontWeight: '900', color: '#000000', letterSpacing: 0.4 },
 
+  // 'space-evenly' (not 'space-around') — the only one of the two that
+  // actually makes every gap equal: edge-to-Unread, Unread-to-All, and
+  // All-to-edge all come out the same, rather than the edges getting only
+  // half as much space as the middle gap the way 'space-around' works.
+  tabRow: { flexDirection: 'row', justifyContent: 'space-evenly', marginBottom: 16 },
+  headerSpacer: { width: 44, height: 44 },
+  tabText: {
+    fontSize: 17, fontWeight: '600', color: '#9CA3AF',
+    paddingBottom: 4,
+  },
+  tabTextActive: {
+    color: '#000000', fontWeight: '800',
+    borderBottomWidth: 2, borderBottomColor: '#F26722',
+  },
+
   row: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 10,
     backgroundColor: '#FFFFFF',
@@ -140,6 +179,10 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   rowUnread: { backgroundColor: '#FFF7F2' },
+  iconCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    justifyContent: 'center', alignItems: 'center',
+  },
   unreadDot: {
     width: 8, height: 8, borderRadius: 4,
     backgroundColor: '#F26722',
