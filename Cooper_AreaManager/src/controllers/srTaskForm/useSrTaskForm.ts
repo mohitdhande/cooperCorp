@@ -1275,6 +1275,14 @@ export function useSrTaskForm() {
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope');
     if (billingTypeRequired && !billingType) return;
 
+    // Running Hours photo is a hard requirement too, checked alongside the
+    // Selfie below — same reasoning, and same fix as Commissioning's own
+    // handleCompletePhotosStep (see its comment in useTaskForm.ts).
+    if (runningHoursPhotos.length === 0) {
+      Alert.alert('Running Hours photo required', 'Please add a Running Hours photo before completing this task.');
+      return;
+    }
+
     // Selfie is a hard requirement, checked before the location gate below
     // (cheapest check first, no API call either way) — see SelfieCard's own
     // comment for why this is enforced here rather than left to the backend.
@@ -1361,7 +1369,7 @@ export function useSrTaskForm() {
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber, selfiePhoto]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -1455,6 +1463,14 @@ export function useSrTaskForm() {
     );
     if (billingTypeRequired && !billingType) return;
 
+    // Running Hours photo is a hard requirement too, checked alongside the
+    // Selfie below — same reasoning, and same fix as Commissioning's own
+    // handleCompletePhotosStep (see its comment in useTaskForm.ts).
+    if (runningHoursPhotos.length === 0) {
+      Alert.alert('Running Hours photo required', 'Please add a Running Hours photo before completing this task.');
+      return;
+    }
+
     // Selfie is a hard requirement, checked before the location gate below
     // (cheapest check first, no API call either way) — see SelfieCard's own
     // comment for why this is enforced here rather than left to the backend.
@@ -1533,7 +1549,7 @@ export function useSrTaskForm() {
     } finally {
       setFinishing(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber, selfiePhoto]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos]);
 
   // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
   // handleFinishService/handleSendForApproval below navigate straight there

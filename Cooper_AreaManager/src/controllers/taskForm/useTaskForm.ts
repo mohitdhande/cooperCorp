@@ -1273,6 +1273,16 @@ export function useTaskForm() {
   // to the View Report screen, which now owns the OTP verification step
   // (its own "Verify Client OTP" footer).
   const handleCompletePhotosStep = useCallback(async () => {
+    // Running Hours photo is a hard requirement too, same pattern as the
+    // Selfie check below — checked client-side before anything else, since
+    // a missing one is silently invisible otherwise once its own section
+    // auto-collapses (see runningHoursExpanded's own comment in
+    // taskForm.tsx for why that collapse needed its own fix).
+    if (photos.runningHoursPhotos.length === 0) {
+      Alert.alert('Running Hours photo required', 'Please add a Running Hours photo before completing this task.');
+      return;
+    }
+
     // Selfie is a hard requirement, checked client-side before anything
     // else (no location check, no API call) — see SelfieCard's own comment
     // for why this is enforced here rather than left to the backend.
@@ -1288,7 +1298,7 @@ export function useTaskForm() {
       pathname: '/screens/taskReport',
       params: { task: JSON.stringify({ _id: taskId, assetId }) },
     } as any);
-  }, [otp, taskId, assetId, router, suggestionComment, photos.selfiePhoto]);
+  }, [otp, taskId, assetId, router, suggestionComment, photos.selfiePhoto, photos.runningHoursPhotos]);
 
   // ── Profile (for the shared AppBar) ──
   const [userName, setUserName] = useState('');
