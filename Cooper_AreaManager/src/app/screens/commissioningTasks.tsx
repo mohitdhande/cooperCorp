@@ -144,7 +144,10 @@ export default function CommissioningTasksScreen() {
         // doesn't matter.
         onAcceptPress={selectedTab === 'Active' && !isMyOwnTask ? undefined : () => handleAcceptTask(task._id)}
         onAssignPress={isDealer && !isMyOwnTask ? () => openAssignPicker(task) : undefined}
-        onManagerAssignPress={selectedTab === 'Active' ? undefined : (isAreaManagerAssign ? () => openAssignPicker(task) : undefined)}
+        // Removed on every tab per explicit request — was showing the
+        // full-width orange "ASSIGN" row for the Area Manager even outside
+        // the Active tab, which is no longer wanted here at all.
+        onManagerAssignPress={undefined}
         assigneeOnlyCluster
       />
       </View>

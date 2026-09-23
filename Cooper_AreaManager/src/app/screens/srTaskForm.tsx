@@ -666,6 +666,7 @@ export default function SrTaskFormScreen() {
               <View style={styles.sectionCard}>
                 <GroupHeader
                   title="Engine Parameters"
+                  required
                   saved={!!vm.sectionSuccess['engineParams']}
                   onPress={() => toggleSectionReopen('engineParams')}
                   expanded={isSectionExpanded('engineParams')}
@@ -765,6 +766,7 @@ export default function SrTaskFormScreen() {
               <View style={styles.sectionCard}>
                 <GroupHeader
                   title="Genset Electrical Readings"
+                  required
                   saved={!!vm.sectionSuccess['electrical']}
                   onPress={() => toggleSectionReopen('electrical')}
                   expanded={isSectionExpanded('electrical')}
@@ -847,6 +849,7 @@ export default function SrTaskFormScreen() {
               <View style={styles.sectionCard}>
                 <GroupHeader
                   title="Running Hours"
+                  required
                   saved={!!vm.sectionSuccess['runningHours']}
                   onPress={() => toggleSectionReopen('runningHours')}
                   expanded={runningHoursExpanded}

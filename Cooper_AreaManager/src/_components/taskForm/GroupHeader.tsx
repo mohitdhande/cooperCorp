@@ -21,15 +21,22 @@ type Props = {
   // white pill instead of the default light-purple — same shape, different
   // background, so this stays a style override rather than a new prop name.
   style?: StyleProp<ViewStyle>;
+  // Red asterisk right after the title, inside the same pill — used by
+  // sections that hard-block Complete when empty (Running Hours), instead
+  // of a separate "Required" pill floating elsewhere on the card.
+  required?: boolean;
 };
 
 // The light-purple pill shown above each checklist group — same visual
 // language as the Step 1 sections' sectionPillHeader: plain title, or title
 // + a green double-check once the group has been saved.
-export function GroupHeader({ title, saved, onPress, expanded, missingCount, style }: Props) {
+export function GroupHeader({ title, saved, onPress, expanded, missingCount, style, required }: Props) {
   const content = (
     <>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.title}>
+        {title}
+        {required && <Text style={styles.requiredStar}> *</Text>}
+      </Text>
       {saved && onPress ? (
         <View style={styles.rightGroup}>
           <View style={styles.savedCircleBadge}><Check size={12} color="#FFFFFF" strokeWidth={3} /></View>
@@ -69,6 +76,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#000000',
+  },
+  requiredStar: {
+    color: '#DC2626',
+    fontWeight: '700',
   },
   rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   savedCircleBadge: {

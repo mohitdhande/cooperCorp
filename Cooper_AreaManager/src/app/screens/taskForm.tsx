@@ -219,7 +219,7 @@ export default function TaskFormScreen() {
   // still uses unchanged — same button, same card, just a different
   // underlying save depending on task type.
   const handleSaveEngineParams = async () => {
-    const ok = vm.isRevalidation ? await vm.handleSaveEngineParametersReval() : await vm.handleSaveReadings();
+    const ok = vm.isRevalidation ? await vm.handleSaveEngineParametersReval() : await vm.handleSaveReadings('engineParams');
     if (ok) setEngineParamsCollapsed(true);
   };
 
@@ -228,7 +228,10 @@ export default function TaskFormScreen() {
   // Same isRevalidation split as handleSaveEngineParams above, for this
   // card's own independent gensetElectricalReadings slice.
   const handleSaveReadingsCard = async () => {
-    const ok = vm.isRevalidation ? await vm.handleSaveGensetElectricalReadingsReval() : await vm.handleSaveReadings();
+    // 'electricalReadings' — this card's own Save validates only its own
+    // fields, not the unrelated Engine Parameters requirement (see
+    // handleSaveReadings's own comment).
+    const ok = vm.isRevalidation ? await vm.handleSaveGensetElectricalReadingsReval() : await vm.handleSaveReadings('electricalReadings');
     if (ok) setReadingsCardCollapsed(true);
   };
 
@@ -278,6 +281,12 @@ export default function TaskFormScreen() {
     <View style={styles.sectionCard}>
       <GroupHeader
         title="Engine Parameters"
+        // Hard-required (blocks Complete) for Pre-Commissioning only — see
+        // handleCompletePhotosStep's own comment in useTaskForm.ts. This
+        // same card is reused for Commissioning/Re-Commissioning and
+        // Revalidation too, so the star only shows when the requirement
+        // actually applies, not on every task type it happens to render on.
+        required={vm.isPreCommissioning}
         saved={!!vm.readingsSuccess}
         onPress={toggleEngineParamsReopen}
         expanded={engineParamsExpanded}
@@ -453,6 +462,7 @@ export default function TaskFormScreen() {
       <GroupHeader
         letter="E"
         title="Running Hours"
+        required
         saved={vm.sectionSuccess["groupE"] || false}
         onPress={() => toggleSectionReopen("groupE")}
         expanded={runningHoursExpanded}
@@ -483,7 +493,7 @@ export default function TaskFormScreen() {
             </Text>
           ) : null}
 
-          <View style={[styles.groupDivider, { marginVertical: 12 }]} />
+          <View style={{ marginVertical: 12 }} />
 
           {/* Running-hours photo upload — same PhotosVideoCard Step 6
               uses. Each photo uploads immediately on pick via its own
@@ -2636,6 +2646,10 @@ export default function TaskFormScreen() {
                 <View style={styles.sectionCard}>
                   <GroupHeader
                     title="Genset Electrical Readings"
+                    // Same Pre-Commissioning-only scope as Engine
+                    // Parameters' own star — see handleCompletePhotosStep's
+                    // comment in useTaskForm.ts.
+                    required={vm.isPreCommissioning}
                     saved={!!vm.readingsSuccess}
                     onPress={toggleReadingsReopen}
                     expanded={readingsExpanded}

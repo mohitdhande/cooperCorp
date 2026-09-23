@@ -331,14 +331,31 @@ export function useSrTaskForm() {
   // sent whole (not merged field-by-field). Electrical Reading fields are
   // deliberately NOT included here — they moved to their own field/save
   // below (§3) after briefly being merged into this one mid-cycle.
-  const handleSaveEngineParams = useCallback(() => saveServiceReadings('engineParams', {
-    engineParameters: {
-      rpm: toNum(rpm), frequency: toNum(frequency), dcVoltage: toNum(dcVoltage),
-      oilPressure: toNum(oilPressure), coolantTemperature: toNum(coolantTemp), defLevelPercentage: toNum(defLevel),
-      oilLevel, oilLevelComment: oilLevel === 'Not OK' ? (oilLevelComment || null) : null,
-      coolantLevel, coolantLevelComment: coolantLevel === 'Not OK' ? (coolantLevelComment || null) : null,
-    },
-  }, 'Engine Parameters'), [saveServiceReadings, rpm, frequency, dcVoltage, oilPressure, coolantTemp, defLevel, oilLevel, oilLevelComment, coolantLevel, coolantLevelComment]);
+  // Every Engine Parameters field must actually be filled — not just one of
+  // them — before this save is allowed to go through, same requirement as
+  // Commissioning's own Pre-Commissioning Engine Parameters (there scoped
+  // to one task type; Service only has itself, so this applies unconditionally
+  // here). DEF Level only counts when it's actually enabled (>= 75 KVA);
+  // it's locked/uneditable below that.
+  const engineParamsFilled = (() => {
+    const defEnabled = (parseFloat(kva) || 0) >= 75;
+    const required = [rpm, frequency, dcVoltage, oilPressure, coolantTemp, ...(defEnabled ? [defLevel] : [])];
+    return required.every(Boolean) && !!oilLevel && !!coolantLevel;
+  })();
+  const handleSaveEngineParams = useCallback(() => {
+    if (!engineParamsFilled) {
+      setSectionError(prev => ({ ...prev, engineParams: 'Please fill all Engine Parameters fields before saving.' }));
+      return Promise.resolve(false);
+    }
+    return saveServiceReadings('engineParams', {
+      engineParameters: {
+        rpm: toNum(rpm), frequency: toNum(frequency), dcVoltage: toNum(dcVoltage),
+        oilPressure: toNum(oilPressure), coolantTemperature: toNum(coolantTemp), defLevelPercentage: toNum(defLevel),
+        oilLevel, oilLevelComment: oilLevel === 'Not OK' ? (oilLevelComment || null) : null,
+        coolantLevel, coolantLevelComment: coolantLevel === 'Not OK' ? (coolantLevelComment || null) : null,
+      },
+    }, 'Engine Parameters');
+  }, [saveServiceReadings, rpm, frequency, dcVoltage, oilPressure, coolantTemp, defLevel, oilLevel, oilLevelComment, coolantLevel, coolantLevelComment, engineParamsFilled]);
 
   // Genset Electrical Reading — NEW as of mobile-service-complete-
   // changes.md v1.1 §3: its own top-level `gensetElectricalReadings` field
@@ -350,22 +367,32 @@ export function useSrTaskForm() {
   // KW / Load % are computed client-side already (see the totalKw/
   // loadPercent effects above) — sent as plain numbers alongside the 9 raw
   // inputs, not recomputed server-side.
-  const handleSaveGensetElectricalReadings = useCallback(() => saveServiceReadings('electrical', {
-    gensetElectricalReadings: {
-      acVoltageRY: toNum(acVoltRY), acVoltageYB: toNum(acVoltYB), acVoltageBR: toNum(acVoltBR),
-      acAmpR: toNum(acAmpR), acAmpY: toNum(acAmpY), acAmpB: toNum(acAmpB),
-      loadKwR: toNum(loadKwR), loadKwY: toNum(loadKwY), loadKwB: toNum(loadKwB),
-      totalKwLoad: toNum(totalKw), loadPercentage: toNum(loadPercent),
-    },
-  }, 'Genset Electrical Reading'), [saveServiceReadings, acVoltRY, acVoltYB, acVoltBR, acAmpR, acAmpY, acAmpB, loadKwR, loadKwY, loadKwB, totalKw, loadPercent]);
+  // Every directly-editable field required, same as Commissioning's own
+  // Genset Electrical Readings — totalKw/loadPercent excluded, they're
+  // computed client-side (see the effects above), not typed by the user.
+  const electricalReadingsFilled = [acVoltRY, acVoltYB, acVoltBR, acAmpR, acAmpY, acAmpB, loadKwR, loadKwY, loadKwB].every(Boolean);
+  const handleSaveGensetElectricalReadings = useCallback(() => {
+    if (!electricalReadingsFilled) {
+      setSectionError(prev => ({ ...prev, electrical: 'Please fill all Genset Electrical Readings fields before saving.' }));
+      return Promise.resolve(false);
+    }
+    return saveServiceReadings('electrical', {
+      gensetElectricalReadings: {
+        acVoltageRY: toNum(acVoltRY), acVoltageYB: toNum(acVoltYB), acVoltageBR: toNum(acVoltBR),
+        acAmpR: toNum(acAmpR), acAmpY: toNum(acAmpY), acAmpB: toNum(acAmpB),
+        loadKwR: toNum(loadKwR), loadKwY: toNum(loadKwY), loadKwB: toNum(loadKwB),
+        totalKwLoad: toNum(totalKw), loadPercentage: toNum(loadPercent),
+      },
+    }, 'Genset Electrical Reading');
+  }, [saveServiceReadings, acVoltRY, acVoltYB, acVoltBR, acAmpR, acAmpY, acAmpB, loadKwR, loadKwY, loadKwB, totalKw, loadPercent, electricalReadingsFilled]);
 
   // Running Hours — confirmed real backend shape (mobile-service-complete-
   // changes.md §3): a plain top-level number, not nested under
   // commissioningChecks (an earlier, since-superseded assumption).
-  const handleSaveRunningHours = useCallback(
-    () => saveServiceReadings('runningHours', { runningHours: toNum(runningHours) as number | null }, 'Running Hours'),
-    [saveServiceReadings, runningHours]
-  );
+  // handleSaveRunningHours itself is defined further below (after
+  // runningHoursPhotos exists) — it also needs to check that photo, and a
+  // const declared later in this same function can't be referenced in a
+  // useCallback dependency array up here (temporal dead zone).
 
   // Load Unbalance — confirmed to live on the service entry's own top-level
   // loadUnbalance/loadUnbalancePercentage (mobile-service-complete-
@@ -934,6 +961,26 @@ export function useSrTaskForm() {
   const [runningHoursPhotos, setRunningHoursPhotos] = useState<SitePhoto[]>([]);
   const [runningHoursPhotoOptionsVisible, setRunningHoursPhotoOptionsVisible] = useState(false);
 
+  // Moved down here (from right after acVoltRY etc. above) so it can
+  // reference runningHoursPhotos without a temporal-dead-zone crash — see
+  // the comment left in its old spot.
+  const handleSaveRunningHours = useCallback(() => {
+    // Blocked right here too, not just at final Complete — an empty value
+    // shouldn't even reach the backend as a "saved" state.
+    if (!runningHours) {
+      setSectionError(prev => ({ ...prev, runningHours: 'Running Hours is required.' }));
+      return;
+    }
+    // Photo is part of this same mandatory section — blocked here too, not
+    // just the number, so this Save button can't succeed with either half
+    // missing.
+    if (runningHoursPhotos.length === 0) {
+      setSectionError(prev => ({ ...prev, runningHours: 'Running Hours photo is required.' }));
+      return;
+    }
+    return saveServiceReadings('runningHours', { runningHours: toNum(runningHours) as number | null }, 'Running Hours');
+  }, [saveServiceReadings, runningHours, runningHoursPhotos]);
+
   const persistRunningHoursFailure = useCallback((item: QueueItem) => enqueuePendingMedia({
     sourceUri: item.uri, fileName: item.fileName, fileSize: item.fileSize,
     mediaKind: item.kind, source: item.source, formKind: 'service', taskId, target: 'runningHours',
@@ -1275,6 +1322,27 @@ export function useSrTaskForm() {
       || (selectedCategoryLetter === 'E' && selectedSubCategory === 'AMC Out Of Scope');
     if (billingTypeRequired && !billingType) return;
 
+    // Engine Parameters and Genset Electrical Readings are hard
+    // requirements too, unconditionally (Service has no sub-type the way
+    // Commissioning has Pre-Commissioning) — same fields/reasoning as their
+    // own Save buttons above.
+    if (!engineParamsFilled) {
+      Alert.alert('Engine Parameters required', 'Please fill and save Engine Parameters before completing this task.');
+      return;
+    }
+    if (!electricalReadingsFilled) {
+      Alert.alert('Genset Electrical Readings required', 'Please fill and save Genset Electrical Readings before completing this task.');
+      return;
+    }
+
+    // Running Hours number is a hard requirement too — checked alongside
+    // its own photo below, since the whole Running Hours section (number +
+    // photo) is meant to be mandatory, not just the photo half of it.
+    if (!runningHours) {
+      Alert.alert('Running Hours required', 'Please enter Running Hours before completing this task.');
+      return;
+    }
+
     // Running Hours photo is a hard requirement too, checked alongside the
     // Selfie below — same reasoning, and same fix as Commissioning's own
     // handleCompletePhotosStep (see its comment in useTaskForm.ts).
@@ -1369,7 +1437,7 @@ export function useSrTaskForm() {
     } finally {
       setStep6Saving(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, billingType, buildFinishExtras, router, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos, runningHours, engineParamsFilled, electricalReadingsFilled]);
 
   // ── Engineer-only Step 5 (formerly step 6): Complete via finish API ──
   // Category/sub-category come from the same selectedCategoryLetter/
@@ -1463,6 +1531,27 @@ export function useSrTaskForm() {
     );
     if (billingTypeRequired && !billingType) return;
 
+    // Engine Parameters and Genset Electrical Readings are hard
+    // requirements too, unconditionally (Service has no sub-type the way
+    // Commissioning has Pre-Commissioning) — same fields/reasoning as their
+    // own Save buttons above.
+    if (!engineParamsFilled) {
+      Alert.alert('Engine Parameters required', 'Please fill and save Engine Parameters before completing this task.');
+      return;
+    }
+    if (!electricalReadingsFilled) {
+      Alert.alert('Genset Electrical Readings required', 'Please fill and save Genset Electrical Readings before completing this task.');
+      return;
+    }
+
+    // Running Hours number is a hard requirement too — checked alongside
+    // its own photo below, since the whole Running Hours section (number +
+    // photo) is meant to be mandatory, not just the photo half of it.
+    if (!runningHours) {
+      Alert.alert('Running Hours required', 'Please enter Running Hours before completing this task.');
+      return;
+    }
+
     // Running Hours photo is a hard requirement too, checked alongside the
     // Selfie below — same reasoning, and same fix as Commissioning's own
     // handleCompletePhotosStep (see its comment in useTaskForm.ts).
@@ -1549,7 +1638,7 @@ export function useSrTaskForm() {
     } finally {
       setFinishing(false);
     }
-  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos]);
+  }, [taskId, assetId, selectedCategoryLetter, selectedSubCategory, categoryOnlyPresetAtCreation, billingType, buildFinishExtras, router, isEngineer, gensetSrNumber, engineNumber, selfiePhoto, runningHoursPhotos, runningHours, engineParamsFilled, electricalReadingsFilled]);
 
   // OTP generate/verify and Close Ticket both moved to srTaskReport.tsx —
   // handleFinishService/handleSendForApproval below navigate straight there

@@ -66,10 +66,10 @@ export function SelfieCard({ photo, onCapture }: Props) {
         <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: '#FCEEDD', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
           <User size={16} color="#E76124" />
         </View>
-        <Text style={{ fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4, flex: 1 }}>SELFIE WITH DG SET</Text>
-        <View style={{ borderRadius: 100, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#FEE2E2' }}>
-          <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>Required</Text>
-        </View>
+        <Text style={{ fontSize: 15, fontWeight: '700', color: '#000000', letterSpacing: 0.4, flex: 1 }}>
+          SELFIE WITH DG SET
+          <Text style={{ color: '#DC2626', fontWeight: '700' }}> *</Text>
+        </Text>
       </View>
 
       {photo ? (
