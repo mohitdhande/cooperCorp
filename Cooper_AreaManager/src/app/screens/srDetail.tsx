@@ -547,8 +547,15 @@ export default function SrDetailScreen() {
             navigating anywhere else. Gated to canReviewParts — its own copy
             says "need your approval decision", which would be wrong for a
             dealer/engineer who can only ever view this screen, never act on
-            a part (see the Approve/Reject buttons below, same gate). */}
-        {canReviewParts && isCompletedView && workApprovalIsAmStage && pendingPartsCount > 0 && (
+            a part (see the Approve/Reject buttons below, same gate).
+            Deliberately NOT gated on workApprovalIsAmStage anymore — parts
+            approval is meant to be independent of the separate work-approval
+            flow, per explicit request; a part with a real, backend-seeded
+            partApproval should be actionable on its own. An earlier version
+            of this gate existed because the server was once seen rejecting
+            this action without it — if that's still true, the reject will
+            now surface as a real error message instead of being hidden. */}
+        {canReviewParts && isCompletedView && pendingPartsCount > 0 && (
           <TouchableOpacity
             style={[styles.card, styles.acknowledgeCard, { marginTop: 20 }]}
             activeOpacity={0.8}
@@ -919,7 +926,7 @@ export default function SrDetailScreen() {
                       <View style={styles.partBottom}>
                         <Text style={styles.partQty}>Qty: {val(p.quantity)}</Text>
                       </View>
-                      {canReviewParts && isCompletedView && workApprovalIsAmStage && decision === 'PENDING' && !!partInfo._id && rejectingPartId === partInfo._id ? (
+                      {canReviewParts && isCompletedView && decision === 'PENDING' && !!partInfo._id && rejectingPartId === partInfo._id ? (
                         <View style={styles.rejectForm}>
                           <TextInput
                             style={styles.rejectReasonInput}
@@ -954,17 +961,12 @@ export default function SrDetailScreen() {
                               <Text style={[styles.partDecisionText, { color: decisionStyle.text }]}>{decision}</Text>
                             </View>
                           )}
-                          {/* workApprovalIsAmStage — part review is only
-                              valid while work-approval is still at the AM
-                              stage (PENDING_AM). Once it's moved on to RSM
-                              (or further), the backend no longer considers
-                              parts approval pending for this entry at all,
-                              even if this one part's own decision is still
-                              "PENDING" — confirmed by the server actually
-                              rejecting the action with exactly that
-                              message when these buttons were shown without
-                              this check. */}
-                          {canReviewParts && isCompletedView && workApprovalIsAmStage && decision === 'PENDING' && !!partInfo._id && (
+                          {/* No longer gated on workApprovalIsAmStage — see
+                              the "something to do" card's own comment above
+                              for why: parts approval is meant to stand on
+                              its own, independent of the separate
+                              work-approval flow. */}
+                          {canReviewParts && isCompletedView && decision === 'PENDING' && !!partInfo._id && (
                             <View style={styles.partDecisionActions}>
                               <TouchableOpacity
                                 style={[styles.partRejectButton, amReviewSaving && styles.buttonDisabled]}

@@ -121,6 +121,18 @@ export default function ServiceTasksScreen() {
     // Active Task carousel (filtered to ASSIGNED/ACCEPTED/IN_PROGRESS
     // only) — leaving it with no actionable arrow anywhere.
     const isMyOwnTask = task.assignedTo?.userId === profile?.userId;
+    // Temporary diagnostic — a dealer reported the Assign icon showing on
+    // a task whose card avatar was their own initials (i.e. assignedTo
+    // should be them), which isMyOwnTask should have caught. Logging both
+    // raw values to pin down whether this is a real ID-format mismatch
+    // (string vs ObjectId, whitespace, etc.) rather than guessing blind.
+    if (isDealer && !isMyOwnTask) {
+      console.log(
+        `[Service Tasks] isMyOwnTask=false for "${task.type || 'task'}" — `
+        + `assignedTo.userId=${JSON.stringify(task.assignedTo?.userId)} (${typeof task.assignedTo?.userId}) vs `
+        + `profile.userId=${JSON.stringify(profile?.userId)} (${typeof profile?.userId})`
+      );
+    }
     const canActInActiveTab = isDealer || isMyOwnTask;
     return (
       // Padding applied per-row here (not on the FlatList's own

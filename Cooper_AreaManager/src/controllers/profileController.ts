@@ -7,7 +7,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Alert } from 'react-native';
 import { uploadProfilePic, removeProfilePic, getMyProfile, logoutApi, changeOwnPassword } from '../viewModel/LoginAPis';
 import { unregisterPushToken } from '../utils/pushNotifications';
-import { showCameraUnavailableAlert } from '../utils/cameraErrorAlert';
+import { showCameraUnavailableAlert, launchCameraSafely } from '../utils/cameraErrorAlert';
 import { UserProfile } from '../models/Login';
 import { MyProfileResponse } from '../models/profile.types';
 import { parseApiError } from '../utils/apiError';
@@ -174,13 +174,14 @@ export function useProfileScreenController() {
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafely({
         mediaTypes: ['images'],
         quality: 0.7,
         allowsEditing: true,
         aspect: [1, 1],
       });
 
+      if (!result) return;
       if (result.canceled) {
         console.log('[Profile] Take Photo: canceled by user');
         return;

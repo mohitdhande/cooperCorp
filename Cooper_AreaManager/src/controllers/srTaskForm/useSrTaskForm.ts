@@ -17,7 +17,7 @@ import { getPendingBody } from '../../utils/offlineQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
 import { logLocationForAction, registerLocationOffWarning, checkLocationBlocked } from '../../utils/locationLogger';
 import { handleLocationOffWarning, showLocationOffAlert } from '../../utils/locationOffAlert';
-import { showCameraUnavailableAlert } from '../../utils/cameraErrorAlert';
+import { showCameraUnavailableAlert, launchCameraSafely } from '../../utils/cameraErrorAlert';
 import { useToast } from '../../utils/useToast';
 import { ApiFaultCode, ApiPart, SelectedComplaintCode, SelectedPart, SitePhoto, MediaType, MediaLocation, complaintCodeMediaTag } from '../../models/taskForm.types';
 import { UserProfile } from '../../models/Login';
@@ -724,10 +724,11 @@ export function useSrTaskForm() {
         showCameraUnavailableAlert('permission');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafely({
         mediaTypes: ['images'],
         quality: 0.7,
       });
+      if (!result) return;
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         const validationError = getPhotoValidationError(asset);
@@ -781,11 +782,12 @@ export function useSrTaskForm() {
         showCameraUnavailableAlert('permission');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafely({
         mediaTypes: [mediaType],
         videoMaxDuration: 60,
         quality: 0.7,
       });
+      if (!result) return;
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         const validationError = getPhotoValidationError(asset);
@@ -826,11 +828,12 @@ export function useSrTaskForm() {
         showCameraUnavailableAlert('permission');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraSafely({
         mediaTypes: ['images'],
         cameraType: ImagePicker.CameraType.front,
         quality: 0.7,
       });
+      if (!result) return;
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         const validationError = getPhotoValidationError(asset);
@@ -1015,7 +1018,8 @@ export function useSrTaskForm() {
         showCameraUnavailableAlert('permission');
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
+      const result = await launchCameraSafely({ mediaTypes: ['images'], quality: 0.7 });
+      if (!result) return;
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         const validationError = getPhotoValidationError(asset);

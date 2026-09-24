@@ -628,6 +628,20 @@ export default function DashboardScreen() {
               // Complete — not the Assign/Reassign sheet, which only makes
               // sense for a task actually handed off to a team member.
               const isMyOwnTask = task.assignedTo?.userId === profile?.userId;
+              // Temporary diagnostic — same as serviceTasks.tsx's own, a
+              // dealer reported the same task showing the Assign icon in
+              // one dashboard view but not another. Logging both raw
+              // values here too so a real ID-format/staleness mismatch
+              // (rather than a logic bug — this expression is identical to
+              // serviceTasks.tsx's) can be pinned down from actual device
+              // logs instead of guessed at.
+              if (isDealer && !isMyOwnTask) {
+                console.log(
+                  `[Dashboard] isMyOwnTask=false for "${task.type || 'task'}" — `
+                  + `assignedTo.userId=${JSON.stringify(task.assignedTo?.userId)} (${typeof task.assignedTo?.userId}) vs `
+                  + `profile.userId=${JSON.stringify(profile?.userId)} (${typeof profile?.userId})`
+                );
+              }
               return (
                 <View key={task._id} style={{ width, paddingHorizontal: hPad }}>
                   <TaskPreviewCard

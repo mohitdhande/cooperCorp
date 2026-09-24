@@ -1127,7 +1127,18 @@ export function useTaskForm() {
   const engineParamsFilled = (() => {
     const defEnabled = (parseFloat(kva) || 0) >= 75;
     const requiredFields = defEnabled ? [...ENGINE_PARAMS_NUMERIC_FIELDS, 'defLevelPercentage'] : ENGINE_PARAMS_NUMERIC_FIELDS;
-    return !requiredFields.some(key => !readings[key]) && !!readings.oilLevel && !!readings.coolantLevel;
+    if (requiredFields.some(key => !readings[key])) return false;
+    // Oil Level/Coolant Level only render on this card for Pre-Commissioning
+    // and Revalidation (see engineParametersCard's own gating comment in
+    // taskForm.tsx) — Commissioning/Re-Commissioning ask the same question
+    // via Group B instead, so these two fields never even appear on this
+    // card for them. Requiring them unconditionally made this validation
+    // impossible to satisfy for Commissioning/Re-Commissioning — the exact
+    // bug reported (all 6 numbers filled, still blocked).
+    if (isPreCommissioning || isRevalidation) {
+      return !!readings.oilLevel && !!readings.coolantLevel;
+    }
+    return true;
   })();
   // Same idea as engineParamsFilled above, for the Electrical Readings
   // card's own fields.
@@ -1144,18 +1155,21 @@ export function useTaskForm() {
   // already-saved data.
   const handleSaveReadings = useCallback(async (section: 'engineParams' | 'electricalReadings' = 'engineParams'): Promise<boolean> => {
     // Blocked right here too, not just at final Complete — same fix as
-    // Running Hours' own handleSaveGroupE. Pre-Commissioning only (see
-    // handleCompletePhotosStep's own comment for why). Every field in the
-    // relevant card must actually be filled — not just one of them —
-    // before this save is allowed to go through. DEF Level only counts
-    // when it's actually enabled (>= 75 KVA); it's locked/uneditable below
-    // that, so requiring it would block a save the user has no way to
-    // complete.
-    if (isPreCommissioning && section === 'engineParams' && !engineParamsFilled) {
+    // Running Hours' own handleSaveGroupE. Engine Parameters is required
+    // for Pre-Commissioning/Commissioning/Re-Commissioning (this function
+    // is only ever called for those three — Revalidation uses its own
+    // handleSaveEngineParametersReval below, which has the same check).
+    // Genset Electrical Readings stays Pre-Commissioning-only, per the
+    // narrower original request. Every field in the relevant card must
+    // actually be filled — not just one of them — before this save is
+    // allowed to go through. DEF Level only counts when it's actually
+    // enabled (>= 75 KVA); it's locked/uneditable below that, so requiring
+    // it would block a save the user has no way to complete.
+    if (section === 'engineParams' && !engineParamsFilled) {
       setReadingsError('Please fill all Engine Parameters fields before saving.');
       return false;
     }
-    if (isPreCommissioning && section === 'electricalReadings' && !electricalReadingsFilled) {
+    if (section === 'electricalReadings' && !electricalReadingsFilled) {
       setReadingsError('Please fill all Genset Electrical Readings fields before saving.');
       return false;
     }
@@ -1216,6 +1230,12 @@ export function useTaskForm() {
   // working exactly as they already do for the non-revalidation case,
   // without taskForm.tsx needing any JSX changes for these two.
   const handleSaveEngineParametersReval = useCallback(async (): Promise<boolean> => {
+    // Same requirement as handleSaveReadings' own engineParams branch —
+    // every field filled, not just one — extended to Revalidation too.
+    if (!engineParamsFilled) {
+      setReadingsError('Please fill all Engine Parameters fields before saving.');
+      return false;
+    }
     setReadingsSaving(true);
     setReadingsError('');
     setReadingsSuccess(false);
@@ -1256,9 +1276,16 @@ export function useTaskForm() {
     } finally {
       setReadingsSaving(false);
     }
-  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
+  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber, engineParamsFilled]);
 
   const handleSaveGensetElectricalReadingsReval = useCallback(async (): Promise<boolean> => {
+    // Same requirement as handleSaveReadings' own electricalReadings
+    // branch — every field filled, not just one — extended to
+    // Revalidation too.
+    if (!electricalReadingsFilled) {
+      setReadingsError('Please fill all Genset Electrical Readings fields before saving.');
+      return false;
+    }
     setReadingsSaving(true);
     setReadingsError('');
     setReadingsSuccess(false);
@@ -1293,7 +1320,7 @@ export function useTaskForm() {
     } finally {
       setReadingsSaving(false);
     }
-  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber]);
+  }, [taskId, readings, assignedToName, assignedToRole, showToast, isEngineer, gensetSrNumber, engineNumber, electricalReadingsFilled]);
 
   // Load Unbalance — Revalidation's own dedicated Step 5 card (a separate
   // JSX block, only ever rendered when isRevalidation, unlike Engine
@@ -1343,23 +1370,21 @@ export function useTaskForm() {
   // to the View Report screen, which now owns the OTP verification step
   // (its own "Verify Client OTP" footer).
   const handleCompletePhotosStep = useCallback(async () => {
-    // Engine Parameters is a hard requirement for Pre-Commissioning only —
-    // Commissioning/Re-Commissioning already ask its Oil/Coolant Level
-    // question via Group B, so this doesn't apply there; Revalidation's own
-    // Engine Parameters copy isn't required by this same request either,
-    // scoped narrowly to Pre-Commissioning as asked. Checks the real field
-    // values (engineParamsFilled), not readingsSuccess — that flag can now
-    // flip true from the Electrical Readings button alone (which
-    // deliberately skips this validation), without Engine Parameters ever
-    // actually being filled in.
-    if (isPreCommissioning && !engineParamsFilled) {
+    // Engine Parameters is a hard requirement for all 4 task types this
+    // screen handles (Pre-Commissioning, Commissioning, Re-Commissioning,
+    // Revalidation) — originally scoped to Pre-Commissioning only, widened
+    // on request. Checks the real field values (engineParamsFilled), not
+    // readingsSuccess — that flag can flip true from the Electrical
+    // Readings button alone (which deliberately skips this validation),
+    // without Engine Parameters ever actually being filled in.
+    if (!engineParamsFilled) {
       Alert.alert('Engine Parameters required', 'Please fill and save Engine Parameters before completing this task.');
       return;
     }
 
-    // Genset Electrical Readings — same requirement, same Pre-Commissioning
-    // scope, same reasoning as Engine Parameters right above.
-    if (isPreCommissioning && !electricalReadingsFilled) {
+    // Genset Electrical Readings — same requirement as Engine Parameters
+    // above, now widened to all 4 task types too.
+    if (!electricalReadingsFilled) {
       Alert.alert('Genset Electrical Readings required', 'Please fill and save Genset Electrical Readings before completing this task.');
       return;
     }
@@ -1397,7 +1422,7 @@ export function useTaskForm() {
       pathname: '/screens/taskReport',
       params: { task: JSON.stringify({ _id: taskId, assetId }) },
     } as any);
-  }, [otp, taskId, assetId, router, suggestionComment, photos.selfiePhoto, photos.runningHoursPhotos, commissioningChecks.runningHours, isPreCommissioning, engineParamsFilled, electricalReadingsFilled]);
+  }, [otp, taskId, assetId, router, suggestionComment, photos.selfiePhoto, photos.runningHoursPhotos, commissioningChecks.runningHours, engineParamsFilled, electricalReadingsFilled]);
 
   // ── Profile (for the shared AppBar) ──
   const [userName, setUserName] = useState('');

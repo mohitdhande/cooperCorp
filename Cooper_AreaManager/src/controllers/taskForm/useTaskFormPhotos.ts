@@ -9,7 +9,7 @@ import { getPhotoValidationError, getPdfValidationError, partitionValidPhotos } 
 import { videoFileName } from '../../utils/reportFormatters';
 import { useMediaUploadQueue, QueueItem, PickedAsset } from '../shared/useMediaUploadQueue';
 import { enqueuePendingMedia } from '../../utils/pendingMediaQueue';
-import { showCameraUnavailableAlert } from '../../utils/cameraErrorAlert';
+import { showCameraUnavailableAlert, launchCameraSafely } from '../../utils/cameraErrorAlert';
 
 type UseTaskFormPhotosArgs = {
   taskId: string;
@@ -207,7 +207,12 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         return;
       }
 
-      const result = await ImagePicker.launchCameraAsync({
+      // launchCameraSafely (not ImagePicker.launchCameraAsync directly) —
+      // see its own comment in cameraErrorAlert.ts for why: some OEM
+      // privacy managers (Oppo/ColorOS, Vivo/FuntouchOS, Realme) silently
+      // swallow the camera launch with no error and no result, leaving the
+      // button tap looking like it did nothing at all.
+      const result = await launchCameraSafely({
         mediaTypes: [mediaType],
         videoMaxDuration: 60,
         quality: 0.7,
@@ -216,6 +221,9 @@ export function useTaskFormPhotos({ taskId, isEngineer }: UseTaskFormPhotosArgs)
         // camera would defeat the point.
         ...(target === 'selfie' ? { cameraType: ImagePicker.CameraType.front } : {}),
       });
+      // null means the silent-failure alert already fired — nothing left
+      // to do here.
+      if (!result) return;
       if (!result.canceled) {
         const asset = result.assets[0];
         const validationError = getPhotoValidationError(asset);

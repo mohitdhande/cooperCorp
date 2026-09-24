@@ -281,12 +281,10 @@ export default function TaskFormScreen() {
     <View style={styles.sectionCard}>
       <GroupHeader
         title="Engine Parameters"
-        // Hard-required (blocks Complete) for Pre-Commissioning only — see
-        // handleCompletePhotosStep's own comment in useTaskForm.ts. This
-        // same card is reused for Commissioning/Re-Commissioning and
-        // Revalidation too, so the star only shows when the requirement
-        // actually applies, not on every task type it happens to render on.
-        required={vm.isPreCommissioning}
+        // Hard-required (blocks Complete) for all 4 task types this card
+        // renders on — see handleCompletePhotosStep's own comment in
+        // useTaskForm.ts.
+        required
         saved={!!vm.readingsSuccess}
         onPress={toggleEngineParamsReopen}
         expanded={engineParamsExpanded}
@@ -2646,10 +2644,10 @@ export default function TaskFormScreen() {
                 <View style={styles.sectionCard}>
                   <GroupHeader
                     title="Genset Electrical Readings"
-                    // Same Pre-Commissioning-only scope as Engine
-                    // Parameters' own star — see handleCompletePhotosStep's
-                    // comment in useTaskForm.ts.
-                    required={vm.isPreCommissioning}
+                    // Hard-required (blocks Complete) for all 4 task types
+                    // this card renders on, same as Engine Parameters — see
+                    // handleCompletePhotosStep's comment in useTaskForm.ts.
+                    required
                     saved={!!vm.readingsSuccess}
                     onPress={toggleReadingsReopen}
                     expanded={readingsExpanded}
