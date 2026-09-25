@@ -2,6 +2,44 @@
 
 All notable changes to the Cooper_AreaManager app are recorded here, newest first.
 
+## v0.0.5 — 2026-09-24
+
+### Media compression (new)
+- Every photo/video now compresses on-device toward a 2 MB target before upload, via `react-native-compressor` (lazy-required, not statically imported, since the native module crashes Expo Go otherwise — falls back to the original file there). Escalates through multiple quality/resolution tiers for photos and resolution/bitrate tiers for video (`compressionMethod: 'manual'` — `'auto'` mode left bitrate untouched, barely shrinking some clips), stripping audio on the more aggressive video tiers.
+- The actual size-reject ceiling stays generous (20 MB photo / 300 MB video) — checked after compression, not before, so compression gets a real chance to shrink a large file first instead of rejecting it outright.
+- Compression progress and before/after size now show in both the upload overlay and the Photos & Video card itself (`compressedFileSize` carried through to the saved task), not just console logs.
+
+### Mandatory fields (Commissioning-family + Service)
+- **Running Hours** (number + photo) is now required in all 5 task types — both the section's own Save button and final Complete block on an empty value, not just Complete. Fixed the section auto-collapsing (and hiding the still-required photo) the moment just the number was saved.
+- **Engine Parameters** and **Genset Electrical Readings** are now required across all 4 Commissioning-family task types and unconditionally for Service — every field, not just one. Fixed a real bug where Oil Level/Coolant Level were required unconditionally even though those fields only render for Pre-Commissioning/Revalidation, permanently blocking Save for Commissioning/Re-Commissioning even with every visible field filled in.
+- Commissioning's Engine Parameters and Genset Electrical Readings share one combined save call to the backend — each card's own Save button now validates only its own fields (a `section` argument decides which), without blocking the other, while still sending the same combined payload (no backend data-loss risk from splitting the actual request).
+- A red "*" now marks every hard-required section's title (Running Hours, Engine Parameters, Genset Electrical Readings, and the existing mandatory Selfie) — one consistent marker, replacing an earlier set of separate "Required" pills.
+
+### Camera reliability
+- New `launchCameraSafely()` helper — some OEM privacy managers (Oppo/ColorOS, Vivo/FuntouchOS, Realme) silently block a camera launch with no error and no result at all, leaving the app waiting forever with zero feedback (matches the exact "nothing happens" symptom reported for Take Selfie on these brands). Detected via `AppState` — a real camera launch always takes the app out of `'active'` — and surfaces the existing "Camera unavailable" alert after 4 seconds instead of hanging. Applied to every camera launch in the app: Commissioning's shared capture flow, Service's 4 separate handlers (site photo/video, fault code, selfie, running hours), and Profile photo.
+
+### Service Parts approval
+- Removed an incorrect dependency: Parts Approve/Reject on the Service Details screen used to only show while the task's separate Work Approval was specifically at the `PENDING_AM` stage — but `partApproval` is its own self-contained object (own status, own `approvalRequiredBy`) with no real relationship to `workApproval`'s stage, confirmed via live API responses showing one present without the other, or both at different stages. Parts now show Approve/Reject based purely on their own pending state.
+
+### Task list
+- Removed the full-width orange "ASSIGN" row for Area Managers from the Commissioning task list, on every tab — a dealer's own per-card Assign (which replaces the arrow button instead of adding a separate row) is unaffected.
+
+### Performance
+- Converted the Commissioning/Service task list screens from `ScrollView`+`.map()` to `FlatList` — real virtualization for long lists instead of rendering every row at once.
+
+### Task form
+- Commissioning Instructions (Step 2, Commissioning/Re-Commissioning only): Lub Oil Level and Coolant Level switched from OK/Not-OK toggles to H/M/L, matching the reference design — H/M green, L red with the existing comment box.
+- Fixed `buildGroupPayload` silently dropping the B1/B3 comment fields whenever the field's value was `'L'` — only `'not ok'` was recognized as a comment trigger before.
+- Engine Parameters: Oil Level/Coolant Level fields are now hidden for Commissioning/Re-Commissioning (already asked via Group B's own Commissioning Instructions) — shown only for Pre-Commissioning/Revalidation, which don't have that Group B question.
+- Added per-complaint-code image capture; disabled fields on an auto-commissioned entry that shouldn't be edited; renamed the Selfie section heading.
+
+### Notifications
+- Fixed the "All" tab showing the same unread-only data as "Unread", and marked-read items vanishing from both tabs — the backend's `GET /me/notifications` defaults to unread-only and needs an explicit `?filter=all` query param that wasn't being sent.
+- Added commissioning/service type icons to each notification row, re-centered the Unread/All tab row, and added an in-app foreground banner (`ForegroundNotificationBanner`) for a push arriving while the app is open, since the OS notification tray itself can't be restyled per-type from the client alone.
+
+### Infrastructure
+- Relinked the EAS project after an Expo account switch; enabled `autoIncrement` for production Android builds; added a custom config plugin (`withAndroidProfileable`) so release/preview builds are profileable in Android Studio regardless of a device's own developer-option availability.
+
 ## v0.0.4 — 2026-09-10
 
 ### Push notifications

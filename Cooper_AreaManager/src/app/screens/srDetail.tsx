@@ -1213,9 +1213,15 @@ export default function SrDetailScreen() {
           normal flex sibling) so the last card keeps visibly scrolling
           behind this bar, matching the reference design — the ScrollView's
           own bottom padding above is sized to clear this footer's height. */}
-      <View style={[styles.floatingFooter, { paddingHorizontal: hPad }]} pointerEvents="box-none">
+      {/* No horizontal padding on this outer wrapper — BottomNavBar (below)
+          already sizes its own padding off the real screen width the same
+          way Dashboard's does; padding it again here from the outside was
+          shrinking it to visibly smaller than every other screen. The two
+          banner elements that do need an inset get it directly instead
+          (marginHorizontal: hPad), not from this shared wrapper. */}
+      <View style={styles.floatingFooter} pointerEvents="box-none">
         {workApproval?.status === 'PENDING_RSM' && (
-          <View style={styles.bottomBar}>
+          <View style={[styles.bottomBar, { marginHorizontal: hPad }]}>
             <Clock size={18} color="#F59E0B" />
             <Text style={styles.bottomBarText}>Awaiting RSM Confirmation</Text>
           </View>
@@ -1232,12 +1238,12 @@ export default function SrDetailScreen() {
             instead, same spot, above the bottom bar. */}
         {workApproval?.status === 'REJECTED' && (
           isMyOwnTask ? (
-            <TouchableOpacity style={styles.resubmitButton} onPress={openEditModal}>
+            <TouchableOpacity style={[styles.resubmitButton, { marginHorizontal: hPad }]} onPress={openEditModal}>
               <RefreshCw size={18} color="#FFFFFF" />
               <Text style={styles.resubmitButtonText}>Edit & Resubmit</Text>
             </TouchableOpacity>
           ) : (
-            <View style={styles.bottomBar}>
+            <View style={[styles.bottomBar, { marginHorizontal: hPad }]}>
               <XCircle size={18} color="#DC2626" />
               <Text style={styles.rejectedBannerText}>Rejected — Needs Revision</Text>
             </View>
